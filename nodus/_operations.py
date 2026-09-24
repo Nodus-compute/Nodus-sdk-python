@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, TypeVar, cast
 
@@ -66,6 +67,9 @@ class RunDraftValues(TypedDict, total=False):
     gpu: str
     gpu_count: int
     memory_gb: float
+    vcpus: float
+    disk_gb: float
+    data_regions: list[str]
     max_cost_usd: float
     checkpoint_paths: list[str]
     result_paths: list[str]
@@ -80,6 +84,9 @@ class RunDraftPatch(TypedDict, total=False):
     gpu: str | None
     gpu_count: int | None
     memory_gb: float | None
+    vcpus: float | None
+    disk_gb: float | None
+    data_regions: list[str] | None
     max_cost_usd: float | None
     checkpoint_paths: list[str] | None
     result_paths: list[str] | None
@@ -213,6 +220,21 @@ def _run_draft(value: Any) -> RunDraft:
             valid = type(saved) is int
         elif name in ("memory_gb", "max_cost_usd"):
             valid = type(saved) in (int, float) and (type(saved) is int or math.isfinite(saved))
+        elif name in ("vcpus", "disk_gb"):
+            if type(saved) in (int, float) and saved > 0:
+                try:
+                    valid = math.isfinite(saved)
+                except OverflowError:
+                    valid = False
+        elif name == "data_regions":
+            if isinstance(saved, list) and len(saved) <= 32 and all(isinstance(region, str) for region in saved):
+                try:
+                    valid = len(set(saved)) == len(saved) and all(
+                        region and len(region.encode("utf-8")) <= 128 and "," not in region
+                        and not any(char.isspace() or unicodedata.category(char) == "Cc" for char in region)
+                        for region in saved)
+                except UnicodeEncodeError:
+                    valid = False
         elif name in ("checkpoint_paths", "result_paths"):
             valid = isinstance(saved, list) and all(isinstance(path, str) for path in saved)
         if not valid:

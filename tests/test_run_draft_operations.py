@@ -31,6 +31,14 @@ def test_empty_run_draft_does_not_invent_values(asynchronous):
     ({"gpu": None, "max_cost_usd": None}, {"command": "python train.py", "image": "python:3.12"}),
     ({"name": "", "checkpoint_paths": [], "result_paths": ["results/model.bin"]},
      {"name": "", "checkpoint_paths": [], "result_paths": ["results/model.bin"], "image": "python:3.12"}),
+    ({"vcpus": 2.5, "disk_gb": 80.5, "data_regions": ["us-east-1", "eu-west-1"]},
+     {"vcpus": 2.5, "disk_gb": 80.5, "data_regions": ["us-east-1", "eu-west-1"], "max_cost_usd": 3}),
+    ({"vcpus": None, "disk_gb": None, "data_regions": None}, {"max_cost_usd": 3}),
+    ({"data_regions": []}, {"data_regions": [], "disk_gb": 80.5}),
+    ({"data_regions": ["é" * 64, *[f"region-{index}" for index in range(31)]]},
+     {"data_regions": ["é" * 64, *[f"region-{index}" for index in range(31)]]}),
+    # The server preserves raw JSON integers that round to a finite float64.
+    ({"vcpus": (1 << 1024) - (1 << 971) + 1}, {"vcpus": (1 << 1024) - (1 << 971) + 1}),
 ])
 def test_run_draft_patch_preserves_omission_and_null(asynchronous, patch, saved):
     expected = {"expected_revision": 4, "patch": patch}
@@ -112,6 +120,13 @@ def test_invalid_local_run_draft_arguments_never_reach_transport(asynchronous, r
     {"gpu_count": True}, {"gpu_count": 1.5}, {"result_paths": "results"},
     {"checkpoint_paths": [None]}, {"name": False}, {"memory_gb": float("inf")},
     {"max_cost_usd": float("nan")},
+    {"vcpus": True}, {"vcpus": 0}, {"vcpus": -1}, {"vcpus": "4"}, {"vcpus": None},
+    {"disk_gb": 0}, {"disk_gb": float("inf")}, {"vcpus": float("nan")}, {"disk_gb": 10 ** 309},
+    {"data_regions": None}, {"data_regions": "us-east-1"}, {"data_regions": [None]}, {"data_regions": [{}]},
+    {"data_regions": ["us-east-1", "us-east-1"]}, {"data_regions": [""]},
+    {"data_regions": ["us,east"]}, {"data_regions": ["us\x7feast"]}, {"data_regions": ["us\neast"]},
+    {"data_regions": ["us\u00a0east"]}, {"data_regions": ["é" * 65]}, {"data_regions": ["\ud800"]},
+    {"data_regions": [f"region-{index}" for index in range(33)]},
 ])
 def test_invalid_saved_field_types_are_rejected(asynchronous, values):
     body = json.dumps({"revision": 1, "values": values})
@@ -143,6 +158,7 @@ def test_unknown_saved_fields_cannot_become_typed_draft_receipts(asynchronous, o
 def test_supported_saved_fields_remain_typed_without_defaults(asynchronous):
     values = {"name": "Research run", "command": "python train.py", "image": "python:3.12", "gpu": "H100",
               "gpu_count": 2, "memory_gb": 80, "max_cost_usd": 3.5,
+              "vcpus": 4, "disk_gb": 100, "data_regions": ["us-east-1"],
               "checkpoint_paths": ["state"], "result_paths": ["results/model.bin"]}
     draft = exercise(asynchronous, lambda request: httpx.Response(200, json={"revision": 3, "values": values}),
                      lambda operations: operations.get_run_draft())
@@ -179,6 +195,8 @@ def test_draft_receipt_revision_is_exactly_representable(asynchronous):
     ({"max_cost_usd": None}, {"max_cost_usd": 3}),
     ({"checkpoint_paths": []}, {"checkpoint_paths": ["state"]}),
     ({"name": ""}, {}),
+    ({"data_regions": ["us-east-1"]}, {"data_regions": ["eu-west-1"]}),
+    ({"disk_gb": 100}, {"disk_gb": 1000}),
 ])
 def test_update_receipt_must_confirm_each_exact_patch_value(asynchronous, patch, values):
     with pytest.raises(nodus.APIError):
