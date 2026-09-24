@@ -474,6 +474,13 @@ def _valid_id(workload_id: Any) -> str:
     )
 
 
+def _valid_member_id(member_id: Any) -> str:
+    """A Nodus member identifier carried in a query parameter, never a path."""
+    if isinstance(member_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", member_id):
+        return member_id
+    raise ValidationError("member_id must be a Nodus distributed member identifier")
+
+
 def _valid_idempotency_key(key: str) -> str:
     """A key that can survive being a header.
 
@@ -1132,15 +1139,17 @@ class Client(_Transport):
 
     def download_output(
         self, workload_id: str, name: str, destination: str | os.PathLike[str],
-        *, stage: str | None = None, overwrite: bool = True,
+        *, stage: str | None = None, member_id: str | None = None, overwrite: bool = True,
     ) -> Path:
         """Stream an output to destination and verify its SHA-256 before replacing it.
 
-        Pass stage when multiple stages publish the same name. Failed transfers
+        Pass stage and member_id to select a distributed shard. Failed transfers
         leave an existing destination intact. Retry the call to restart.
         """
         path = download_path(_valid_id(workload_id), name)
-        params = {"stage": stage} if stage is not None else None
+        params = {"stage": stage} if stage is not None else {}
+        if member_id is not None:
+            params["member_id"] = _valid_member_id(member_id)
         try:
             with self._http.stream("GET", path, params=params, follow_redirects=False,
                                        headers={"Accept-Encoding": "identity"}) as resp:
@@ -1166,7 +1175,8 @@ class Client(_Transport):
         return Ledger.from_dict(self._request("GET", f"/v1/workloads/{_valid_id(workload_id)}/ledger"))
 
     def logs(
-        self, workload_id: str, *, stage: str | None = None, generation: int | None = None
+        self, workload_id: str, *, stage: str | None = None, generation: int | None = None,
+        member_id: str | None = None
     ) -> str:
         """What the submitted program printed, read back out of a committed artifact.
 
@@ -1178,6 +1188,9 @@ class Client(_Transport):
         Narrowing by stage and generation matters after a reclaim: a stage that
         was interrupted has several generations, and their logs are different
         stories about the same work.
+
+        With member_id, read that distributed member's retained live snapshot.
+        Use live_logs for its capture-truncation and retention-expiry metadata.
         """
         params: dict[str, Any] = {}
         if stage:
@@ -1186,6 +1199,8 @@ class Client(_Transport):
         # than read as "no filter": a caller that computed 0 has a bug.
         if generation is not None:
             params["generation"] = generation
+        if member_id is not None:
+            params["member_id"] = _valid_member_id(member_id)
         return self._request(
             "GET",
             f"/v1/workloads/{_valid_id(workload_id)}/logs",
@@ -1248,10 +1263,13 @@ class Client(_Transport):
                     delay = policy.polled()
                 time.sleep(policy.hold(delay, workload_id))
 
-    def live_logs(self, workload_id: str, *, after: str = "") -> dict[str, Any]:
+    def live_logs(self, workload_id: str, *, after: str = "", member_id: str | None = None) -> dict[str, Any]:
         """Read new live output chunks using the previous next_cursor."""
         path = f"/v1/workloads/{_valid_id(workload_id)}/logs/live"
-        return self._one(self._request("GET", path, params={"after": after}), "GET", path)
+        params = {"after": after}
+        if member_id is not None:
+            params["member_id"] = _valid_member_id(member_id)
+        return self._one(self._request("GET", path, params=params), "GET", path)
 
     def stream_events(self, workload_id: str, *, poll_seconds: float = 2.0) -> Iterator[Event]:
         """Yield events as they occur, stopping at the terminal event.
@@ -1380,20 +1398,24 @@ class Workload(_WorkloadState):
         saved = []
         for output, path in planned:
             path.parent.mkdir(parents=True, exist_ok=True)
-            saved.append(self.download_output(output.name, path, stage=output.stage_id, overwrite=False))
+            saved.append(self.download_output(output.name, path, stage=output.stage_id, member_id=output.member_id or None, overwrite=False))
         return saved
 
     def download_output(
-        self, name: str, destination: str | os.PathLike[str], *, stage: str | None = None, overwrite: bool = True
+        self, name: str, destination: str | os.PathLike[str], *, stage: str | None = None, member_id: str | None = None, overwrite: bool = True
     ) -> Path:
         """Download a named output and verify it before replacing destination."""
+        if member_id is not None:
+            return self._client.download_output(self.id, name, destination, stage=stage, member_id=member_id, overwrite=overwrite)
         return self._client.download_output(self.id, name, destination, stage=stage, overwrite=overwrite)
 
     def ledger(self) -> Ledger:
         return self._client.ledger(self.id)
 
-    def logs(self, *, stage: str | None = None, generation: int | None = None) -> str:
+    def logs(self, *, stage: str | None = None, generation: int | None = None, member_id: str | None = None) -> str:
         """This workload's log. See :meth:`Client.logs`."""
+        if member_id is not None:
+            return self._client.logs(self.id, stage=stage, generation=generation, member_id=member_id)
         return self._client.logs(self.id, stage=stage, generation=generation)
 
     def freeze(self) -> WorkloadFreeze:
@@ -1816,15 +1838,17 @@ class AsyncClient(_Transport):
 
     async def download_output(
         self, workload_id: str, name: str, destination: str | os.PathLike[str],
-        *, stage: str | None = None, overwrite: bool = True,
+        *, stage: str | None = None, member_id: str | None = None, overwrite: bool = True,
     ) -> Path:
         """Stream an output to destination and verify its SHA-256 before replacing it.
 
-        Pass stage when multiple stages publish the same name. Failed transfers
+        Pass stage and member_id to select a distributed shard. Failed transfers
         leave an existing destination intact. Retry the call to restart.
         """
         path = download_path(_valid_id(workload_id), name)
-        params = {"stage": stage} if stage is not None else None
+        params = {"stage": stage} if stage is not None else {}
+        if member_id is not None:
+            params["member_id"] = _valid_member_id(member_id)
         try:
             async with self._http.stream("GET", path, params=params, follow_redirects=False,
                                        headers={"Accept-Encoding": "identity"}) as resp:
@@ -1850,7 +1874,8 @@ class AsyncClient(_Transport):
         return Ledger.from_dict(await self._request("GET", f"/v1/workloads/{_valid_id(workload_id)}/ledger"))
 
     async def logs(
-        self, workload_id: str, *, stage: str | None = None, generation: int | None = None
+        self, workload_id: str, *, stage: str | None = None, generation: int | None = None,
+        member_id: str | None = None
     ) -> str:
         """What the submitted program printed. See :meth:`Client.logs`."""
         params: dict[str, Any] = {}
@@ -1858,6 +1883,8 @@ class AsyncClient(_Transport):
             params["stage"] = stage
         if generation is not None:
             params["generation"] = generation
+        if member_id is not None:
+            params["member_id"] = _valid_member_id(member_id)
         return await self._request(
             "GET",
             f"/v1/workloads/{_valid_id(workload_id)}/logs",
@@ -1923,10 +1950,13 @@ class AsyncClient(_Transport):
                     interrupt.add_note(f"Cancellation not confirmed for {workload_id!r}. Call client.cancel(workload_id) against the same deployment.")
             raise
 
-    async def live_logs(self, workload_id: str, *, after: str = "") -> dict[str, Any]:
+    async def live_logs(self, workload_id: str, *, after: str = "", member_id: str | None = None) -> dict[str, Any]:
         """Read new live output chunks using the previous next_cursor."""
         path = f"/v1/workloads/{_valid_id(workload_id)}/logs/live"
-        return self._one(await self._request("GET", path, params={"after": after}), "GET", path)
+        params = {"after": after}
+        if member_id is not None:
+            params["member_id"] = _valid_member_id(member_id)
+        return self._one(await self._request("GET", path, params=params), "GET", path)
 
     async def stream_events(
         self, workload_id: str, *, poll_seconds: float = 2.0
@@ -2019,20 +2049,24 @@ class AsyncWorkload(_WorkloadState):
         saved = []
         for output, path in planned:
             path.parent.mkdir(parents=True, exist_ok=True)
-            saved.append(await self.download_output(output.name, path, stage=output.stage_id, overwrite=False))
+            saved.append(await self.download_output(output.name, path, stage=output.stage_id, member_id=output.member_id or None, overwrite=False))
         return saved
 
     async def download_output(
-        self, name: str, destination: str | os.PathLike[str], *, stage: str | None = None, overwrite: bool = True
+        self, name: str, destination: str | os.PathLike[str], *, stage: str | None = None, member_id: str | None = None, overwrite: bool = True
     ) -> Path:
         """Download a named output and verify it before replacing destination."""
+        if member_id is not None:
+            return await self._client.download_output(self.id, name, destination, stage=stage, member_id=member_id, overwrite=overwrite)
         return await self._client.download_output(self.id, name, destination, stage=stage, overwrite=overwrite)
 
     async def ledger(self) -> Ledger:
         return await self._client.ledger(self.id)
 
-    async def logs(self, *, stage: str | None = None, generation: int | None = None) -> str:
+    async def logs(self, *, stage: str | None = None, generation: int | None = None, member_id: str | None = None) -> str:
         """This workload's log. See :meth:`Client.logs`."""
+        if member_id is not None:
+            return await self._client.logs(self.id, stage=stage, generation=generation, member_id=member_id)
         return await self._client.logs(self.id, stage=stage, generation=generation)
 
     async def freeze(self) -> WorkloadFreeze:

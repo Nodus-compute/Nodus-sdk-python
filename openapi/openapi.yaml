@@ -970,33 +970,49 @@
           "chunks": {
             "type": "array",
             "items": {
-              "type": "object",
-              "required": [
-                "id",
-                "stage_id",
-                "generation",
-                "text"
-              ],
-              "properties": {
-                "id": {
-                  "type": "integer"
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "stage_id",
+                    "generation",
+                    "text"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "stage_id": {
+                      "type": "string"
+                    },
+                    "generation": {
+                      "type": "integer"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
                 },
-                "stage_id": {
-                  "type": "string"
-                },
-                "generation": {
-                  "type": "integer"
-                },
-                "text": {
-                  "type": "string"
+                {
+                  "$ref": "#/components/schemas/DistributedLogChunk"
                 }
-              }
+              ]
             }
           },
           "next_cursor": {
             "type": "string"
           },
           "truncated": {
+            "type": "boolean"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "member_id": {
+            "type": "string"
+          },
+          "expired": {
             "type": "boolean"
           }
         }
@@ -1073,6 +1089,14 @@
           },
           "stage_id": {
             "type": "string"
+          },
+          "group_id": {
+            "type": "string",
+            "description": "Nodus distributed group that owns this verified result, when applicable."
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Nodus member that owns this result. Select this member when downloading same-named shards."
           },
           "sha256": {
             "type": "string"
@@ -2985,6 +3009,13 @@
               "$ref": "#/components/schemas/CheckpointPreparationSummary"
             },
             "description": "Detail-only source preparation status for stages requesting managed checkpoint integration. Does not assert runtime framework compatibility or successful application recovery."
+          },
+          "distributed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DistributedCustomerGroup"
+            },
+            "description": "Detail-only distributed status. Select a member_id from this list to read member logs. Omitted for workloads without distributed groups."
           }
         }
       },
@@ -11961,6 +11992,186 @@
         "required": [
           "authorization"
         ]
+      },
+      "DistributedObservedProgress": {
+        "type": "object",
+        "properties": {
+          "completed_units": {
+            "type": "integer"
+          },
+          "total_units": {
+            "type": "integer"
+          },
+          "last_loss": {
+            "type": "number"
+          },
+          "metric_rate": {
+            "type": "number"
+          },
+          "metric_step": {
+            "type": "integer"
+          },
+          "metric_total_steps": {
+            "type": "integer"
+          },
+          "metric_epoch": {
+            "type": "number"
+          },
+          "metric_total_epochs": {
+            "type": "number"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "completed_units",
+          "total_units",
+          "observed_at"
+        ],
+        "description": "Member observations for display. These values are not a saved recovery point and must not be summed across tensor or pipeline ranks."
+      },
+      "DistributedCustomerMember": {
+        "type": "object",
+        "properties": {
+          "member_id": {
+            "type": "string"
+          },
+          "node_rank": {
+            "type": "integer"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "started": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "observed_progress": {
+            "$ref": "#/components/schemas/DistributedObservedProgress"
+          }
+        },
+        "required": [
+          "member_id",
+          "node_rank",
+          "ready",
+          "started",
+          "active"
+        ]
+      },
+      "DistributedCustomerGroup": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "stage_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "assembling",
+              "prepared",
+              "starting",
+              "running",
+              "stopping",
+              "closed"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "cleanup_state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "complete"
+            ]
+          },
+          "required_members": {
+            "type": "integer"
+          },
+          "ready_members": {
+            "type": "integer"
+          },
+          "active_members": {
+            "type": "integer"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DistributedCustomerMember"
+            }
+          }
+        },
+        "required": [
+          "group_id",
+          "stage_id",
+          "generation",
+          "phase",
+          "cleanup_state",
+          "required_members",
+          "ready_members",
+          "active_members",
+          "members"
+        ],
+        "description": "Latest distributed attempt for a workload stage. Ready counts record completed preparation. Active counts require started work with unexpired execution authority. Outcome and resource cleanup are separate."
+      },
+      "DistributedLogChunk": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "member_id": {
+            "type": "string"
+          },
+          "node_rank": {
+            "type": "integer"
+          },
+          "stage_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "data_base64": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "Exact customer program bytes. Text provides a UTF-8 display representation."
+          }
+        },
+        "required": [
+          "group_id",
+          "member_id",
+          "node_rank",
+          "stage_id",
+          "generation",
+          "offset",
+          "text",
+          "data_base64"
+        ]
       }
     },
     "securitySchemes": {
@@ -14775,6 +14986,28 @@
                   ]
                 },
                 "description": "For a live snapshot, whether capture or response limits truncated the retained output. Cancellation can also omit output not received before termination."
+              },
+              "X-Nodus-Group-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Nodus group identifier for distributed snapshots."
+              },
+              "X-Nodus-Member-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Nodus member identifier for distributed snapshots."
+              },
+              "X-Nodus-Log-Expired": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "description": "Whether the distributed snapshot has passed its retention deadline."
               }
             }
           },
@@ -14816,9 +15049,18 @@
               "type": "integer"
             },
             "description": "Positive generation. Omit for the latest matching recorded log."
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Nodus distributed member identifier from workload detail. Required when selecting distributed logs."
           }
         ],
-        "description": "Returns a committed log artifact when available. If no artifact matches, returns the latest matching retained live snapshot within 24 hours after termination, limited to 8 MiB per attempt. This is a snapshot, not a live stream. Returns 404 when neither exists. X-Nodus-Stage-Id and X-Nodus-Generation identify the returned attempt."
+        "description": "Returns a committed log artifact when available. If no artifact matches, returns the latest matching retained live snapshot within 24 hours after termination, limited to 8 MiB per attempt. This is a snapshot, not a live stream. Returns 404 when neither exists. X-Nodus-Stage-Id and X-Nodus-Generation identify the returned attempt. A member_id selects the retained distributed member snapshot and honors stage and generation filters. Distributed logs remain available during cleanup and expire 24 hours after workload termination once the group is closed."
       }
     },
     "/v1/workloads/{id}/logs/live": {
@@ -14841,6 +15083,15 @@
               "type": "string"
             },
             "description": "Opaque cursor from the previous response."
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Nodus distributed member identifier from workload detail. Required when selecting distributed logs."
           }
         ],
         "responses": {
@@ -14857,7 +15108,8 @@
           "404": {
             "description": "Workload not found"
           }
-        }
+        },
+        "description": "Distributed member logs use a cursor bound to their group and member. Each response is byte-bounded. Expired closed groups return an empty page with truncated and expired set. Active groups retain logs during cleanup. The group shares an 8 MiB live log allowance."
       }
     },
     "/v1/workloads/{id}/outputs": {
@@ -14979,6 +15231,15 @@
               "type": "string"
             },
             "description": "Required to disambiguate duplicate output names across stages. Otherwise 409 ambiguous_output."
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Nodus member from the verified output listing. Required for same-named distributed shards. Otherwise 409 ambiguous_output."
           }
         ],
         "description": "404 when absent. 410 when a legacy local-only artifact cannot be retrieved. Verify X-Nodus-SHA256 when present."

@@ -8,6 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
+from urllib.parse import quote
 
 from .errors import NodusError, ValidationError
 
@@ -24,15 +25,20 @@ def output_destinations(root: Path, outputs: list) -> list[tuple[object, Path]]:
     seen = set()
     planned = []
     for output in outputs:
-        for name in (output.stage_id, output.name):
+        for name in (output.stage_id, *output.name.split("/")):
             if not portable_output_name(name):
                 raise ValidationError("Output stage and file names must be portable single path components.")
-        destination = root / output.stage_id / output.name
+        directory = root / output.stage_id
+        if output.member_id:
+            if not re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", output.member_id) or output.member_id in (".", ".."):
+                raise ValidationError("Invalid output member identity.")
+            directory = directory / ("member-" + quote(output.member_id, safe=""))
+        destination = directory / output.name
         key = str(destination).casefold()
         if key in seen:
             raise ValidationError("Output names collide on the local filesystem.")
         seen.add(key)
-        for part in (root, *root.parents, destination.parent, destination):
+        for part in (destination, *destination.parents):
             if part.is_symlink():
                 raise ValidationError("Download destinations cannot contain symbolic links.")
         if destination.exists():
@@ -42,10 +48,9 @@ def output_destinations(root: Path, outputs: list) -> list[tuple[object, Path]]:
 
 
 def download_path(workload_id: str, name: str) -> str:
-    if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name)
-            or name in (".", "..")):
-        raise ValidationError("Output name must be a single name containing letters, digits, dots, underscores or hyphens.")
-    return f"/v1/workloads/{workload_id}/outputs/{name}"
+    if (not isinstance(name, str) or len(name) > 1024 or any(not portable_output_name(part) for part in name.split("/"))):
+        raise ValidationError("Output name must contain portable relative path components.")
+    return f"/v1/workloads/{workload_id}/outputs/{quote(name, safe='')}"
 
 
 @contextmanager

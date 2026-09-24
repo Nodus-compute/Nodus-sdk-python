@@ -269,6 +269,8 @@ class Output:
     sink_rows: int | None = None
     sink_error: str = ""
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    group_id: str = ""
+    member_id: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Output":
@@ -277,7 +279,8 @@ class Output:
                    sha256=_text(d.get("sha256")), bytes=_int(d.get("bytes")),
                    download=_text(d.get("download")), sink_state=_text(d.get("sink_state")),
                    sink_rows=_int(d["sink_rows"]) if d.get("sink_rows") is not None else None,
-                   sink_error=_text(d.get("sink_error")), raw=d)
+                   sink_error=_text(d.get("sink_error")), group_id=_text(d.get("group_id")),
+                   member_id=_text(d.get("member_id")), raw=d)
 
 
 #: An object holding a tar of a checkpoint subtree rather than a single file.

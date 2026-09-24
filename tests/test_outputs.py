@@ -281,3 +281,44 @@ def test_sink_error_clears_only_on_authoritative_recovery(asynchronous, finish):
         getattr(workload, finish)()
         assert workload.sink_error == ''
     exercise(handler, asynchronous, async_action if asynchronous else sync_action)
+
+@pytest.mark.parametrize('asynchronous', [False, True])
+def test_distributed_download_all_keeps_member_shards_distinct(asynchronous, tmp_path):
+    members = ['dg-test:rank:0', 'dg-test:rank:1']
+    payloads = {member: f'independent weights {rank}'.encode() for rank, member in enumerate(members)}
+    def handler(req):
+        if req.url.path.endswith('/outputs'):
+            return httpx.Response(200, json={'outputs': [dict(ROW, name='shards/model.bin',
+                group_id='dg-test', member_id=member, download='https://attacker.invalid/steal') for member in members]})
+        assert req.url.host == 'nodus.invalid'
+        assert req.url.params['stage'] == 'train'
+        assert req.url.path == '/v1/workloads/wl_test/outputs/shards/model.bin'
+        payload = payloads[req.url.params['member_id']]
+        return httpx.Response(200, content=payload, headers={'X-Nodus-SHA256': hashlib.sha256(payload).hexdigest()})
+    def action(c):
+        w = nodus.AsyncWorkload(c) if asynchronous else nodus.Workload(c)
+        w.id = 'wl_test'
+        return w.download(tmp_path)
+    saved = exercise(handler, asynchronous, action)
+    assert [p.read_bytes() for p in saved] == list(payloads.values())
+    assert saved == [tmp_path / 'train' / f'member-dg-test%3Arank%3A{rank}' / 'shards' / 'model.bin' for rank in range(2)]
+
+@pytest.mark.parametrize('asynchronous', [False, True])
+@pytest.mark.parametrize('member', ['../other', 'member&stage=other', '', 'x\r\nsecret'])
+def test_distributed_download_rejects_invalid_member_before_request(asynchronous, member, tmp_path):
+    def handler(req):
+        pytest.fail('invalid member reached transport')
+    with pytest.raises((ValueError, nodus.NodusError)):
+        exercise(handler, asynchronous, lambda c: c.download_output('wl_test', 'model', tmp_path / 'model', member_id=member))
+
+def test_distributed_download_rejects_symlinked_nested_output(tmp_path):
+    from nodus._outputs import output_destinations
+    root = tmp_path / 'root'
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    parent = root / 'train' / 'member-dg%3A0'
+    parent.mkdir(parents=True)
+    (parent / 'shards').symlink_to(outside, target_is_directory=True)
+    output = nodus.Output.from_dict(dict(ROW, member_id='dg:0', name='shards/model.bin'))
+    with pytest.raises(nodus.NodusError, match='symbolic'):
+        output_destinations(root, [output])
