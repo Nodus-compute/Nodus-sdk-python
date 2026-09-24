@@ -1,6 +1,7 @@
 """Shared drafts retain exact edits and reject stale revision writes."""
 
 import json
+from typing import get_type_hints
 
 import httpx
 import pytest
@@ -29,6 +30,10 @@ def test_empty_run_draft_does_not_invent_values(asynchronous):
     ({"command": "python train.py", "max_cost_usd": 2.5},
      {"command": "python train.py", "max_cost_usd": 2.5, "image": "python:3.12"}),
     ({"gpu": None, "max_cost_usd": None}, {"command": "python train.py", "image": "python:3.12"}),
+    ({"vcpus": 2.5, "disk_gb": 80.5, "data_regions": ["us-east-1"]},
+     {"vcpus": 2.5, "disk_gb": 80.5, "data_regions": ["us-east-1"], "image": "python:3.12"}),
+    ({"vcpus": None, "disk_gb": None, "data_regions": []}, {"data_regions": [], "image": "python:3.12"}),
+    ({"data_regions": None}, {"image": "python:3.12"}),
     ({"name": "", "checkpoint_paths": [], "result_paths": ["results/model.bin"]},
      {"name": "", "checkpoint_paths": [], "result_paths": ["results/model.bin"], "image": "python:3.12"}),
     ({"vcpus": 2.5, "disk_gb": 80.5, "data_regions": ["us-east-1", "eu-west-1"]},
@@ -121,7 +126,7 @@ def test_invalid_local_run_draft_arguments_never_reach_transport(asynchronous, r
     {"checkpoint_paths": [None]}, {"name": False}, {"memory_gb": float("inf")},
     {"max_cost_usd": float("nan")},
     {"vcpus": True}, {"vcpus": 0}, {"vcpus": -1}, {"vcpus": "4"}, {"vcpus": None},
-    {"disk_gb": 0}, {"disk_gb": float("inf")}, {"vcpus": float("nan")}, {"disk_gb": 10 ** 309},
+    {"disk_gb": "80"}, {"disk_gb": 0}, {"disk_gb": float("inf")}, {"vcpus": float("nan")}, {"disk_gb": 10 ** 309},
     {"data_regions": None}, {"data_regions": "us-east-1"}, {"data_regions": [None]}, {"data_regions": [{}]},
     {"data_regions": ["us-east-1", "us-east-1"]}, {"data_regions": [""]},
     {"data_regions": ["us,east"]}, {"data_regions": ["us\x7feast"]}, {"data_regions": ["us\neast"]},
@@ -164,6 +169,9 @@ def test_supported_saved_fields_remain_typed_without_defaults(asynchronous):
                      lambda operations: operations.get_run_draft())
     assert isinstance(draft, nodus.RunDraft)
     assert draft.values == values
+    for name, expected in {"vcpus": float, "disk_gb": float, "data_regions": list[str]}.items():
+        assert get_type_hints(nodus.RunDraftValues)[name] == expected
+        assert get_type_hints(nodus.RunDraftPatch)[name] == expected | None
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])

@@ -424,7 +424,7 @@
                 "anyOf": [
                   {
                     "items": {
-                      "description": "Region name up to 128 UTF-8 bytes without whitespace, commas or control characters.",
+                      "description": "The server additionally enforces a limit of 128 UTF-8 bytes and rejects whitespace, commas and control characters.",
                       "maxLength": 128,
                       "minLength": 1,
                       "type": "string"

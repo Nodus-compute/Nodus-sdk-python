@@ -8400,7 +8400,7 @@
                 "anyOf": [
                   {
                     "items": {
-                      "description": "Region name up to 128 UTF-8 bytes without whitespace, commas or control characters.",
+                      "description": "The server additionally enforces a limit of 128 UTF-8 bytes and rejects whitespace, commas and control characters.",
                       "maxLength": 128,
                       "minLength": 1,
                       "type": "string"
@@ -8537,7 +8537,7 @@
       },
       "RunDraftValues": {
         "type": "object",
-        "maxProperties": 9,
+        "maxProperties": 12,
         "additionalProperties": false,
         "description": "Explicitly saved partial form values. Missing fields have no saved value. Reading or editing a draft does not authorize spending.",
         "properties": {
@@ -8595,6 +8595,25 @@
             },
             "maxItems": 8,
             "type": "array"
+          },
+          "vcpus": {
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "disk_gb": {
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "data_regions": {
+            "items": {
+              "description": "The server additionally enforces a limit of 128 UTF-8 bytes and rejects whitespace, commas and control characters.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "type": "array",
+            "uniqueItems": true
           }
         }
       },
