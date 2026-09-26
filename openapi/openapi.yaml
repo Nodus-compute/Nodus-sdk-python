@@ -8533,7 +8533,7 @@
                 "type": "string"
               },
               "gpu": {
-                "description": "GPU model; defaults to the workspace's.",
+                "description": "GPU model, defaulting to the workspace's.",
                 "type": "string"
               },
               "gpu_count": {
