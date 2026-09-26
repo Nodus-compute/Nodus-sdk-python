@@ -3240,11 +3240,10 @@
           },
           "environment": {
             "type": "string",
-            "enum": [
-              "pytorch-cuda"
-            ],
-            "description": "Operator-qualified PyTorch and CUDA image with the selected development tool. Customers cannot override its image digest."
+            "enum": ["pytorch-cuda", "pytorch-rocm", "pytorch-cpu", "custom-cuda", "custom-rocm", "custom-cpu"],
+            "description": "Qualified software environment for NVIDIA, AMD or CPU compute. Custom environments require a team-visible runtime_id."
           },
+          "runtime_id": {"type": "string", "pattern": "^nodus:runtime:[a-f0-9]{64}$", "description": "Optional immutable image identity from capabilities.runtimes. Selects the workspace Linux distribution and software. Must match environment and remain qualified and visible to the team. Omission preserves the existing managed environment. The selected runtime cannot be changed when editing a saved project."},
           "editor": {
             "type": "string",
             "enum": [
@@ -3265,26 +3264,26 @@
           },
           "gpu": {
             "type": "string",
-            "minLength": 1,
+            "minLength": 0,
             "maxLength": 64,
-            "description": "Required GPU model, not a supplier SKU. Launch requires an exact qualified configuration and eligible capacity."
+            "description": "GPU model, not a supplier SKU. Use an empty string for CPU instances. Launch requires an exact qualified configuration and eligible capacity."
           },
           "gpu_count": {
             "type": "integer",
-            "enum": [
-              1,
-              2,
-              4,
-              8
-            ],
-            "description": "Exact GPU count on one machine. These accepted request values do not establish hardware qualification or current availability."
+            "enum": [0, 1, 2, 4, 8],
+            "description": "Exact GPU count on one machine. Use zero for CPU instances. These accepted request values do not establish hardware qualification or current availability."
           },
           "gpu_memory_gb": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "maximum": 1024,
-            "description": "Minimum required memory per GPU in GB, not the sum across devices."
+            "description": "Minimum required memory per GPU in GB, not the sum across devices. Positive for GPU instances and zero for CPU instances."
           },
+          "compute_class": {"type": "string", "enum": ["accelerator", "vm"], "description": "Omission retains GPU execution. vm requests a CPU-only workspace and requires capabilities.cpu_instances, a CPU environment, empty gpu, zero gpu_count and zero gpu_memory_gb."},
+          "gpu_form_factor": {"type": "string", "enum": ["", "pcie", "sxm", "nvl"], "description": "Optional required GPU form factor. Omission permits any form factor. Requires direct workspace compute and cannot be set for CPU instances. A selected form factor is enforced during quoting and placement."},
+          "vcpus": {"type": "integer", "minimum": 0, "maximum": 256, "description": "Minimum vCPUs on a GPU machine. Omission or zero keeps its included resources. CPU instances require exactly 2, 4, 8, 16 or 32 vCPUs."},
+          "host_memory_gb": {"type": "number", "minimum": 0, "maximum": 4096, "description": "Minimum system RAM in GB, separate from GPU memory. Omission or zero keeps included RAM on GPU machines. CPU instances require a positive value. Custom RAM requires direct workspace compute."},
+          "disk_gb": {"type": "integer", "anyOf": [{"const": 0}, {"minimum": 80, "maximum": 2048}], "description": "Runtime storage in decimal GB. Omission or zero preserves the existing 80 GB floor. Explicit sizes from 80 through 2048 are accepted. This is separate from the saved project capacity in size_gb. Restoring saved files can require additional allocation."},
           "budget_usd": {
             "type": "number",
             "description": "Deprecated compatibility field. Customer spending limits are not enforced.",
@@ -3307,6 +3306,26 @@
             "maxLength": 8192,
             "description": "Optional plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Account SSH keys can also provide access to direct sessions."
           }
+        },
+        "if": {"required": ["compute_class"], "properties": {"compute_class": {"const": "vm"}}},
+        "then": {
+          "required": ["vcpus", "host_memory_gb"],
+          "properties": {
+            "environment": {"enum": ["pytorch-cpu", "custom-cpu"]},
+            "gpu": {"const": ""},
+            "gpu_count": {"const": 0},
+            "gpu_memory_gb": {"const": 0},
+            "gpu_form_factor": {"const": ""},
+            "vcpus": {"enum": [2, 4, 8, 16, 32]},
+            "host_memory_gb": {"exclusiveMinimum": 0}
+          }
+        },
+        "else": {
+          "properties": {
+            "gpu": {"minLength": 1},
+            "gpu_count": {"enum": [1, 2, 4, 8]},
+            "gpu_memory_gb": {"exclusiveMinimum": 0}
+          }
         }
       },
       "ResearchWorkspaceCapabilities": {
@@ -3322,6 +3341,21 @@
           "workload_source_limit_bytes"
         ],
         "properties": {
+          "runtimes": {
+            "type": "array",
+            "description": "Qualified workspace images visible to the authenticated team. These select container userspace, not the host kernel. Registry references and other teams' custom images are not exposed.",
+            "items": {
+              "type": "object", "required": ["id", "name", "os", "os_name", "environment", "custom"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^nodus:runtime:[a-f0-9]{64}$"},
+                "name": {"type": "string"},
+                "os": {"type": "string", "enum": ["ubuntu-22.04", "ubuntu-24.04", "debian-12", "debian-13"]},
+                "os_name": {"type": "string"},
+                "environment": {"type": "string", "enum": ["pytorch-cuda", "pytorch-rocm", "pytorch-cpu", "custom-cuda", "custom-rocm", "custom-cpu"]},
+                "custom": {"type": "boolean"}
+              }
+            }
+          },
           "available": {
             "type": "boolean",
             "description": "Whether workspace configuration and browser access are enabled on this deployment. Not a guarantee of qualified hardware, live capacity or successful admission."
@@ -3349,7 +3383,7 @@
                 "id": {
                   "type": "string",
                   "enum": [
-                    "pytorch-cuda"
+                    "pytorch-cuda", "pytorch-rocm", "pytorch-cpu"
                   ]
                 },
                 "name": {
@@ -3374,6 +3408,8 @@
             },
             "description": "Accepted single-machine request counts. This is not a per-model qualification or availability inventory."
           },
+          "cpu_instances": {"type": "boolean", "description": "A qualified CPU image and direct CPU lifecycle are enabled. Availability is checked for each requested vCPU count."},
+          "host_resource_configuration": {"type": "boolean", "description": "Direct workspace compute can enforce custom vCPU and system RAM requirements."},
           "qualified_gpu_configurations": {
             "type": "array",
             "description": "Canonical GPU model and count pairs qualified for the deployment's exact active image and runtime artifacts. An empty array means no configuration is currently qualified. This is not live capacity or a price quote. Older servers may omit this field. Existing saved configurations remain readable even when absent from this list.",
@@ -3507,7 +3543,7 @@
         "properties": {
           "hourly_usd": {"type": "number", "exclusiveMinimum": 0, "description": "Estimated USD per hour for the entire machine. Do not multiply by gpu_count."},
           "currency": {"type": "string", "const": "USD"},
-          "gpu_count": {"type": "integer", "enum": [1, 2, 4, 8]},
+          "gpu_count": {"type": "integer", "enum": [0, 1, 2, 4, 8]},
           "observed_at": {"type": "string", "format": "date-time"},
           "expires_at": {"type": "string", "format": "date-time", "description": "Refresh the estimate after this timestamp."},
           "estimate_only": {"type": "boolean", "const": true}
@@ -16955,7 +16991,7 @@
     "/v1/research-workspaces": {
       "post": {
         "operationId": "createResearchWorkspace",
-        "summary": "Create a saved GPU research workspace",
+        "summary": "Create a saved research workspace",
         "tags": ["Research workspaces"],
         "description": "Saves a unique named project and its environment configuration without starting compute. Requires a Bearer API key or console session. Duplicate names are rejected. This operation does not require an Idempotency-Key and is not an idempotent create. Use start to admit a compute session.",
         "requestBody": {
@@ -17009,7 +17045,8 @@
         "operationId": "quoteWorkspacePrice",
         "summary": "Preview the whole-machine hourly price",
         "tags": ["Research workspaces"],
-        "description": "Read-only estimate for the supplied configuration, including exact GPU count and per-device memory. Send the same configuration used for workspace creation. A successful estimate does not reserve capacity, lock the price or start compute. Refresh expired estimates before starting. Launch checks price and capacity again against session and account spending controls.",
+        "description": "Read-only estimate for the supplied configuration, including CPU or GPU requirements and runtime storage. Send the same configuration used for workspace creation. For a saved workspace, include workspace_id to account for the additional disk needed to restore its files. A successful estimate does not reserve capacity, lock the price or start compute. Refresh expired estimates before starting. Launch checks price, capacity and account funding again.",
+        "parameters": [{"name": "workspace_id", "in": "query", "schema": {"type": "string"}, "description": "Optional saved workspace owned by this account. The supplied configuration must match its current saved revision. Includes restore disk in direct-compute estimates. Returns 404 for an unavailable workspace or 409 for a changed configuration."}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResearchWorkspaceConfiguration"}}}},
         "responses": {
           "200": {"description": "Current exact-configuration estimate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WorkspacePricePreview"}}}},
