@@ -2644,7 +2644,7 @@
       "id": "workspaces.create",
       "version": "v1",
       "name": "create_workspace",
-      "description": "Create a workspace: a named GPU machine configuration with persistent files. Creating does not rent compute; start_workspace does.",
+      "description": "Create a workspace: a named GPU machine configuration with persistent files. Creating does not rent compute. start_workspace does.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2948,7 +2948,7 @@
       "id": "workspaces.connect",
       "version": "v1",
       "name": "get_workspace_connection",
-      "description": "Get how to reach a running workspace: the VS Code or JupyterLab link, or the SSH host, user, command and ssh_config entry. Share these with the person; do not paste tokens elsewhere.",
+      "description": "Get how to reach a running workspace: the VS Code or JupyterLab link, or the SSH host, user, command and ssh_config entry. Share these with the person and do not paste tokens elsewhere.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -2989,7 +2989,7 @@
       "id": "workspaces.run",
       "version": "v1",
       "name": "run_in_workspace",
-      "description": "Run a shell command as a job on the workspace's saved files, with its own GPU and budget, without the workspace being started. Returns a workload receipt; read its logs with get_workload_logs.",
+      "description": "Run a shell command as a job on the workspace's saved files, with its own GPU and budget, without the workspace being started. Returns a workload receipt. Read its logs with get_workload_logs.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -3014,7 +3014,7 @@
                 "type": "string"
               },
               "gpu": {
-                "description": "GPU model; defaults to the workspace's.",
+                "description": "GPU model, defaulting to the workspace's.",
                 "type": "string"
               },
               "gpu_count": {
