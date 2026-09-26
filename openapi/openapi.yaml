@@ -8222,6 +8222,442 @@
         ],
         "type": "object"
       },
+      "OperationWorkspacesCapabilitiesArguments": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "OperationWorkspacesListArguments": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "OperationWorkspacesGetArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesCreateArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace": {
+            "additionalProperties": false,
+            "description": "Workspace configuration. Read get_workspace_capabilities first for valid GPU models, counts and environments.",
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "editor": {
+                "description": "Which tool the workspace opens with. Both stay available.",
+                "enum": [
+                  "vscode",
+                  "jupyter"
+                ],
+                "type": "string"
+              },
+              "environment": {
+                "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model from get_workspace_capabilities, such as A100 or RTX 4090.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "description": "Memory per GPU in GB, matching the chosen model.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "max_hours": {
+                "description": "A session stops itself after this many hours.",
+                "maximum": 168,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "description": "Workspace name shown in the console.",
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ref": {
+                "description": "Optional git ref for the repository.",
+                "type": "string"
+              },
+              "repository": {
+                "description": "Optional git repository cloned into /workspace on first start.",
+                "type": "string"
+              },
+              "size_gb": {
+                "description": "Saved project storage in GB for /workspace.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "gpu",
+              "gpu_count",
+              "gpu_memory_gb",
+              "max_hours",
+              "size_gb"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "workspace",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesConfigureArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "additionalProperties": false,
+            "description": "The complete new configuration.",
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "editor": {
+                "description": "Which tool the workspace opens with. Both stay available.",
+                "enum": [
+                  "vscode",
+                  "jupyter"
+                ],
+                "type": "string"
+              },
+              "environment": {
+                "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model from get_workspace_capabilities, such as A100 or RTX 4090.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "description": "Memory per GPU in GB, matching the chosen model.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "max_hours": {
+                "description": "A session stops itself after this many hours.",
+                "maximum": 168,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "description": "Workspace name shown in the console.",
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ref": {
+                "description": "Optional git ref for the repository.",
+                "type": "string"
+              },
+              "repository": {
+                "description": "Optional git repository cloned into /workspace on first start.",
+                "type": "string"
+              },
+              "size_gb": {
+                "description": "Saved project storage in GB for /workspace.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "gpu",
+              "gpu_count",
+              "gpu_memory_gb",
+              "max_hours",
+              "size_gb"
+            ],
+            "type": "object"
+          },
+          "configuration_revision": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "configuration_revision",
+          "configuration",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesStartArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesStopArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "session_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesConnectArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "tool": {
+            "enum": [
+              "editor",
+              "notebook",
+              "ssh"
+            ],
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesRunArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "job": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap for this job.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "command": {
+                "description": "Shell command run in /workspace.",
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model; defaults to the workspace's.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "command",
+              "budget_usd"
+            ],
+            "type": "object"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "job",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesWorkloadsArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesSessionsArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesScheduleArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "schedule": {
+            "additionalProperties": false,
+            "properties": {
+              "ready_by": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "stop_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ready_by"
+            ],
+            "type": "object"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "schedule",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesUnscheduleArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
       "OperationWorkloadsSubmitArguments": {
         "additionalProperties": false,
         "properties": {
@@ -8382,6 +8818,45 @@
           },
           {
             "$ref": "#/components/schemas/OperationAgentsRunCancelArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesCapabilitiesArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesListArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesGetArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesCreateArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesConfigureArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesStartArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesStopArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesConnectArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesRunArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesWorkloadsArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesSessionsArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesScheduleArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesUnscheduleArguments"
           }
         ]
       },
@@ -11063,6 +11538,16 @@
               "assistant_template": {
                 "type": "string"
               },
+              "attempt_budget_usd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "bootstrap": {
                 "anyOf": [
                   {
@@ -11298,6 +11783,16 @@
                 "properties": {
                   "assistant_template": {
                     "type": "string"
+                  },
+                  "attempt_budget_usd": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "bootstrap": {
                     "anyOf": [

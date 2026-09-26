@@ -1566,6 +1566,16 @@
               "assistant_template": {
                 "type": "string"
               },
+              "attempt_budget_usd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "bootstrap": {
                 "anyOf": [
                   {
@@ -1819,6 +1829,16 @@
                 "properties": {
                   "assistant_template": {
                     "type": "string"
+                  },
+                  "attempt_budget_usd": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "bootstrap": {
                     "anyOf": [
@@ -2540,6 +2560,663 @@
         "api",
         "hosted_mcp",
         "local_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.capabilities",
+      "version": "v1",
+      "name": "get_workspace_capabilities",
+      "description": "Discover the GPU models, counts and software environments a workspace can be created with, without starting compute.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "required_scope": "workspaces:read",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.list",
+      "version": "v1",
+      "name": "list_workspaces",
+      "description": "List the team's workspaces with their state and configuration, without starting compute.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "required_scope": "workspaces:read",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.get",
+      "version": "v1",
+      "name": "get_workspace",
+      "description": "Read one workspace: state, configuration, current session and meter, and which connections are ready.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "required_scope": "workspaces:read",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.create",
+      "version": "v1",
+      "name": "create_workspace",
+      "description": "Create a workspace: a named GPU machine configuration with persistent files. Creating does not rent compute; start_workspace does.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace": {
+            "additionalProperties": false,
+            "description": "Workspace configuration. Read get_workspace_capabilities first for valid GPU models, counts and environments.",
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "editor": {
+                "description": "Which tool the workspace opens with. Both stay available.",
+                "enum": [
+                  "vscode",
+                  "jupyter"
+                ],
+                "type": "string"
+              },
+              "environment": {
+                "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model from get_workspace_capabilities, such as A100 or RTX 4090.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "description": "Memory per GPU in GB, matching the chosen model.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "max_hours": {
+                "description": "A session stops itself after this many hours.",
+                "maximum": 168,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "description": "Workspace name shown in the console.",
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ref": {
+                "description": "Optional git ref for the repository.",
+                "type": "string"
+              },
+              "repository": {
+                "description": "Optional git repository cloned into /workspace on first start.",
+                "type": "string"
+              },
+              "size_gb": {
+                "description": "Saved project storage in GB for /workspace.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "gpu",
+              "gpu_count",
+              "gpu_memory_gb",
+              "max_hours",
+              "size_gb"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "workspace",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.configure",
+      "version": "v1",
+      "name": "configure_workspace",
+      "description": "Replace a stopped workspace's configuration, such as its GPU model or count, using the configuration_revision read from get_workspace.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "additionalProperties": false,
+            "description": "The complete new configuration.",
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "editor": {
+                "description": "Which tool the workspace opens with. Both stay available.",
+                "enum": [
+                  "vscode",
+                  "jupyter"
+                ],
+                "type": "string"
+              },
+              "environment": {
+                "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model from get_workspace_capabilities, such as A100 or RTX 4090.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "description": "Memory per GPU in GB, matching the chosen model.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "max_hours": {
+                "description": "A session stops itself after this many hours.",
+                "maximum": 168,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "description": "Workspace name shown in the console.",
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ref": {
+                "description": "Optional git ref for the repository.",
+                "type": "string"
+              },
+              "repository": {
+                "description": "Optional git repository cloned into /workspace on first start.",
+                "type": "string"
+              },
+              "size_gb": {
+                "description": "Saved project storage in GB for /workspace.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "gpu",
+              "gpu_count",
+              "gpu_memory_gb",
+              "max_hours",
+              "size_gb"
+            ],
+            "type": "object"
+          },
+          "configuration_revision": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "configuration_revision",
+          "configuration",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.start",
+      "version": "v1",
+      "name": "start_workspace",
+      "description": "Rent a GPU machine for the workspace and start its tools. This spends money until stop_workspace or the session limit. Poll get_workspace until state is running.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.stop",
+      "version": "v1",
+      "name": "stop_workspace",
+      "description": "Save /workspace and release the machine. Pass the session id from get_workspace. Saved files are restored on the next start.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "session_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.connect",
+      "version": "v1",
+      "name": "get_workspace_connection",
+      "description": "Get how to reach a running workspace: the VS Code or JupyterLab link, or the SSH host, user, command and ssh_config entry. Share these with the person; do not paste tokens elsewhere.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tool": {
+            "enum": [
+              "editor",
+              "notebook",
+              "ssh"
+            ],
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "required_scope": "workspaces:read",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.run",
+      "version": "v1",
+      "name": "run_in_workspace",
+      "description": "Run a shell command as a job on the workspace's saved files, with its own GPU and budget, without the workspace being started. Returns a workload receipt; read its logs with get_workload_logs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "job": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap for this job.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "command": {
+                "description": "Shell command run in /workspace.",
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model; defaults to the workspace's.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "command",
+              "budget_usd"
+            ],
+            "type": "object"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "job",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.workloads",
+      "version": "v1",
+      "name": "list_workspace_workloads",
+      "description": "List the jobs run on a workspace's files and any pending submissions.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "required_scope": "workspaces:read",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.sessions",
+      "version": "v1",
+      "name": "list_workspace_sessions",
+      "description": "List a workspace's past compute sessions: GPU, rate, duration and charge for each.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "required_scope": "workspaces:read",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.schedule",
+      "version": "v1",
+      "name": "schedule_workspace",
+      "description": "Have the workspace ready by a time, and optionally stopped at another. Times are RFC 3339 and at least 15 minutes ahead.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "schedule": {
+            "additionalProperties": false,
+            "properties": {
+              "ready_by": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "stop_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ready_by"
+            ],
+            "type": "object"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "schedule",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp"
+      ]
+    },
+    {
+      "id": "workspaces.unschedule",
+      "version": "v1",
+      "name": "cancel_workspace_schedule",
+      "description": "Cancel a workspace's scheduled readiness.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp"
       ]
     }
   ]
