@@ -17045,7 +17045,8 @@
         "operationId": "quoteWorkspacePrice",
         "summary": "Preview the whole-machine hourly price",
         "tags": ["Research workspaces"],
-        "description": "Read-only estimate for the supplied configuration, including CPU or GPU requirements and runtime storage. Send the same configuration used for workspace creation. A successful estimate does not reserve capacity, lock the price or start compute. Refresh expired estimates before starting. Launch checks price and capacity again against session and account spending controls.",
+        "description": "Read-only estimate for the supplied configuration, including CPU or GPU requirements and runtime storage. Send the same configuration used for workspace creation. For a saved workspace, include workspace_id to account for the additional disk needed to restore its files. A successful estimate does not reserve capacity, lock the price or start compute. Refresh expired estimates before starting. Launch checks price, capacity and account funding again.",
+        "parameters": [{"name": "workspace_id", "in": "query", "schema": {"type": "string"}, "description": "Optional saved workspace owned by this account. The supplied configuration must match its current saved revision. Includes restore disk in direct-compute estimates. Returns 404 for an unavailable workspace or 409 for a changed configuration."}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResearchWorkspaceConfiguration"}}}},
         "responses": {
           "200": {"description": "Current exact-configuration estimate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WorkspacePricePreview"}}}},
