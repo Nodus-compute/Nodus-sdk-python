@@ -1,10 +1,43 @@
-# Run your own RL code or a prepared recipe
+# Run RL: an example, your own code, or a prepared recipe
 
-You can start with your own training command and optional data. You do not need
-to select a catalog environment. To show reported RL task progress, add the
-optional `rl` metadata to a normal run:
+## Start from an example
+
+Every environment in the catalog lists the examples you can run today, with the
+baseline and any training gain that was measured by running them:
 
 ```python
+def show_examples(client):
+    for environment in client.rl.list_environments():
+        for example in environment.examples:
+            print(environment.id, example.name, example.mode,
+                  example.baseline_pass_rate, example.measured_change_pp,
+                  example.runtime_minutes)
+```
+
+An environment with an empty `examples` list is listed for reference and has no
+runnable command yet.
+
+Run an example with the same command, image, output file and RL setup the
+console uses. `run_arguments()` supplies everything `run()` needs:
+
+```python
+def run_example(client, *, environment_id, example_name, stable_run_id):
+    environment = next(e for e in client.rl.list_environments() if e.id == environment_id)
+    example = next(x for x in environment.examples if x.name == example_name)
+    return client.run(idempotency_key=stable_run_id, **example.run_arguments())
+```
+
+The command is passed through a shell, as the console does, because an example
+chains its install, download and run steps with `&&`.
+
+## Run your own RL code
+
+You do not need a catalog environment. Add an `RLSetup` to a normal run so the
+console shows your reported progress and compares scores before and after:
+
+```python
+import nodus
+
 def launch_custom_rl(
     client, *, image, source_asset_id, stable_run_id,
     model_label, planned_tasks,
@@ -18,15 +51,12 @@ def launch_custom_rl(
         outputs={"results": "outputs"},
         compute_class="accelerator",
         idempotency_key=stable_run_id,
-        extra={
-            "rl": {
-                "schema_version": 1,
-                "environment_id": "custom",
-                "mode": "train",
-                "model": model_label,
-                "planned_tasks": planned_tasks,
-            }
-        },
+        rl=nodus.RLSetup(
+            environment_id="custom",
+            mode="train",
+            model=model_label,
+            planned_tasks=planned_tasks,
+        ),
     )
 ```
 
@@ -35,10 +65,45 @@ image and explicit authorization. The command must write final results
 under `outputs` and write and load its own checkpoint state. Adjust the command
 and output path to match your project.
 
-The metadata describes your experiment. Your code implements the trainer,
-model, task limit and task-event reporting. Use `mode="evaluate"` for evaluation
-without training. Custom runs cannot set `rl.recipe` or claim managed recipe
-validation. A completed command without task events has no reported RL score.
+`RLSetup` checks the same rules the server does, so a wrong mode or an
+out-of-range task count raises `ValueError` before anything is submitted. Use
+`mode="evaluate"` for evaluation without training. `planned_tasks` is how many
+held-out tasks you intend to score.
+
+Inside `train.py`, report each scored attempt with `RLEventEmitter`. It writes
+one line per attempt to standard output, which Nodus turns into the live task
+feed and the before-and-after comparison:
+
+```python
+import os
+import time
+
+from nodus import RLEventEmitter
+
+def score_held_out(tasks, answer, check, phase="evaluation"):
+    events = RLEventEmitter(os.environ.get("NODUS_WORKLOAD_ID", "local"))
+    for task in tasks:
+        events.task_started(phase, task["id"])
+        started = time.monotonic()
+        passed = check(task, answer(task))
+        events.task_completed(
+            phase,
+            task["id"],
+            outcome="passed" if passed else "failed",
+            reward=1.0 if passed else 0.0,
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
+```
+
+Phases are `baseline`, `training` and `evaluation`. To show a real change,
+score the same held-out task IDs in `baseline` and in `evaluation`: a
+comparison between different tasks is reported as not like-for-like. An event
+the server would reject raises `nodus.EventValidationError` in your code,
+before it is written.
+
+Your code implements the trainer, model and task limit. A completed command
+without task events has no reported RL score. Custom runs cannot claim managed
+recipe validation.
 
 ## Use a prepared recipe
 

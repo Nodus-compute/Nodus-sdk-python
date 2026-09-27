@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add `RLEventEmitter` for reporting scored RL attempts from inside a workload. Events the server would reject raise `EventValidationError` before they are written, instead of after a machine is rented.
+- Add `rl=RLSetup(...)` to `run()`. Mode, environment and task-count rules are checked before submission. `extra={"rl": ...}` still works.
+- Add `client.rl.list_environments()`, returning the RL catalog with the examples you can run today and what was measured by running them. `RLExample.run_arguments()` supplies everything `run()` needs.
+
 ## 0.8.0
 
 - GPU names accept memory and count suffixes, as in `A100-40GB`, `A100-80GB:4` and `H100:2`, for `create` and `run`.

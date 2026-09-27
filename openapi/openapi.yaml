@@ -7516,6 +7516,149 @@
           "training_steps_max"
         ]
       },
+      "RLEnvironment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "source_url": {
+            "type": "string"
+          },
+          "code_license": {
+            "type": "string"
+          },
+          "data_license": {
+            "type": "string"
+          },
+          "reward_type": {
+            "type": "string"
+          },
+          "reward_description": {
+            "type": "string"
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "train",
+                "evaluate"
+              ]
+            }
+          },
+          "launch": {
+            "$ref": "#/components/schemas/RLEnvironmentLaunch"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "publisher",
+          "summary",
+          "category",
+          "source_url",
+          "modes"
+        ]
+      },
+      "RLEnvironmentExample": {
+        "type": "object",
+        "description": "One example you can run today. Every number was measured by running it.",
+        "properties": {
+          "dataset": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "train",
+              "evaluate"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string",
+            "description": "Shell command. Run it through a shell, as the console does: it chains steps with &&."
+          },
+          "baseline_pass_rate": {
+            "type": "number",
+            "description": "Held-out pass rate before training, as a fraction."
+          },
+          "trained_pass_rate": {
+            "type": "number"
+          },
+          "measured_change_pp": {
+            "type": "number",
+            "description": "Measured change in percentage points after training."
+          },
+          "runtime_minutes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dataset",
+          "name",
+          "command"
+        ]
+      },
+      "RLEnvironmentLaunch": {
+        "type": "object",
+        "description": "How to run this environment's examples. Absent when nothing is runnable yet.",
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "default_tasks": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "measured_on": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files each example writes and publishes for download."
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RLEnvironmentExample"
+            }
+          }
+        },
+        "required": [
+          "image",
+          "model",
+          "default_tasks",
+          "examples"
+        ]
+      },
       "RLRecipeDescriptor": {
         "type": "object",
         "additionalProperties": false,
@@ -19873,6 +20016,55 @@
           },
           "default": {
             "description": "Authentication, rate limits and transient failures apply. The JSON error and message fields describe the failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rl-environments": {
+      "get": {
+        "operationId": "listRLEnvironments",
+        "summary": "Discover RL environments and the examples you can run",
+        "tags": [
+          "RL"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "integer"
+                    },
+                    "reviewed_at": {
+                      "type": "string"
+                    },
+                    "environments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RLEnvironment"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "environments"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
             "content": {
               "application/json": {
                 "schema": {

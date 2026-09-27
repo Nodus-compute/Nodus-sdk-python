@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 __all__ = [
     "RL", "AsyncRL", "RLRecipe", "RLRunPreview", "RLEvent", "RLEventRow",
     "RLEventPage", "RLGradingReceipt", "RLGradingResults",
+    "RLEnvironment", "RLExample",
 ]
 
 
@@ -343,6 +344,111 @@ class RLGradingResults:
         )
 
 
+@dataclass(frozen=True)
+class RLExample:
+    """One runnable example from the catalog, with what was measured by running it.
+
+    ``run_arguments()`` returns everything ``Client.run`` needs. It never sets a
+    budget.
+    """
+
+    environment_id: str
+    name: str
+    dataset: str
+    mode: str
+    summary: str
+    command: str
+    image: str
+    model: str
+    planned_tasks: int
+    results: list[str]
+    baseline_pass_rate: float | None
+    measured_change_pp: float | None
+    runtime_minutes: int | None
+
+    def run_arguments(self) -> dict[str, Any]:
+        from ._rl_setup import RLSetup
+
+        outputs = {path.rsplit("/", 1)[-1]: path for path in self.results}
+        return {
+            # An example command chains steps with &&, so it needs a shell, as
+            # the console gives it. Split into argv, the && would be a literal
+            # argument and the run would fail on its first word.
+            "command": ["sh", "-c", self.command],
+            "image": self.image,
+            "outputs": outputs,
+            "rl": RLSetup(environment_id=self.environment_id, mode=self.mode,
+                          model=self.model, planned_tasks=self.planned_tasks),
+        }
+
+
+@dataclass(frozen=True)
+class RLEnvironment:
+    """One catalog environment. ``examples`` is empty when nothing is runnable yet."""
+
+    id: str
+    name: str
+    publisher: str
+    summary: str
+    category: str
+    source_url: str
+    modes: list[str]
+    examples: list[RLExample]
+    raw: dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "RLEnvironment":
+        row = _mapping(value, "environment")
+        environment_id = _required_text(row, "id")
+        examples: list[RLExample] = []
+        launch = row.get("launch")
+        if launch is not None:
+            launch = _mapping(launch, "launch")
+            image, model = _required_text(launch, "image"), _required_text(launch, "model")
+            planned = _required_int(launch, "default_tasks", 1)
+            results = _strings(launch.get("results"), "results")
+            for item in _rows(launch.get("examples"), "examples"):
+                minutes = item.get("runtime_minutes")
+                if minutes is not None and (isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 1):
+                    raise APIError("RL response field 'runtime_minutes' must be a positive integer", body=dict(item))
+                mode = item.get("mode", "evaluate")
+                if mode not in ("train", "evaluate"):
+                    raise APIError("RL response field 'mode' must be train or evaluate", body=dict(item))
+                examples.append(RLExample(
+                    environment_id=environment_id,
+                    name=_required_text(item, "name"),
+                    dataset=_required_text(item, "dataset"),
+                    mode=mode,
+                    summary=_optional_text(item, "summary") or "",
+                    command=_required_text(item, "command"),
+                    image=image,
+                    model=model,
+                    planned_tasks=planned,
+                    results=list(results),
+                    baseline_pass_rate=_optional_number(item, "baseline_pass_rate"),
+                    measured_change_pp=_optional_number(item, "measured_change_pp"),
+                    runtime_minutes=minutes,
+                ))
+        return cls(
+            id=environment_id,
+            name=_required_text(row, "name"),
+            publisher=_required_text(row, "publisher"),
+            summary=_required_text(row, "summary"),
+            category=_required_text(row, "category"),
+            source_url=_required_text(row, "source_url"),
+            modes=_strings(row.get("modes"), "modes"),
+            examples=examples,
+            raw=row,
+        )
+
+
+def _environments(body: Any) -> list[RLEnvironment]:
+    rows = body.get("environments") if isinstance(body, Mapping) else None
+    if not isinstance(rows, list):
+        raise APIError("RL environment response must contain an environments list", body=body)
+    return [RLEnvironment.from_dict(row) for row in rows]
+
+
 class RL:
     """Synchronous discovery, preview, and reviewed launch operations."""
 
@@ -360,6 +466,11 @@ class RL:
         path, params = _grading_request(workload_id, revision)
         response = self._client._request("GET", path, params=params)
         return RLGradingResults.from_dict(self._client._one(response, "GET", path))
+
+    def list_environments(self) -> list[RLEnvironment]:
+        """Everything the catalog lists, with the examples you can run today."""
+        path = "/v1/rl-environments"
+        return _environments(self._client._one(self._client._request("GET", path), "GET", path))
 
     def list_recipes(self) -> list[RLRecipe]:
         path = "/v1/rl-recipes"
@@ -418,6 +529,12 @@ class AsyncRL:
         path, params = _grading_request(workload_id, revision)
         response = await self._client._request("GET", path, params=params)
         return RLGradingResults.from_dict(self._client._one(response, "GET", path))
+
+    async def list_environments(self) -> list[RLEnvironment]:
+        """Everything the catalog lists, with the examples you can run today."""
+        path = "/v1/rl-environments"
+        response = await self._client._request("GET", path)
+        return _environments(self._client._one(response, "GET", path))
 
     async def list_recipes(self) -> list[RLRecipe]:
         path = "/v1/rl-recipes"
