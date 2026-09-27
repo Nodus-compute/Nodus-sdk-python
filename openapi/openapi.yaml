@@ -2741,7 +2741,10 @@
               "null"
             ],
             "propertyNames": {
-              "pattern": "^(?!nodus\\.)[a-z0-9_][a-z0-9._-]{0,63}$"
+              "pattern": "^[a-z0-9_][a-z0-9._-]{0,63}$",
+              "not": {
+                "pattern": "^nodus\\."
+              }
             },
             "additionalProperties": {
               "oneOf": [
