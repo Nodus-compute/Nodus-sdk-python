@@ -14,9 +14,9 @@ def test_named_workspace_creation_attachment_and_listing():
         assert json.loads(request.content)["workspace"]=={"name":"repo","mount":"/workspace"}
         return httpx.Response(202,json=SANDBOX)
     with sync_client(handler) as client:
-        assert client.workspaces.create("repo",size_gb=0.1)==record
+        assert client.volumes.create("repo",size_gb=0.1)==record
         client.sandboxes.create(image="python:3.12",workspace={"name":"repo","mount":"/workspace"})
-        assert client.workspaces.list()==[record]
+        assert client.volumes.list()==[record]
 
 def test_async_workspace_creation_and_attachment():
     import asyncio
@@ -33,8 +33,8 @@ def test_async_workspace_creation_and_attachment():
         async with nodus.AsyncClient(api_key="nk_live_test", base_url="https://nodus.invalid") as client:
             await client._http.aclose()
             client._http = httpx.AsyncClient(base_url="https://nodus.invalid", transport=httpx.MockTransport(handler))
-            assert await client.workspaces.create("repo", size_gb=0.1) == {"name": "repo"}
-            assert await client.workspaces.list() == [{"name": "repo"}]
+            assert await client.volumes.create("repo", size_gb=0.1) == {"name": "repo"}
+            assert await client.volumes.list() == [{"name": "repo"}]
             await client.sandboxes.create(image="python:3.12", workspace={"name": "repo", "mount": "/project"})
     asyncio.run(scenario())
 
@@ -71,12 +71,12 @@ def _retention_handler(request):
 
 def test_workspace_retention_metadata_preserves_raw_and_legacy_records():
     with sync_client(_retention_handler) as client:
-        _assert_retention_rows([client.workspaces.create(row["name"], size_gb=0.1) for row in _RETENTION_ROWS])
-        _assert_retention_rows(client.workspaces.list())
-        rows, cursor = client.workspaces.list_page()
+        _assert_retention_rows([client.volumes.create(row["name"], size_gb=0.1) for row in _RETENTION_ROWS])
+        _assert_retention_rows(client.volumes.list())
+        rows, cursor = client.volumes.list_page()
         _assert_retention_rows(rows)
         assert cursor == ""
-        _assert_retention_rows(list(client.workspaces.iter()))
+        _assert_retention_rows(list(client.volumes.iter()))
 
 
 def test_async_workspace_retention_metadata_preserves_raw_and_legacy_records():
@@ -87,11 +87,11 @@ def test_async_workspace_retention_metadata_preserves_raw_and_legacy_records():
         async with nodus.AsyncClient(api_key="nk_live_test", base_url="https://nodus.invalid") as client:
             await client._http.aclose()
             client._http = httpx.AsyncClient(base_url="https://nodus.invalid", transport=httpx.MockTransport(_retention_handler))
-            _assert_retention_rows([await client.workspaces.create(row["name"], size_gb=0.1) for row in _RETENTION_ROWS])
-            _assert_retention_rows(await client.workspaces.list())
-            rows, cursor = await client.workspaces.list_page()
+            _assert_retention_rows([await client.volumes.create(row["name"], size_gb=0.1) for row in _RETENTION_ROWS])
+            _assert_retention_rows(await client.volumes.list())
+            rows, cursor = await client.volumes.list_page()
             _assert_retention_rows(rows)
             assert cursor == ""
-            _assert_retention_rows([row async for row in client.workspaces.iter()])
+            _assert_retention_rows([row async for row in client.volumes.iter()])
 
     asyncio.run(scenario())

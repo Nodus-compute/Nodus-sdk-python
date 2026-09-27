@@ -25,12 +25,12 @@ def test_all_workspaces_beyond_old_bound_are_returned_once():
     expected = [{'id': f'ws_{i:04d}', 'name': f'workspace {i}'} for i in range(1507)]
     calls = []
     with sync_client(pages_handler(expected, calls)) as client:
-        assert list(client.workspaces.iter(limit=37)) == expected
+        assert list(client.volumes.iter(limit=37)) == expected
         assert len(calls) == 41 and len(set(calls)) == 41
         calls.clear()
-        assert client.workspaces.list() == expected
+        assert client.volumes.list() == expected
         assert calls == ['', 'opaque-page-1000']
-        rows, cursor = client.workspaces.list_page(limit=2)
+        rows, cursor = client.volumes.list_page(limit=2)
         assert rows == expected[:2] and cursor == 'opaque-page-2'
 
 
@@ -41,9 +41,9 @@ def test_async_workspace_page_traversal_matches_sync():
         async with nodus.AsyncClient(api_key='nk_live_test', base_url='https://nodus.invalid') as client:
             await client._http.aclose()
             client._http = httpx.AsyncClient(base_url='https://nodus.invalid', transport=httpx.MockTransport(pages_handler(expected, calls)))
-            assert [row async for row in client.workspaces.iter(limit=37)] == expected
+            assert [row async for row in client.volumes.iter(limit=37)] == expected
             assert len(calls) == 41
-            assert await client.workspaces.list() == expected
+            assert await client.volumes.list() == expected
     asyncio.run(scenario())
 
 
@@ -52,7 +52,7 @@ def test_async_workspace_page_traversal_matches_sync():
 def test_invalid_server_page_is_not_silent_truncation(response):
     with sync_client(lambda _: httpx.Response(200, json=response)) as client:
         with pytest.raises(APIError):
-            client.workspaces.list()
+            client.volumes.list()
 
 
 def test_repeated_cursor_fails_instead_of_returning_duplicates_or_looping():
@@ -63,7 +63,7 @@ def test_repeated_cursor_fails_instead_of_returning_duplicates_or_looping():
         return httpx.Response(200, json={'workspaces': [{'id': f'ws_{count}'}], 'next_cursor': 'same'})
     with sync_client(handler) as client:
         with pytest.raises(APIError, match='repeated'):
-            client.workspaces.list()
+            client.volumes.list()
     assert count == 2
 
 
@@ -74,11 +74,11 @@ def test_invalid_page_request_does_not_call_api(options):
         pytest.fail('invalid page request reached HTTP')
     with sync_client(handler) as client:
         with pytest.raises(ValidationError):
-            client.workspaces.list_page(**options)
+            client.volumes.list_page(**options)
 
 
 def test_legacy_server_without_cursor_remains_a_single_page():
     expected = [{'id': 'existing_workspace'}]
     with sync_client(lambda _: httpx.Response(200, json={'workspaces': expected})) as client:
-        assert client.workspaces.list_page() == (expected, '')
-        assert client.workspaces.list() == expected
+        assert client.volumes.list_page() == (expected, '')
+        assert client.volumes.list() == expected

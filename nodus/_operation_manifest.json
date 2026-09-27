@@ -2582,7 +2582,8 @@
       "required_scope": "workspaces:read",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -2605,7 +2606,8 @@
       "required_scope": "workspaces:read",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -2637,7 +2639,8 @@
       "required_scope": "workspaces:read",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -2741,7 +2744,8 @@
       "required_scope": "workspaces:write",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -2857,7 +2861,8 @@
       "required_scope": "workspaces:write",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -2896,7 +2901,8 @@
       "required_scope": "workspaces:write",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -2941,7 +2947,8 @@
       "required_scope": "workspaces:write",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -2982,7 +2989,8 @@
       "required_scope": "workspaces:read",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -3056,7 +3064,8 @@
       "required_scope": "workspaces:write",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -3088,7 +3097,8 @@
       "required_scope": "workspaces:read",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -3120,7 +3130,8 @@
       "required_scope": "workspaces:read",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -3177,7 +3188,8 @@
       "required_scope": "workspaces:write",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     },
     {
@@ -3216,7 +3228,8 @@
       "required_scope": "workspaces:write",
       "transports": [
         "api",
-        "hosted_mcp"
+        "hosted_mcp",
+        "local_mcp"
       ]
     }
   ]

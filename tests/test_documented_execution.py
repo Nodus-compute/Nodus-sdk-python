@@ -77,6 +77,24 @@ def docs_api(monkeypatch):
                   "live_mode": False, "verified_at": "2026-09-19T00:00:00Z",
                   "created_at": "2026-09-19T00:00:00Z", "created_by": "key_docs"}
 
+    workspace_state = {"state": "stopped"}
+
+    def workspace_view():
+        running = workspace_state["state"] == "running"
+        return {"id": "ws_docs", "name": "kernel-lab", "size_gb": 10, "holder_id": None, "saved_at": None,
+                "stored_bytes": None, "last_error": "", "saving_for_termination": False,
+                "billing_status": "metered_subject_to_account_limits",
+                "configuration": {"name": "kernel-lab", "environment": "pytorch-cuda", "editor": "vscode", "gpu": "H100",
+                                  "gpu_count": 1, "gpu_memory_gb": 80, "budget_usd": 0, "max_hours": 4, "size_gb": 10},
+                "configuration_revision": "c" * 64, "storage_revision": 1,
+                "storage_policy_version": "r2-standard-10gb-account-v1",
+                "session": {"id": "sb_session", "state": "ready"} if running else None,
+                "meter": {"compute_settled_usd": 0.5, "compute_accruing_usd": 0.25} if running else None,
+                "state": workspace_state["state"],
+                "status_message": "Compute is running." if running else "Saved project files are ready for the next session.",
+                "connections": {"editor": running, "notebook": running, "ssh": False},
+                "storage": {"retained_bytes": len(DATA), "billable_bytes": 0}, "pending_upload": None}
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
             pass
@@ -98,6 +116,14 @@ def docs_api(monkeypatch):
                 return self.reply({"error": "unauthorized"}, 401)
             if path == "/v1/research-workspaces/storage":
                 return self.reply({"retained_bytes": len(DATA), "billable_bytes": 0})
+            if path == "/v1/research-workspaces/capabilities":
+                return self.reply({"available": True, "storage_limit_bytes": 10_000_000_000, "environments": ["pytorch-cuda"],
+                                   "gpu_counts": [1, 2, 4, 8], "editors": ["vscode", "jupyter", "ssh"],
+                                   "storage_policy_version": "r2-standard-10gb-account-v1"})
+            if path == "/v1/research-workspaces":
+                return self.reply({"workspaces": [workspace_view()], "next_cursor": ""})
+            if path == "/v1/research-workspaces/ws_docs":
+                return self.reply(workspace_view())
             if path == "/v1/sandboxes/capabilities":
                 return self.reply({"available": True, "default_template": "nodus:agent-tools-v1", "templates": [
                     {"id": "nodus:agent-tools-v1", "available": True, "max_project_bytes": 1048576}]})
@@ -241,8 +267,26 @@ def docs_api(monkeypatch):
                 return self.reply({"api_key": "nk_docs", "base_url": address, "tenant": "docs-test"})
             if self.headers.get("Authorization") != "Bearer nk_docs":
                 return self.reply({"error": "unauthorized"}, 401)
+            if path == "/v1/research-workspaces":
+                assert payload["gpu"] == "H100" and payload["max_hours"] == 4 and payload["size_gb"] == 10
+                return self.reply(workspace_view(), 201)
+            if path == "/v1/research-workspaces/ws_docs/start":
+                assert self.headers.get("Idempotency-Key")
+                workspace_state["state"] = "running"
+                return self.reply(workspace_view(), 202)
+            if path == "/v1/research-workspaces/ws_docs/stop":
+                assert self.headers.get("Idempotency-Key") and payload == {"session_id": "sb_session"}
+                workspace_state["state"] = "stopped"
+                return self.reply(workspace_view(), 202)
+            if path == "/v1/research-workspaces/ws_docs/connections":
+                assert payload["tool"] in ("editor", "notebook", "ssh")
+                return self.reply({"url": "https://ws-docs-8080.nodus.run/?tkn=docs"})
+            if path == "/v1/research-workspaces/ws_docs/workloads":
+                assert self.headers.get("Idempotency-Key") and payload["budget_usd"] > 0
+                submissions.append(payload)
+                return self.reply({"id": "wl_docs", "workload_id": "wl_docs", "status": "accepted", "revision": 1}, 202)
             if path == "/v1/research-workspaces/ws_docs/transfers":
-                assert payload["idempotency_key"] == "project-upload-1"
+                assert payload["idempotency_key"] == "project-upload-1" or payload["idempotency_key"].startswith("nodus-")
                 workspace_upload.update(manifest=payload["manifest"], uploaded=set())
                 canonical = json.dumps(payload["manifest"], separators=(",", ":")).encode()
                 return self.reply({"id": "transfer_docs", "workspace_id": "ws_docs", "state": "uploading",
@@ -348,7 +392,7 @@ def test_python_documentation_executes(path, number, body, docs_api, tmp_path, m
     monkeypatch.chdir(tmp_path)
     for name in ("hello.py", "train.py", "data.csv"):
         (tmp_path / name).write_text("test fixture")
-    if path.name == "workspaces.md" and number == 1:
+    if path.name == "workspaces.md" and number in (0, 1):
         (tmp_path / "project").mkdir()
         (tmp_path / "project" / "train.py").write_text("print('saved')\n")
     from nodus._workload_file import write_workload_file

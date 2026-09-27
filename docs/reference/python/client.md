@@ -13,6 +13,8 @@ Prefer a `with` block. Otherwise call `close()`.
 | `operations` | [Typed version 1 workload and draft operations with contract discovery](../../guides/operations.md) |
 | `pools` | [Measure customer-owned GPU hosts, review forecasts, and configure Route](../../guides/pools.md) |
 | `sandboxes` | [Create, reconnect to, list, and control agent sandboxes](../../guides/agent-sandboxes.md) |
+| `workspaces` | [Create, start, connect to, run jobs in, and stop GPU workspaces](../../workspaces.md) |
+| `volumes` | [Named storage volumes that sandboxes mount](../../workspaces.md#storage-volumes-for-sandboxes) |
 | `get(id)` | Refreshed `Workload` |
 | `list(limit=50, offset=0, status=None, scope=None)` | One page of workloads |
 | `list_page(limit=50, offset=0, status=None, scope=None)` | `(workloads, next_offset)` |

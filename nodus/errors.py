@@ -20,6 +20,7 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 __all__ = [
     "NodusError",
+    "WorkspaceNotReadyError",
     "StepOutcomeUnknown", "StepDefinitionConflict", "StepResultExpired", "StepFailed",
     "AgentChildrenUnavailable", "AgentBrokerUnavailable", "AgentMessagesUnavailable", "BrokerRefused",
     "ConfigurationError",
@@ -123,6 +124,14 @@ class NotFoundError(NodusError):
 
 class ValidationError(NodusError):
     """400/422. The brief was rejected. Retrying resends the same brief."""
+
+
+class WorkspaceNotReadyError(NodusError):
+    """The workspace cannot serve this request in its current state.
+
+    Compute is still starting, still saving, already stopped, or has no SSH
+    key. Read the message for the state and what changes it.
+    """
 
 
 class IdempotencyConflictError(NodusError):
@@ -355,6 +364,10 @@ def error_from_response(
         "workspace_files_empty", "workspace_storage_inactive", "workspace_transfer_conflict",
     }:
         cls = APIError
+    elif status_code == 409 and isinstance(code, str) and code in {
+        "workspace_not_ready", "workspace_starting", "workspace_saving", "workspace_ssh_key_required",
+    }:
+        cls = WorkspaceNotReadyError
     elif status_code == 409 and code == "asset_in_use":
         cls = AssetInUseError
     elif status_code == 409 and code == "run_draft_conflict":

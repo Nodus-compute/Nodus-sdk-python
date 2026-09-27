@@ -40,6 +40,7 @@ waiting. An accepted workload is not necessarily a completed workload.
 - [Train or fine-tune a model](guides/gpu-workloads.md)
 - [Run from a workload file](getting-started/workload-files.md)
 - [Run an agent sandbox](guides/agent-sandboxes.md)
+- [Open a GPU workspace in VS Code, JupyterLab or SSH](workspaces.md)
 - [Deploy a managed durable agent](guides/managed-agents.md)
 - [Run from GitHub Actions and automation tools](guides/automation.md)
 - [Connect MCP tools](guides/mcp.md)
