@@ -476,3 +476,23 @@ def test_error_code_accessor_preserves_both_customer_api_envelopes(field):
     error = error_from_response("GET", "/v1/sandboxes/sb_missing", 404,
                                 {field: "not_found", "message": "The sandbox resource was not found."})
     assert error.code == "not_found"
+
+@pytest.mark.parametrize("command", [["sandbox", "cost", "sb_agent"], ["--plain", "sandbox", "ls"]])
+def test_sandbox_cli_never_presents_pending_zero_as_final_cost(command, monkeypatch, capsys):
+    finalized = False
+
+    def handler(request):
+        box = {**SANDBOX, "state": "terminated", "cost_usd": 0.20 if finalized else 0,
+               "charge_state": "final" if finalized else "estimated"}
+        if finalized:
+            box["final_charge_usd"] = 1.25
+        return httpx.Response(200, json={"sandboxes": [box]} if request.url.path == "/v1/sandboxes" else box)
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(command) == 0
+    pending = capsys.readouterr().out
+    assert "Finalizing cost" in pending and "$0.00" not in pending
+    finalized = True
+    assert cli.main(command) == 0
+    final = capsys.readouterr().out
+    assert "$1.25" in final and "$0.20" not in final and "Finalizing" not in final

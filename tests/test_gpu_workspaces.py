@@ -537,3 +537,32 @@ def test_legacy_volume_create_moves_to_client_volumes_with_a_warning():
             assert client.workspaces.create("repo", size_gb=0.1) == record
         with pytest.raises(ValidationError, match="gpu"):
             client.workspaces.create("repo", size_gb=0.1, gpu_count=8)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_workspace_meter_preserves_pending_then_fixed_compute_charge(async_mode):
+    ended = {**STOPPED, "session": {**SESSION, "state": "terminated"}}
+    terminal_meter = {**METER, "total_now_usd": 0, "accruing_usd": 0, "compute_accruing_usd": 0,
+                      "platform_fee_accruing_usd": 0, "accruing_rate_usd_hour": 0}
+    meters = [
+        {**terminal_meter, "charge_state": "estimated"},
+        {**terminal_meter, "total_now_usd": 1.25, "compute_settled_usd": 1.25, "settled_usd": 1.25,
+         "charge_state": "final", "final_charge_usd": 1.25},
+        METER,
+        None,
+    ]
+    server = Server({("GET", BASE + "/ws_kernel"): [(200, {**ended, "meter": meter}) for meter in meters]})
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            ws = await call(client.workspaces.get("ws_kernel"))
+            assert ws.charge_state == "estimated" and ws.final_charge_usd is None and ws.cost_usd == 0
+            await call(ws.refresh())
+            assert ws.charge_state == "final" and ws.final_charge_usd == 1.25 and ws.cost_usd == 1.25
+            await call(ws.refresh())
+            assert ws.charge_state == "" and ws.final_charge_usd is None and ws.cost_usd == 0.5
+            await call(ws.refresh())
+            assert ws.charge_state == "" and ws.final_charge_usd is None and ws.cost_usd is None
+
+    run(async_mode, scenario)

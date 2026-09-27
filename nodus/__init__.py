@@ -595,14 +595,15 @@ class _WorkloadState:
 
     @property
     def cost_now_usd(self) -> float:
-        """What this workload has cost as of the last read.
+        """Return the fixed lifetime compute charge when final, otherwise an estimate.
 
-        ``meter.settled_usd`` counts only the current billing period and
-        ``spend_usd`` lags a settling lease, so what has been charged is the
-        larger of the two. ``meter.accruing_usd`` is open leases' money on top.
+        The pending estimate includes unposted usage. Check
+        ``meter.charge_state`` to distinguish pending metered costs from final.
         """
         if self.meter is None:
             return self.spend_usd
+        if self.meter.final_charge_usd is not None:
+            return self.meter.final_charge_usd
         return max(self.spend_usd, self.meter.settled_usd) + self.meter.accruing_usd
 
     @property

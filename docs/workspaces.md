@@ -33,6 +33,13 @@ until the configured tool accepts connections and raises
 leaves compute running. `ws.state`, `ws.connections`, `ws.session_id` and
 `ws.cost_usd` reflect the last answer, and `ws.refresh()` reads again.
 
+`ws.charge_state` reports whether the session's compute charge is estimated
+or final. A stopped session can still be finalizing its charge. The CLI shows
+`Finalizing cost` until the meter reports a final charge. Once final,
+`ws.final_charge_usd` and `ws.cost_usd` expose the fixed compute total.
+Retaining files can continue to accrue separate usage after compute stops.
+An absent meter leaves the cost unavailable.
+
 `connect("editor")` and `connect("notebook")` return a browser `url`.
 `ws.ssh()` returns the `command` to run, an `ssh_config` entry and a
 `vscode_url` that opens VS Code Remote on the machine. Machines reached through

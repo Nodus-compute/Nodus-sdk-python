@@ -329,8 +329,24 @@ class _WorkspaceState:
         return self.connections.get(self.tool, False)
 
     @property
+    def charge_state(self) -> str:
+        """The session meter's aggregate charge state, or an empty string when absent."""
+        value = self.meter.get("charge_state") if self.meter else None
+        return value if isinstance(value, str) else ""
+
+    @property
+    def final_charge_usd(self) -> float | None:
+        """The fixed compute charge from the server, excluding ongoing retained files."""
+        value = self.meter.get("final_charge_usd") if self.meter else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            return float(value)
+        return None
+
+    @property
     def cost_usd(self) -> float | None:
-        """The session's total so far as the server's meter states it, or None when it sends none."""
+        """The server's fixed compute charge when final, otherwise its current estimate."""
+        if self.charge_state == "final":
+            return self.final_charge_usd
         value = self.meter.get("total_now_usd") if self.meter else None
         if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
             return float(value)

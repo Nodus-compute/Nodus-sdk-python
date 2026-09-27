@@ -109,3 +109,27 @@ def test_workspace_cli_not_ready_is_a_plain_message(monkeypatch, capsys):
     assert cli.main(["workspace", "connect", "ws_kernel"]) == 2
     err = capsys.readouterr().err
     assert "not ready to connect" in err and "finish starting" in err
+
+
+@pytest.mark.parametrize("state,meter,expected", [
+    ("stopped", {"charge_state": "estimated", "total_now_usd": 0}, "Finalizing cost"),
+    ("failed", {"charge_state": "estimated", "total_now_usd": 0.2}, "Finalizing cost"),
+    ("running", {"charge_state": "estimated", "total_now_usd": 0.2}, "$0.20"),
+    ("stopped", {"charge_state": "final", "final_charge_usd": 1.25, "total_now_usd": 1.25}, "$1.25"),
+    ("stopped", {"charge_state": "final", "final_charge_usd": 0, "total_now_usd": 0}, "$0.00"),
+    ("stopped", {"total_now_usd": 0.2}, "$0.20"),
+    ("stopped", None, "-"),
+    ("stopped", {"charge_state": "final", "total_now_usd": 0.2}, "Not available"),
+])
+def test_workspace_cli_lists_pending_final_and_legacy_cost(monkeypatch, capsys, state, meter, expected):
+    view = {**STOPPED, "state": state, "meter": meter,
+            "session": {"id": "sb_session", "state": "ready" if state == "running" else "terminated"}}
+    def handler(request):
+        assert request.method == "GET" and request.url.path == BASE
+        return httpx.Response(200, json={"workspaces": [view], "next_cursor": ""})
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "ls"]) == 0
+    out = capsys.readouterr().out.strip()
+    assert out.endswith("  " + expected)
+    if expected in ("Finalizing cost", "Not available"):
+        assert "$" not in out
