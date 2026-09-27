@@ -51,6 +51,45 @@ def _fresh_key() -> str:
     return f"nodus-{uuid.uuid4()}"
 
 
+_GPU_SHORTHAND = re.compile(r"^(?P<model>.*?)(?:[-_ ]?(?P<memory>\d{1,4})\s*GB?)?(?::(?P<count>\d+))?$", re.IGNORECASE)
+
+
+def _parse_gpu(gpu: str) -> tuple[str, float | None, int | None]:
+    """Split "A100-80GB:2" into the model, the memory it names and the count it names."""
+    match = _GPU_SHORTHAND.fullmatch(gpu.strip())
+    model = (match.group("model") if match else gpu).strip()
+    if not match or not model:
+        raise ValidationError("gpu must name a model, such as \"H100\", \"A100-40GB\" or \"H100:2\"")
+    memory = float(match.group("memory")) if match.group("memory") else None
+    count = int(match.group("count")) if match.group("count") else None
+    if count is not None and count not in _GPU_COUNTS:
+        raise ValidationError("gpu_count must be one of 1, 2, 4, 8")
+    return model, memory, count
+
+
+def _gpu_fields(gpu: str, gpu_count: int | None, gpu_memory_gb: float | None, *,
+                require_memory: bool) -> dict[str, Any]:
+    """The gpu, gpu_count and gpu_memory_gb the server needs, from a name and explicit overrides."""
+    model, named_memory, named_count = _parse_gpu(_text(gpu, "gpu", limit=64))
+    if named_count is not None and gpu_count is not None and gpu_count != 1 and gpu_count != named_count:
+        raise ValidationError(f"gpu_count {gpu_count} disagrees with the count in {gpu!r}")
+    if named_memory is not None and gpu_memory_gb is not None and gpu_memory_gb != named_memory:
+        raise ValidationError(f"gpu_memory_gb {gpu_memory_gb} disagrees with the memory in {gpu!r}")
+    fields: dict[str, Any] = {"gpu": model}
+    count = named_count if named_count is not None else gpu_count
+    if count is not None:
+        fields["gpu_count"] = _count(count, "gpu_count", _GPU_COUNTS)
+    memory = named_memory if named_memory is not None else gpu_memory_gb
+    if memory is None and require_memory:
+        memory = _GPU_MEMORY_GB.get(_compact_gpu(model))
+    if memory is None and require_memory:
+        raise ValidationError(f"Pass gpu_memory_gb or name it, as in \"{model}-80GB\": "
+                              f"{model!r} is not in the console's GPU catalog")
+    if memory is not None:
+        fields["gpu_memory_gb"] = _finite(memory, "gpu_memory_gb", minimum=0)
+    return fields
+
+
 def _compact_gpu(gpu: str) -> str:
     compact = gpu.strip().upper()
     for prefix in ("NVIDIA ", "AMD ", "INSTINCT "):
@@ -175,16 +214,10 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int, gpu_memory_gb:
     else:
         if gpu is None:
             raise ValidationError("Choose a gpu such as \"H100\", or cpus for a CPU-only workspace")
-        compact = _compact_gpu(_text(gpu, "gpu", limit=64))
-        body["environment"] = environment or ("pytorch-rocm" if compact in _AMD else "pytorch-cuda")
+        fields = _gpu_fields(gpu, gpu_count, gpu_memory_gb, require_memory=True)
+        body["environment"] = environment or ("pytorch-rocm" if _compact_gpu(fields["gpu"]) in _AMD else "pytorch-cuda")
         body["editor"] = editor
-        body["gpu"] = gpu
-        body["gpu_count"] = _count(gpu_count, "gpu_count", _GPU_COUNTS)
-        if gpu_memory_gb is None:
-            gpu_memory_gb = _GPU_MEMORY_GB.get(compact)
-            if gpu_memory_gb is None:
-                raise ValidationError(f"Pass gpu_memory_gb: {gpu!r} is not in the console's GPU catalog")
-        body["gpu_memory_gb"] = _finite(gpu_memory_gb, "gpu_memory_gb", minimum=0)
+        body.update(fields)
         if form_factor is not None:
             body["gpu_form_factor"] = form_factor
     _choice(editor, "editor", ("vscode", "jupyter", "ssh"))
@@ -219,7 +252,8 @@ def _job(command: str, *, budget_usd: float, gpu: str | None, gpu_count: int | N
     body: dict[str, Any] = {"command": _text(command, "command", limit=8192),
                             "budget_usd": _finite(budget_usd, "budget_usd", minimum=0)}
     if gpu is not None:
-        body["gpu"] = _text(gpu, "gpu", limit=64)
+        body.update(_gpu_fields(gpu, gpu_count, gpu_memory_gb, require_memory=False))
+        return body
     if gpu_count is not None:
         body["gpu_count"] = _count(gpu_count, "gpu_count", _GPU_COUNTS)
     if gpu_memory_gb is not None:
