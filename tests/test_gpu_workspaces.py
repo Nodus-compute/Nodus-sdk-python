@@ -121,7 +121,7 @@ def test_create_start_wait_connect_run_and_stop(async_mode):
             assert ws.session_id is None and ws.connections == {"editor": False, "notebook": False, "ssh": False}
             await call(ws.start(idempotency_key="session-1"))
             assert ws.state == "creating" and ws.session_id == "sb_session"
-            await call(ws.wait_until_ready(poll_seconds=0, timeout_seconds=5))
+            await call(ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=5))
             assert ws.state == "running" and ws.connections["editor"] is True and ws.cost_usd == 0.5
             editor = await call(ws.connect("editor"))
             assert editor == {"url": "https://ws-abc-8080.nodus.run/?tkn=t"}
@@ -184,14 +184,45 @@ def test_private_keys_and_mixed_cpu_gpu_requests_never_leave_the_process():
         pytest.fail("a refused configuration must not reach the API")
     private = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n"
     with sync_client(handler) as client:
-        with pytest.raises(ValidationError, match="public key"):
-            client.workspaces.create("lab", gpu="H100", max_hours=1, size_gb=1, ssh_key=private)
-        with pytest.raises(ValidationError, match="public key"):
-            Workspace(client, "ws_kernel")._configure_body({"ssh_authorized_key": private})
+        putty = "PuTTY-User-Key-File-3: ssh-ed25519\nPrivate-Lines: 1\nAAAA\n"
+        for bad in (private, putty, "AAAAC3NzaC1lZDI1NTE5", "ssh-ed25519 AAAA\nPrivate-Lines: 1\n"):
+            with pytest.raises(ValidationError, match="public keys"):
+                client.workspaces.create("lab", gpu="H100", max_hours=1, size_gb=1, ssh_key=bad)
+            with pytest.raises(ValidationError, match="public keys"):
+                Workspace(client, "ws_kernel")._configure_body({"ssh_authorized_key": bad})
+        good = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGx researcher\necdsa-sha2-nistp256 AAAAE2Vj other\n"
+        with pytest.raises(APIError, match="revision"):
+            Workspace(client, "ws_kernel")._configure_body({"ssh_authorized_key": good})
         with pytest.raises(ValidationError, match="cpus and memory_gb"):
             client.workspaces.create("lab", cpus=4, memory_gb=8, gpu_count=8, max_hours=1, size_gb=1)
         with pytest.raises(ValidationError, match="form_factor"):
             client.workspaces.create("lab", gpu="H100", form_factor="mezzanine", max_hours=1, size_gb=1)
+
+
+def test_final_failures_do_not_advise_a_retry_with_the_same_key():
+    server = Server({("POST", BASE + "/ws_kernel/workloads"): [(409, {"error": "idempotency_conflict"}),
+                                                                (402, {"error": "insufficient_funds"})]})
+    with sync_client(server) as client:
+        ws = Workspace(client, "ws_kernel")
+        for _ in range(2):
+            with pytest.raises(nodus.NodusError) as raised:
+                ws.run("python x.py", budget_usd=1)
+            assert "idempotency_key" not in str(raised.value)
+            assert "idempotency_key" not in (raised.value.body or {})
+
+
+def test_configure_clears_optional_fields_with_none_and_keeps_the_name_rule():
+    configured = {**CONFIGURATION, "ref": "main", "repository": "org/repo", "ssh_authorized_key": "ssh-ed25519 AAAA"}
+    server = Server({("GET", BASE + "/ws_kernel"): (200, {**STOPPED, "configuration": configured}),
+                     ("PATCH", BASE + "/ws_kernel"): (200, STOPPED)})
+    with sync_client(server) as client:
+        ws = client.workspaces.get("ws_kernel")
+        ws.configure(ref=None, ssh_authorized_key=None)
+        with pytest.raises(ValidationError, match="name"):
+            ws.configure(name="n" * 300)
+        with pytest.raises(ValidationError, match="cleared"):
+            ws.configure(gpu=None)
+    assert server.requests[-1][2]["configuration"] == {**CONFIGURATION, "repository": "org/repo"}
 
 
 def test_uncertain_paid_requests_carry_their_key_for_the_retry():
@@ -239,7 +270,8 @@ def test_get_by_name_accepts_dots_and_wait_loops_refuse_unbounded_arguments():
     with sync_client(server) as client:
         assert client.workspaces.get("kernel.lab").id == "ws_dot"
         ws = client.workspaces.get("ws_dot")
-        for kwargs in ({"poll_seconds": -1}, {"timeout_seconds": float("nan")}, {"poll_seconds": float("inf")}):
+        for kwargs in ({"poll_seconds": -1}, {"poll_seconds": 0}, {"timeout_seconds": float("nan")},
+                       {"poll_seconds": float("inf")}):
             with pytest.raises(ValidationError):
                 ws.wait_until_ready(**kwargs)
             with pytest.raises(ValidationError):
@@ -252,7 +284,7 @@ def test_wait_until_stopped_reports_a_failed_session_instead_of_waiting():
     server = Server({("GET", BASE + "/ws_kernel"): (200, failed)})
     with sync_client(server) as client:
         with pytest.raises(WorkspaceNotReadyError, match="could not continue"):
-            Workspace(client, "ws_kernel").wait_until_stopped(poll_seconds=0, timeout_seconds=5)
+            Workspace(client, "ws_kernel").wait_until_stopped(poll_seconds=0.1, timeout_seconds=5)
     assert len(server.requests) == 1
 
 
@@ -316,7 +348,7 @@ def test_wait_until_ready_fails_fast_when_compute_stops_or_fails():
     with sync_client(server) as client:
         ws = client.workspaces.get("ws_kernel")
         with pytest.raises(WorkspaceNotReadyError, match="could not continue"):
-            ws.wait_until_ready(poll_seconds=0, timeout_seconds=5)
+            ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=5)
         assert ws.state == "failed"
 
 
@@ -325,7 +357,7 @@ def test_wait_until_ready_times_out_and_leaves_compute_running():
     with sync_client(server) as client:
         ws = client.workspaces.get("ws_kernel")
         with pytest.raises(WorkspaceNotReadyError, match="still starting"):
-            ws.wait_until_ready(poll_seconds=0, timeout_seconds=0)
+            ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=0)
         assert ws.state == "creating"
     assert all(method == "GET" for method, *_ in server.requests)
 
@@ -336,7 +368,7 @@ def test_wait_until_ready_honours_the_configured_tool():
     server = Server({("GET", BASE + "/ws_kernel"): (200, ssh_only)})
     with sync_client(server) as client:
         ws = client.workspaces.get("ws_kernel")
-        assert ws.wait_until_ready(poll_seconds=0, timeout_seconds=1) is ws
+        assert ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=1) is ws
         assert ws.ready is True
 
 
@@ -429,7 +461,7 @@ def test_upload_replaces_the_current_revision_and_waits_for_verification(tmp_pat
         pytest.fail("unexpected " + path)
     with sync_client(handler) as client:
         ws = client.workspaces.get("ws_kernel")
-        result = ws.upload(tmp_path, idempotency_key="upload-1", poll_seconds=0, timeout_seconds=5)
+        result = ws.upload(tmp_path, idempotency_key="upload-1", poll_seconds=0.1, timeout_seconds=5)
         assert result["state"] == "verifying"
         assert ws.storage_revision == 4 and ws.pending_upload is None
     assert transfers[0]["idempotency_key"] == "upload-1" and transfers[0]["replace_revision"] == 3
@@ -503,3 +535,5 @@ def test_legacy_volume_create_moves_to_client_volumes_with_a_warning():
         assert client.volumes.list() == [record]
         with pytest.warns(FutureWarning, match="client.volumes"):
             assert client.workspaces.create("repo", size_gb=0.1) == record
+        with pytest.raises(ValidationError, match="gpu"):
+            client.workspaces.create("repo", size_gb=0.1, gpu_count=8)

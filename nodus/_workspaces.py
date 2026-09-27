@@ -32,7 +32,8 @@ _GPU_MEMORY_GB = {
     "RTX3090": 24, "RTX4090": 24, "RTX5090": 32,
 }
 _AMD = {"MI300X", "MI350X"}
-_PRIVATE_KEY = "PRIVATE KEY"
+_PUBLIC_KEY_TYPES = ("ssh-ed25519 ", "ssh-rsa ", "ssh-dss ", "ecdsa-sha2-", "sk-ssh-ed25519@openssh.com ", "sk-ecdsa-sha2-")
+_OPTIONAL_CONFIGURATION_FIELDS = {"repository", "ref", "gpu_form_factor", "ssh_authorized_key", "runtime_id", "disk_gb"}
 
 
 def _path(workspace_id: str) -> str:
@@ -70,14 +71,24 @@ def _finite(value: Any, field: str, *, minimum: float, allow_equal: bool = False
 
 
 def _wait_bounds(poll_seconds: Any, timeout_seconds: Any) -> None:
-    _finite(poll_seconds, "poll_seconds", minimum=0, allow_equal=True)
+    _finite(poll_seconds, "poll_seconds", minimum=0.1, allow_equal=True)
     _finite(timeout_seconds, "timeout_seconds", minimum=0, allow_equal=True)
 
 
+def _uncertain(error: NodusError) -> bool:
+    """A failure that leaves it unknown whether the request was accepted."""
+    from .errors import APIConnectionError, APITimeoutError
+    if isinstance(error, (APIConnectionError, APITimeoutError)):
+        return True
+    return error.status_code is None or error.status_code >= 500
+
+
 def _ssh_key(value: Any) -> str:
+    """Public keys only, one per line, so a private key file never leaves the process."""
     text = _text(value, "ssh_key", limit=8192)
-    if _PRIVATE_KEY in text.upper():
-        raise ValidationError("ssh_key must be a public key. A private key is never sent to Nodus")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines or any(not line.startswith(_PUBLIC_KEY_TYPES) for line in lines):
+        raise ValidationError("ssh_key must hold OpenSSH public keys, one per line, such as \"ssh-ed25519 AAAA...\"")
     return text
 
 
@@ -90,6 +101,8 @@ def _choice(value: Any, field: str, choices: tuple[str, ...]) -> str:
 def _validated_change(field: str, value: Any) -> Any:
     """The same rules create applies, for one configuration field changed later."""
     if value is None:
+        if field in _OPTIONAL_CONFIGURATION_FIELDS:
+            return None
         raise ValidationError(f"{field} cannot be cleared. Set a value or leave the field unchanged")
     if field == "budget_usd":
         return _finite(value, field, minimum=0, allow_equal=True)
@@ -112,7 +125,7 @@ def _validated_change(field: str, value: Any) -> Any:
         return _choice(value, field, ("pcie", "sxm", "nvl"))
     if field == "ssh_authorized_key":
         return _ssh_key(value)
-    return _text(value, field, limit=8192 if field == "ssh_authorized_key" else 512)
+    return _text(value, field, limit=128 if field == "name" else 512)
 
 
 def _count(value: Any, field: str, choices: tuple[int, ...]) -> int:
@@ -331,6 +344,8 @@ class _WorkspaceState:
     @staticmethod
     def _with_key(error: NodusError, key: str) -> NodusError:
         """Carry the request key on an uncertain failure so a retry is the same submission."""
+        if not _uncertain(error):
+            return error
         if isinstance(error.body, dict):
             error.body = {**error.body, "idempotency_key": key}
         elif error.body is None:
@@ -358,8 +373,9 @@ class _WorkspaceState:
         checked = {field: _validated_change(field, value) for field, value in changes.items()}
         if not self.configuration_revision:
             raise APIError("The workspace view carried no configuration revision")
+        merged = {**self.configuration, **checked}
         return {"configuration_revision": self.configuration_revision,
-                "configuration": {**self.configuration, **checked}}
+                "configuration": {field: value for field, value in merged.items() if value is not None}}
 
     def _replace_revision(self) -> int | None:
         return self.storage_revision or None
@@ -482,12 +498,8 @@ class Workspace(_WorkspaceState):
         blocked = self._upload_blocked()
         if blocked:
             raise WorkspaceNotReadyError(blocked, body=self.raw)
-        key = _key(idempotency_key or _fresh_key())
-        try:
-            result = upload_files(self._client, self.id, directory, idempotency_key=key,
-                                  replace_revision=self._replace_revision())
-        except NodusError as error:
-            raise self._with_key(error, key) from None
+        result = upload_files(self._client, self.id, directory, idempotency_key=idempotency_key or _fresh_key(),
+                              replace_revision=self._replace_revision())
         deadline = time.monotonic() + timeout_seconds
         while True:
             self.refresh()
@@ -625,12 +637,9 @@ class AsyncWorkspace(_WorkspaceState):
         blocked = self._upload_blocked()
         if blocked:
             raise WorkspaceNotReadyError(blocked, body=self.raw)
-        key = _key(idempotency_key or _fresh_key())
-        try:
-            result = await upload_files_async(self._client, self.id, directory, idempotency_key=key,
-                                              replace_revision=self._replace_revision())
-        except NodusError as error:
-            raise self._with_key(error, key) from None
+        result = await upload_files_async(self._client, self.id, directory,
+                                          idempotency_key=idempotency_key or _fresh_key(),
+                                          replace_revision=self._replace_revision())
         deadline = time.monotonic() + timeout_seconds
         while True:
             await self.refresh()
@@ -671,6 +680,7 @@ class AsyncWorkspace(_WorkspaceState):
 def _legacy_volume(kwargs: dict[str, Any]) -> bool:
     """A create with a size and no compute names a sandbox volume."""
     return kwargs.get("gpu") is None and kwargs.get("cpus") is None and kwargs.get("size_gb") is not None \
+        and kwargs.get("gpu_count") == 1 and kwargs.get("editor") == "vscode" \
         and all(value is None for field, value in kwargs.items() if field not in ("size_gb", "gpu_count", "editor"))
 
 

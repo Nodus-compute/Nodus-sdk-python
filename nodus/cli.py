@@ -1277,8 +1277,10 @@ Use nodus COMMAND --help for command options.""",
                               ("upload", "replace the saved project with a local folder while stopped"),
                               ("download", "save the project files to a local tar archive")):
         operation = workspace_sub.add_parser(action, help=help_text)
-        if action in ("start", "stop", "run", "upload"):
+        if action in ("start", "stop", "run"):
             operation.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
+        if action == "upload":
+            operation.add_argument("--idempotency-key", help="name this upload attempt. A changed folder or revision needs a new key")
         if action in ("start", "stop"):
             operation.add_argument("--wait", action="store_true", help="poll until the change has completed")
             operation.add_argument("--poll-seconds", type=float, default=5.0)

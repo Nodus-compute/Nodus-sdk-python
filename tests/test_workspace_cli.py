@@ -51,7 +51,7 @@ def test_workspace_cli_creates_starts_connects_runs_and_stops(monkeypatch, capsy
     assert cli.main(["workspace", "new", "kernel-lab", "--gpu", "H100", "--max-hours", "4"]) == 0
     assert capsys.readouterr().out.strip() == "ws_kernel"
     assert calls[1][2]["gpu"] == "H100" and calls[1][2]["max_hours"] == 4 and calls[1][2]["size_gb"] == 10
-    assert cli.main(["workspace", "start", "--idempotency-key", "session-1", "--wait", "--poll-seconds", "0", "ws_kernel"]) == 0
+    assert cli.main(["workspace", "start", "--idempotency-key", "session-1", "--wait", "--poll-seconds", "0.1", "ws_kernel"]) == 0
     out = capsys.readouterr().out
     started = [call for call in calls if call[1] == BASE + "/ws_kernel/start"]
     assert "running" in out and started[0][3] == "session-1"
