@@ -26,6 +26,7 @@
       "launch": {
         "image": "pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime",
         "model": "Qwen/Qwen3-1.7B",
+        "peak_memory_gb": 48,
         "default_tasks": 64,
         "measured_on": "A40, seed 42, greedy scoring, 2026-09-24",
         "note": "The change was measured by running this example. Training moves the score because the model writes out its working, so its attempts differ enough to learn from.",
@@ -34,6 +35,7 @@
         ],
         "examples": [
           {
+            "id": "gsm8k-trained",
             "dataset": "openai/gsm8k",
             "name": "GSM8K, trained",
             "mode": "train",

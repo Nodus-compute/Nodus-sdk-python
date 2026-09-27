@@ -1,18 +1,16 @@
 # Run RL: an example, your own code, or a prepared recipe
 
-## Sign in, run, watch and collect results
+## Run an example in one call
 
 Set `NODUS_API_KEY` through your secret manager, or run `nodus login` once. See
-[authentication](../getting-started/authentication.md). This runs the GSM8K
-example, waits for it to finish and downloads its scores:
+[authentication](../getting-started/authentication.md). This starts the GSM8K
+training example, waits for it to finish and downloads its scores:
 
 ```python
 import nodus
 
 with nodus.Client() as client:
-    environment = next(e for e in client.rl.list_environments() if e.id == "gsm8k")
-    example = environment.examples[0]
-    workload = client.run(idempotency_key="gsm8k-first-run", **example.run_arguments())
+    workload = client.rl.run_example("gsm8k", "gsm8k-trained", idempotency_key="gsm8k-first-run")
     print(workload.id)
     done = workload.wait()
     if not done.succeeded:
@@ -21,36 +19,70 @@ with nodus.Client() as client:
         print(path)
 ```
 
-The run rents a GPU and is billed while it runs. `example.runtime_minutes` is
-how long the example took when it was measured. While it runs, the console's
-run page charts each scored task as it is reported. `done.download()` saves the
-declared result file, which holds the scores before and after training.
+The same request over HTTP, from any language:
 
-## Start from an example
+```bash
+curl --fail --silent --show-error --request POST \
+  --header "Authorization: Bearer ${NODUS_API_KEY}" \
+  --header "Idempotency-Key: gsm8k-first-run" \
+  "${NODUS_BASE_URL}/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs"
+```
 
-Every environment in the catalog lists the examples you can run today, with the
-baseline and any training gain that was measured by running them:
+It answers `202` with a `workload_id`. The server builds the run the console's
+Run button prepares. That is the example's command, its runtime image, a GPU
+with at least the memory it was measured on, its result file and its RL
+details. The body is optional and may set only `name`.
+
+The run rents a GPU and is billed while it runs. Retrying with the same
+`Idempotency-Key` returns the original run instead of starting another, so
+retry with the same key when a request times out. `404` means no runnable
+example has those IDs.
+
+## RL endpoints
+
+Every RL run is an ordinary workload, so the workload endpoints apply to it.
+
+| Step | HTTP | Python |
+| --- | --- | --- |
+| List environments and examples | `GET /v1/rl-environments` | `client.rl.list_environments()` |
+| Start an example | `POST /v1/rl-environments/{environment}/examples/{example}/runs` | `client.rl.run_example(...)` |
+| Start your own RL code | `POST /v1/workloads` with an `rl` field | `client.run(..., rl=nodus.RLSetup(...))` |
+| Check status | `GET /v1/workloads/{id}` | `workload.refresh()` or `workload.wait()` |
+| Read scored tasks | `GET /v1/workloads/{id}/rl-events` | `client.rl.events(workload_id)` |
+| Read logs | `GET /v1/workloads/{id}/logs` | `workload.logs()` |
+| List and download results | `GET /v1/workloads/{id}/outputs` | `workload.download()` |
+| Stop | `POST /v1/workloads/{id}/cancel` | `workload.cancel()` |
+
+The [OpenAPI specification](../../openapi/openapi.yaml) describes every field.
+
+## Find an example
+
+Every environment lists the examples you can run today, with the baseline and
+any training gain that was measured by running them. Use `environment.id` and
+`example.id` to start one:
 
 ```python
 def show_examples(client):
     for environment in client.rl.list_environments():
         for example in environment.examples:
-            print(environment.id, example.name, example.mode,
+            print(environment.id, example.id, example.mode,
                   example.baseline_pass_rate, example.measured_change_pp,
                   example.runtime_minutes)
 ```
 
-An environment with an empty `examples` list is listed for reference and has no
-runnable command yet.
+`mode` is `train` when the example trains a model and scores it before and
+after, and `evaluate` when it only scores the model. An environment with an
+empty `examples` list is listed for reference and has no runnable command yet.
 
-Run an example with the same command, image, output file and RL setup the
-console uses. `run_arguments()` supplies everything `run()` needs:
+To change an example before running it, such as its GPU, start from
+`run_arguments()`. It returns the command, image, result files, GPU memory and
+RL details that `run()` needs:
 
 ```python
-def run_example(client, *, environment_id, example_name, stable_run_id):
-    environment = next(e for e in client.rl.list_environments() if e.id == environment_id)
-    example = next(x for x in environment.examples if x.name == example_name)
-    return client.run(idempotency_key=stable_run_id, **example.run_arguments())
+def run_changed_example(client, example, *, stable_run_id):
+    arguments = example.run_arguments()
+    arguments["gpu"] = "H100"
+    return client.run(idempotency_key=stable_run_id, **arguments)
 ```
 
 The command is passed through a shell, as the console does, because an example

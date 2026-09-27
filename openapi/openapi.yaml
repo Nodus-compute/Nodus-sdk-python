@@ -2740,6 +2740,9 @@
               "object",
               "null"
             ],
+            "propertyNames": {
+              "pattern": "^[a-z0-9_][a-z0-9._-]{0,63}$"
+            },
             "additionalProperties": {
               "oneOf": [
                 {
@@ -2750,7 +2753,7 @@
                 }
               ]
             },
-            "description": "Named output paths or file and database sink declarations. Sinks support CSV, JSONL and flat Parquet files. Credentials stay on the control plane. Outputs in one stage must use distinct connection and table targets."
+            "description": "Named output paths or file and database sink declarations. Output names are 1 to 64 lowercase letters, digits, dots, underscores or hyphens that do not begin with a dot, a hyphen or nodus. and other names are refused at submission. Sinks support CSV, JSONL and flat Parquet files. Credentials stay on the control plane. Outputs in one stage must use distinct connection and table targets."
           }
         },
         "required": [
@@ -7577,6 +7580,10 @@
         "type": "object",
         "description": "One example you can run today. Every number was measured by running it.",
         "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable identifier. Start this example with POST /v1/rl-environments/{environment}/examples/{id}/runs."
+          },
           "dataset": {
             "type": "string"
           },
@@ -7613,6 +7620,7 @@
           }
         },
         "required": [
+          "id",
           "dataset",
           "name",
           "command"
@@ -7627,6 +7635,10 @@
           },
           "model": {
             "type": "string"
+          },
+          "peak_memory_gb": {
+            "type": "number",
+            "description": "GPU memory the examples were measured with. A run started from an example requests at least this much."
           },
           "default_tasks": {
             "type": "integer",
@@ -20025,6 +20037,93 @@
             }
           }
         }
+      }
+    },
+    "/v1/rl-environments/{environment}/examples/{example}/runs": {
+      "post": {
+        "operationId": "runRLExample",
+        "summary": "Start an RL example in one request",
+        "tags": [
+          "RL"
+        ],
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Environment id from GET /v1/rl-environments, such as gsm8k."
+          },
+          {
+            "name": "example",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Example id from that environment, such as gsm8k-trained."
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required stable key per logical run. Retrying with the same key returns the original run instead of starting another."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "description": "Run name. Defaults to the environment and example names."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitResult"
+                }
+              }
+            },
+            "headers": {
+              "Idempotent-Replayed": {
+                "description": "true on a replay of the original run.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Submits the same run the console's Run button prepares: the example's command through a shell, its runtime image, a GPU with at least peak_memory_gb, its result files and its RL details. It is an ordinary workload. Follow it with GET /v1/workloads/{id}, its RL events and its outputs. 404 means no runnable example has these ids. Admission, spending checks and errors are those of POST /v1/workloads."
       }
     },
     "/v1/rl-environments": {

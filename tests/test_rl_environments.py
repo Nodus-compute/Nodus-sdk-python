@@ -157,3 +157,78 @@ def test_every_result_gets_a_name_run_accepts_and_the_upload_step_stores() -> No
         assert re.fullmatch(r"[a-z0-9_][a-z0-9._-]{0,63}", name), name
         assert not name.startswith("nodus."), name
     _validate_outputs(outputs)
+
+
+RECEIPT = {"workload_id": "wl_example", "status": "accepted", "revision": 1}
+
+
+def example_client(requests: list[httpx.Request], *, replayed: bool = False) -> "nodus.Client":
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        headers = {"Idempotent-Replayed": "true"} if replayed else {}
+        return httpx.Response(202, json=RECEIPT, headers=headers)
+
+    made = nodus.Client(api_key="nk_test", base_url="https://nodus.invalid")
+    made._http = httpx.Client(base_url="https://nodus.invalid", transport=httpx.MockTransport(handler),
+                              headers={"Authorization": "Bearer nk_test"})
+    return made
+
+
+def test_an_example_carries_its_id_and_the_gpu_memory_it_was_measured_with() -> None:
+    [example] = client([]).rl.list_environments()[0].examples
+    assert example.id == "gsm8k-trained"
+    assert example.peak_memory_gb == 48
+    assert example.run_arguments()["peak_memory_gb"] == 48
+
+
+def test_one_call_starts_an_example_and_returns_its_workload() -> None:
+    requests: list[httpx.Request] = []
+    workload = example_client(requests).rl.run_example("gsm8k", "gsm8k-trained", idempotency_key="first-gsm8k")
+    [sent] = requests
+    assert sent.method == "POST"
+    assert sent.url.path == "/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs"
+    assert sent.headers["Idempotency-Key"] == "first-gsm8k"
+    assert json.loads(sent.content or b"{}") == {}
+    assert workload.id == "wl_example"
+    assert workload.replayed is False
+
+
+def test_a_named_example_run_sends_only_the_name() -> None:
+    requests: list[httpx.Request] = []
+    example_client(requests, replayed=True).rl.run_example(
+        "gsm8k", "gsm8k-trained", idempotency_key="named", name="my baseline")
+    assert json.loads(requests[0].content) == {"name": "my baseline"}
+
+
+@pytest.mark.parametrize("environment,example,key", [
+    ("../workloads", "gsm8k-trained", "k"),
+    ("gsm8k", "GSM8K", "k"),
+    ("gsm8k", "a/b", "k"),
+    ("gsm8k", "gsm8k-trained", ""),
+])
+def test_an_example_request_that_cannot_be_right_is_refused_before_sending(environment, example, key) -> None:
+    requests: list[httpx.Request] = []
+    with pytest.raises(nodus.ValidationError):
+        example_client(requests).rl.run_example(environment, example, idempotency_key=key)
+    assert requests == []
+
+
+def test_the_async_client_starts_an_example_the_same_way() -> None:
+    import asyncio
+
+    requests: list[httpx.Request] = []
+
+    async def go():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(202, json=RECEIPT, headers={"Idempotent-Replayed": "true"})
+
+        made = nodus.AsyncClient(api_key="nk_test", base_url="https://nodus.invalid")
+        made._http = httpx.AsyncClient(base_url="https://nodus.invalid", transport=httpx.MockTransport(handler),
+                                       headers={"Authorization": "Bearer nk_test"})
+        return await made.rl.run_example("reasoning-gym", "chain-sum", idempotency_key="k")
+
+    workload = asyncio.run(go())
+    assert requests[0].url.path == "/v1/rl-environments/reasoning-gym/examples/chain-sum/runs"
+    assert workload.id == "wl_example"
+    assert workload.replayed is True

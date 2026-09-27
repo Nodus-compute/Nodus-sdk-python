@@ -336,6 +336,10 @@ def docs_api(monkeypatch):
                 if payload != {"mode": "execute", "host_id": "host_docs"}:
                     return self.reply({"error": "invalid_enrollment"}, 400)
                 return self.reply({"id": "pet_docs", "mode": "execute", "token": "synthetic-token", "expires_at": "2026-09-18T12:00:00Z"}, 201)
+            if path == "/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs":
+                if not self.headers.get("Idempotency-Key") or set(payload or {}) - {"name"}:
+                    return self.reply({"error": "invalid_json"}, 400)
+                return self.reply({"workload_id": "wl_docs", "status": "accepted", "revision": 1}, 202)
             if path == "/v1/workloads":
                 submissions.append(payload)
                 if not self.headers.get("Idempotency-Key"):

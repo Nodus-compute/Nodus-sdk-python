@@ -140,6 +140,20 @@ def _launch_body(
     return body, idempotency_key
 
 
+_CATALOG_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+
+
+def _example_request(environment_id: Any, example_id: Any, idempotency_key: Any, name: Any) -> tuple[str, dict[str, Any]]:
+    for label, value in (("environment_id", environment_id), ("example_id", example_id)):
+        if not isinstance(value, str) or not _CATALOG_ID.fullmatch(value):
+            raise ValidationError(f"{label} must be an id from list_environments(), not {value!r}")
+    if not isinstance(idempotency_key, str) or not idempotency_key:
+        raise ValidationError("idempotency_key must be a nonempty stable key for this run")
+    if name is not None and (not isinstance(name, str) or not name):
+        raise ValidationError("name must be nonempty text when given")
+    return f"/v1/rl-environments/{environment_id}/examples/{example_id}/runs", ({"name": name} if name else {})
+
+
 @dataclass(frozen=True)
 class RLRecipe:
     """One server-advertised recipe and its current availability."""
@@ -367,6 +381,8 @@ class RLExample:
     baseline_pass_rate: float | None
     measured_change_pp: float | None
     runtime_minutes: int | None
+    id: str = ""
+    peak_memory_gb: float | None = None
 
     def run_arguments(self) -> dict[str, Any]:
         from ._rl_setup import RLSetup
@@ -379,6 +395,7 @@ class RLExample:
             "command": ["sh", "-c", self.command],
             "image": self.image,
             "outputs": outputs,
+            **({"peak_memory_gb": self.peak_memory_gb} if self.peak_memory_gb else {}),
             "rl": RLSetup(environment_id=self.environment_id, mode=self.mode,
                           model=self.model, planned_tasks=self.planned_tasks),
         }
@@ -411,6 +428,7 @@ class RLEnvironment:
             if planned > 10000:
                 raise APIError("RL response field 'default_tasks' must be at most 10000", body=dict(launch))
             results = _strings(launch["results"], "results") if launch.get("results") is not None else []
+            memory = _optional_number(launch, "peak_memory_gb")
             for item in _rows(launch.get("examples"), "examples"):
                 # A command still holding its placeholder never had a runner URL
                 # resolved; running it would pay for a machine that cannot start.
@@ -436,6 +454,8 @@ class RLEnvironment:
                     baseline_pass_rate=_optional_number(item, "baseline_pass_rate"),
                     measured_change_pp=_optional_number(item, "measured_change_pp"),
                     runtime_minutes=minutes,
+                    id=_optional_text(item, "id") or "",
+                    peak_memory_gb=memory,
                 ))
         return cls(
             id=environment_id,
@@ -502,6 +522,27 @@ class RL:
         path = "/v1/rl-environments"
         return _environments(self._client._one(self._client._request("GET", path), "GET", path))
 
+    def run_example(
+        self, environment_id: str, example_id: str, *, idempotency_key: str, name: str | None = None,
+    ) -> "Workload":
+        """Start a catalog example in one request and return its workload.
+
+        The server builds the run the console's Run button prepares. Retrying
+        with the same ``idempotency_key`` returns the original run.
+        """
+        from . import Workload
+
+        path, body = _example_request(environment_id, example_id, idempotency_key, name)
+        answered: dict[str, str] = {}
+        response = self._client._request("POST", path, json=body, idempotency_key=idempotency_key,
+                                         headers_out=answered)
+        workload = Workload(self._client)
+        workload._absorb(self._client._one(response, "POST", path))
+        workload.replayed = _replayed(answered)
+        if not workload.id:
+            raise NodusError("RL example run returned no workload id", body=response)
+        return workload
+
     def list_recipes(self) -> list[RLRecipe]:
         path = "/v1/rl-recipes"
         body = self._client._one(self._client._request("GET", path), "GET", path)
@@ -565,6 +606,23 @@ class AsyncRL:
         path = "/v1/rl-environments"
         response = await self._client._request("GET", path)
         return _environments(self._client._one(response, "GET", path))
+
+    async def run_example(
+        self, environment_id: str, example_id: str, *, idempotency_key: str, name: str | None = None,
+    ) -> "AsyncWorkload":
+        """Start a catalog example in one request and return its workload."""
+        from . import AsyncWorkload
+
+        path, body = _example_request(environment_id, example_id, idempotency_key, name)
+        answered: dict[str, str] = {}
+        response = await self._client._request("POST", path, json=body, idempotency_key=idempotency_key,
+                                               headers_out=answered)
+        workload = AsyncWorkload(self._client)
+        workload._absorb(self._client._one(response, "POST", path))
+        workload.replayed = _replayed(answered)
+        if not workload.id:
+            raise NodusError("RL example run returned no workload id", body=response)
+        return workload
 
     async def list_recipes(self) -> list[RLRecipe]:
         path = "/v1/rl-recipes"
