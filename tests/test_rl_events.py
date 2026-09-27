@@ -175,3 +175,74 @@ def test_an_event_the_runner_would_drop_after_reencoding_is_refused() -> None:
             "evaluation", "t", outcome="passed", reward=1e16, message=message,
             raw_trace=nodus.RawTraceFields(input=trace))
     assert out.getvalue() == ""
+
+
+# Episode-shaped fixtures carrying only the attributes the adapter reads:
+# task.key or task.hash, ok, and per-trace timing with a start and phase ends.
+def _episode(*, key=None, hash=None, ok=True, start=100.0, ends=(("agent", 101.5), ("scoring", 102.0))):
+    from types import SimpleNamespace
+
+    timing = SimpleNamespace(start=start, **{phase: SimpleNamespace(end=end) for phase, end in ends})
+    return SimpleNamespace(task=SimpleNamespace(key=key, hash=hash), ok=ok,
+                           traces=[SimpleNamespace(timing=timing)])
+
+
+def test_a_scored_prime_episode_reports_its_outcome_reward_and_duration() -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+        _episode(key="task-7"), phase="evaluation",
+        score_episode=lambda episode: nodus.EpisodeScore(outcome="passed", reward=0.75, message="ok"))
+    (event,) = emitted(out)
+    assert event["task_id"] == "task-7"
+    assert event["outcome"] == "passed"
+    assert event["reward"] == 0.75
+    assert event["duration_ms"] == 2000.0
+    assert event["message"] == "ok"
+
+
+def test_a_prime_episode_without_a_key_is_identified_by_its_hash() -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+        _episode(hash="abc123"), phase="evaluation",
+        score_episode=lambda episode: nodus.EpisodeScore(outcome="failed", reward=0.0))
+    assert emitted(out)[0]["task_id"] == "abc123"
+
+
+def test_a_failed_prime_episode_is_an_error_and_is_never_scored() -> None:
+    def must_not_score(episode):
+        raise AssertionError("an episode that did not finish was scored")
+
+    for ok in (False, None, 1, "true"):
+        out = io.StringIO()
+        nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+            _episode(key="task-1", ok=ok), phase="evaluation",
+            score_episode=must_not_score, error_message="sandbox exited")
+        (event,) = emitted(out)
+        assert event["outcome"] == "error", ok
+        assert event["message"] == "sandbox exited"
+        assert "reward" not in event
+
+
+def test_a_prime_episode_without_timing_reports_no_invented_duration() -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+        _episode(key="task-1", start=None), phase="evaluation",
+        score_episode=lambda episode: nodus.EpisodeScore(outcome="passed"))
+    assert "duration_ms" not in emitted(out)[0]
+
+
+def test_a_prime_episode_with_no_stable_identity_is_refused_before_output() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+            _episode(), phase="evaluation",
+            score_episode=lambda episode: nodus.EpisodeScore(outcome="passed"))
+    assert out.getvalue() == ""
+
+
+def test_a_scorer_that_does_not_return_an_episode_score_is_refused_before_output() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+            _episode(key="task-1"), phase="evaluation", score_episode=lambda episode: 1.0)
+    assert out.getvalue() == ""

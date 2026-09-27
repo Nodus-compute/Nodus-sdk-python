@@ -7,13 +7,15 @@ resolved, the way GET /v1/rl-environments serves it.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
 
 import nodus
 
-CATALOG = json.loads('{"schema_version": 1, "reviewed_at": "2026-09-19", "environments": [{"id": "gsm8k", "name": "GSM8K", "publisher": "OpenAI", "summary": "Eight thousand grade-school maths word problems, each with a worked solution and a single numeric answer.", "category": "Reasoning", "source_url": "https://github.com/openai/grade-school-math", "code_license": "MIT", "data_license": "MIT", "reward_type": "deterministic programmatic", "reward_description": "The final number is compared with the reference answer. No model judges the result.", "modes": ["train", "evaluate"], "readiness": "research", "requirements": ["Pin the dataset revision used for the train and test splits", "Keep held-out problems out of the training split", "Record the decoding settings used for both scores"], "launch": {"image": "pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime", "model": "Qwen/Qwen3-1.7B", "default_tasks": 64, "measured_on": "A40, seed 42, greedy scoring, 2026-09-24", "note": "The change was measured by running this example. Training moves the score because the model writes out its working, so its attempts differ enough to learn from.", "results": ["outputs/results.json"], "examples": [{"dataset": "openai/gsm8k", "name": "GSM8K, trained", "mode": "train", "summary": "Score 64 grade-school word problems, train a LoRA adapter with GRPO, then score the same 64 again.", "baseline_pass_rate": 0.7969, "trained_pass_rate": 0.875, "measured_change_pp": 7.8, "runtime_minutes": 60, "command": "export NODUS_RL_EXAMPLE_BASE=https://api.nodus-compute.ai/v1/artifacts/rl-example && python3 -m pip install -q --break-system-packages transformers accelerate trl peft datasets && python3 -c \\"import os,urllib.request as u;[u.urlretrieve(os.environ[\'NODUS_RL_EXAMPLE_BASE\']+\'/\'+n,n) for n in (\'nodus_rl_events.py\',\'gsm8k_trainer.py\')]\\" && python3 gsm8k_trainer.py --model Qwen/Qwen3-1.7B --train-tasks 512 --heldout-tasks 64 --steps 150 --seed 42 --output outputs/results.json"}]}}, {"id": "listed-only", "name": "Listed only", "publisher": "Fixture", "summary": "No launch block.", "category": "Reasoning", "source_url": "https://github.com/example/listed", "code_license": "MIT", "data_license": "MIT", "reward_type": "deterministic", "reward_description": "Exact match.", "modes": ["evaluate"], "readiness": "research", "requirements": ["Not wired yet"]}]}')
+# The shape GET /v1/rl-environments serves, shared with the documentation tests.
+CATALOG = json.loads((Path(__file__).parent / "fixtures" / "rl-environments.json").read_text())
 
 
 def client(captured: list[dict], catalog: object = CATALOG) -> "nodus.Client":
@@ -132,3 +134,13 @@ def test_a_task_count_the_server_would_reject_fails_when_the_catalog_is_read() -
 def test_an_example_whose_runner_url_was_never_resolved_is_not_offered() -> None:
     catalog = _catalog_with(example_overrides={"command": "export B={{RL_EXAMPLE_BASE}} && python3 run.py"})
     assert client([], catalog=catalog).rl.list_environments()[0].examples == []
+
+
+def test_a_result_named_like_a_windows_device_still_gets_a_name_run_accepts() -> None:
+    from nodus._outputs import portable_output_name
+
+    catalog = _catalog_with(launch_overrides={"results": ["outputs/CON", "outputs/aux.json", "outputs/final."]})
+    example = nodus.RLEnvironment.from_dict(catalog["environments"][0]).examples[0]
+    outputs = example.run_arguments()["outputs"]
+    assert sorted(outputs.values()) == ["outputs/CON", "outputs/aux.json", "outputs/final."]
+    assert all(portable_output_name(name) for name in outputs), outputs

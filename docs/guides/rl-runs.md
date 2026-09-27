@@ -1,5 +1,31 @@
 # Run RL: an example, your own code, or a prepared recipe
 
+## Sign in, run, watch and collect results
+
+Set `NODUS_API_KEY` through your secret manager, or run `nodus login` once. See
+[authentication](../getting-started/authentication.md). This runs the GSM8K
+example, waits for it to finish and downloads its scores:
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    environment = next(e for e in client.rl.list_environments() if e.id == "gsm8k")
+    example = environment.examples[0]
+    workload = client.run(idempotency_key="gsm8k-first-run", **example.run_arguments())
+    print(workload.id)
+    done = workload.wait()
+    if not done.succeeded:
+        raise RuntimeError(f"RL run ended: {done.status}\n{done.logs()}")
+    for path in done.download():
+        print(path)
+```
+
+The run rents a GPU and is billed while it runs. `example.runtime_minutes` is
+how long the example took when it was measured. While it runs, the console's
+run page charts each scored task as it is reported. `done.download()` saves the
+declared result file, which holds the scores before and after training.
+
 ## Start from an example
 
 Every environment in the catalog lists the examples you can run today, with the

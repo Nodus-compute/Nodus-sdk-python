@@ -10,6 +10,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from .errors import APIError, NodusError, ValidationError
+from ._outputs import portable_output_name
 
 if TYPE_CHECKING:
     from . import AsyncWorkload, Workload
@@ -450,12 +451,16 @@ class RLEnvironment:
 
 
 def _output_names(paths: list[str]) -> dict[str, str]:
-    """Name each result file the way the console does, so none is lost."""
+    """Name each result file the way the console does, so none is lost.
+
+    A name the console would keep but ``run()`` refuses, such as a Windows
+    device name like ``CON``, gets the same ``result_`` prefix as a reserved one.
+    """
     outputs: dict[str, str] = {}
     for path in paths:
         basename = re.sub(r"[^a-zA-Z0-9._-]", "_", path.rsplit("/", 1)[-1])
-        if not basename or basename.startswith("nodus."):
-            basename = "result_" + basename
+        if not basename or basename.startswith("nodus.") or not portable_output_name(basename):
+            basename = "result_" + basename.rstrip(".")
         name, suffix = basename, 2
         while name in outputs:
             name, suffix = f"{suffix}_{basename}", suffix + 1

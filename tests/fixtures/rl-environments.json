@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-09-19",
+  "environments": [
+    {
+      "id": "gsm8k",
+      "name": "GSM8K",
+      "publisher": "OpenAI",
+      "summary": "Eight thousand grade-school maths word problems, each with a worked solution and a single numeric answer.",
+      "category": "Reasoning",
+      "source_url": "https://github.com/openai/grade-school-math",
+      "code_license": "MIT",
+      "data_license": "MIT",
+      "reward_type": "deterministic programmatic",
+      "reward_description": "The final number is compared with the reference answer. No model judges the result.",
+      "modes": [
+        "train",
+        "evaluate"
+      ],
+      "readiness": "research",
+      "requirements": [
+        "Pin the dataset revision used for the train and test splits",
+        "Keep held-out problems out of the training split",
+        "Record the decoding settings used for both scores"
+      ],
+      "launch": {
+        "image": "pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime",
+        "model": "Qwen/Qwen3-1.7B",
+        "default_tasks": 64,
+        "measured_on": "A40, seed 42, greedy scoring, 2026-09-24",
+        "note": "The change was measured by running this example. Training moves the score because the model writes out its working, so its attempts differ enough to learn from.",
+        "results": [
+          "outputs/results.json"
+        ],
+        "examples": [
+          {
+            "dataset": "openai/gsm8k",
+            "name": "GSM8K, trained",
+            "mode": "train",
+            "summary": "Score 64 grade-school word problems, train a LoRA adapter with GRPO, then score the same 64 again.",
+            "baseline_pass_rate": 0.7969,
+            "trained_pass_rate": 0.875,
+            "measured_change_pp": 7.8,
+            "runtime_minutes": 60,
+            "command": "export NODUS_RL_EXAMPLE_BASE=https://api.nodus-compute.ai/v1/artifacts/rl-example && python3 -m pip install -q --break-system-packages transformers accelerate trl peft datasets && python3 -c \"import os,urllib.request as u;[u.urlretrieve(os.environ['NODUS_RL_EXAMPLE_BASE']+'/'+n,n) for n in ('nodus_rl_events.py','gsm8k_trainer.py')]\" && python3 gsm8k_trainer.py --model Qwen/Qwen3-1.7B --train-tasks 512 --heldout-tasks 64 --steps 150 --seed 42 --output outputs/results.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "listed-only",
+      "name": "Listed only",
+      "publisher": "Fixture",
+      "summary": "No launch block.",
+      "category": "Reasoning",
+      "source_url": "https://github.com/example/listed",
+      "code_license": "MIT",
+      "data_license": "MIT",
+      "reward_type": "deterministic",
+      "reward_description": "Exact match.",
+      "modes": [
+        "evaluate"
+      ],
+      "readiness": "research",
+      "requirements": [
+        "Not wired yet"
+      ]
+    }
+  ]
+}
