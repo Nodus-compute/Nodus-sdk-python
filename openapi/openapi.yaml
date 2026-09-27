@@ -1022,6 +1022,16 @@
             "type": "string",
             "format": "date-time"
           },
+          "final_charge_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Immutable aggregate lifetime compute charge for a terminal workload. Present only after every customer usage clock is settled and complete initial compute cost coverage is available across the workload scope. This total is independent of the current billing month. Retaining files can continue to incur separate usage charges, which are excluded from this fixed compute total."
+          },
+          "charge_state": {
+            "type": "string",
+            "enum": ["estimated", "final"],
+            "description": "Compute charge finality for workloads using metered pricing. Estimated means compute usage is still accruing, terminal usage is still settling, or required initial compute cost coverage is incomplete. Final means final_charge_usd is frozen. Retained-file usage can continue after compute is final. Historical workload contracts may omit this field."
+          },
           "compute_settled_usd": {
             "type": "number",
             "default": 0,
@@ -1342,6 +1352,7 @@
             "type": "number"
           },
           "actual_cost_usd": {
+            "description": "Reserved optional compatibility field. Customer responses omit placement-level charges. Use the workload meter and Insights for aggregate recorded spend.",
             "anyOf": [
               {
                 "type": "number"
@@ -1484,6 +1495,16 @@
             "type": "number",
             "minimum": 0,
             "description": "Customer cost recorded for this sandbox."
+          },
+          "charge_state": {
+            "type": "string",
+            "enum": ["estimated", "final"],
+            "description": "Present for metered sandboxes. A terminal sandbox remains estimated while required cost records are unavailable. Show Finalizing cost until final. Historical contracts omit this field."
+          },
+          "final_charge_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Immutable aggregate lifetime compute charge once charge_state is final. This amount is independent of current-month readings and excludes ongoing retained-file usage. Retaining files can continue to incur separate usage charges after compute is final. Omitted while the compute cost is finalizing."
           },
           "network_usage": {
             "type": "object",
@@ -3539,16 +3560,17 @@
       },
       "WorkspacePricePreview": {
         "type": "object",
-        "required": ["hourly_usd", "currency", "gpu_count", "observed_at", "expires_at", "estimate_only"],
+        "required": ["public_price_available", "currency", "gpu_count", "observed_at", "expires_at", "estimate_only"],
         "properties": {
-          "hourly_usd": {"type": "number", "exclusiveMinimum": 0, "description": "Estimated USD per hour for the entire machine. Do not multiply by gpu_count."},
+          "hourly_usd": {"type": "number", "exclusiveMinimum": 0, "description": "Public price-sheet reference in USD per hour for the entire machine. Omitted when that configuration has no published rate. This is not the final compute charge. Do not multiply by gpu_count."},
+          "public_price_available": {"type": "boolean", "description": "Whether the public sheet lists an hourly rate for this configuration. A missing public rate does not block starting available compute."},
           "currency": {"type": "string", "const": "USD"},
           "gpu_count": {"type": "integer", "enum": [0, 1, 2, 4, 8]},
           "observed_at": {"type": "string", "format": "date-time"},
           "expires_at": {"type": "string", "format": "date-time", "description": "Refresh the estimate after this timestamp."},
           "estimate_only": {"type": "boolean", "const": true}
         },
-        "description": "Read-only current price estimate for an exact workspace configuration. Does not allocate compute, reserve capacity or lock a price. Admission refreshes price and availability within the customer's spending controls."
+        "description": "Read-only availability check with the public price-sheet reference when listed. Does not allocate compute, reserve capacity or lock a price. Actual compute expenditure is published as one final aggregate charge after the session."
       },
       "WorkspaceTransfer": {
         "type": "object",
@@ -3743,7 +3765,9 @@
           "storage_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Saved-file charges belong to the account meter."},
           "model_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Managed model charges belong to the account meter."},
           "compute_accruing_usd": {"type": "number"},
-          "platform_fee_accruing_usd": {"type": "number"}
+          "platform_fee_accruing_usd": {"type": "number"},
+          "final_charge_usd": {"type": "number", "minimum": 0, "description": "Immutable aggregate lifetime compute charge once the session has stopped and all required compute cost records are complete. Excludes saved-file storage, which can continue to incur separate usage charges. Omitted while finalizing."},
+          "charge_state": {"type": "string", "enum": ["estimated", "final"], "description": "Present for metered compute sessions. Stopped sessions remain estimated while required cost records are unavailable. Historical contracts omit this field."}
         }
       },
       "ResearchWorkspaceAccountStorage": {
@@ -13770,10 +13794,10 @@
           },
           "budget_usd": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "maximum": 1000000,
             "multipleOf": 1e-06,
-            "description": "A sublimit of the existing deployment budget. This does not create a second funded balance."
+            "description": "Omit or use zero for account funding without a group spending limit. An explicit positive value is a compute sublimit of any positive deployment budget. Payment, available credits, deployment limits and accepted attempt limits still apply. This does not create a second funded balance."
           },
           "max_active": {
             "type": "integer",
@@ -13801,7 +13825,6 @@
         "required": [
           "name",
           "agent_id",
-          "budget_usd",
           "max_active",
           "max_held"
         ]
@@ -13933,10 +13956,10 @@
           },
           "budget_usd": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "maximum": 1000000,
             "multipleOf": 1e-06,
-            "description": "A sublimit of the existing deployment budget. This does not create a second funded balance."
+            "description": "Zero means account funding without a group spending limit. A positive value is the group's accepted compute sublimit of any positive deployment budget. Payment, available credits, deployment limits and accepted attempt limits still apply."
           },
           "max_active": {
             "type": "integer",
@@ -13987,12 +14010,12 @@
           "cost_usd": {
             "type": "number",
             "minimum": 0,
-            "description": "Settled attempt costs within the deployment account."
+            "description": "Settled attempt costs and recorded compute charges for unsettled attempts without a spending cap, within the deployment account."
           },
           "reserved_usd": {
             "type": "number",
             "minimum": 0,
-            "description": "Full budget liability of every unsettled assigned attempt. A closed marker alone cannot release this reservation."
+            "description": "Full accepted budget liability of unsettled assigned attempts with a spending cap, plus outstanding account funding reservations for attempts without a cap. A closed marker alone cannot release these reservations."
           },
           "active_authorized_attempts": {
             "type": "integer",
@@ -23748,7 +23771,7 @@
             }
           }
         },
-        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. Returns one database snapshot of task counts, retained payload counts, settled spending and unsettled allocations. Available when new admission is disabled."
+        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. Returns one database snapshot of task counts, retained payload counts, recorded spending and unsettled allocations. Available when new admission is disabled."
       }
     },
     "/v1/agent-groups/{id}/runs": {
