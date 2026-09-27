@@ -28,6 +28,7 @@ from .errors import ValidationError, NodusError, NotFoundError, AuthenticationEr
 from .types import _num
 from ._workload_file import load_workload_file, write_workload_file
 from ._project_cli import add_source_arguments, source_options
+from ._client_identity import acting_as
 
 # Nearly everything printed here was written somewhere else, and a terminal
 # acts on whatever escapes it is handed. The rule between the two cleaners:
@@ -683,6 +684,78 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
         return 0
 
 
+_AGENT_CLIENTS = {"claude-code": "Claude", "codex": "Codex", "cursor": "Cursor", "mcp": "MCP client"}
+
+
+def _launched_by(item: dict) -> str:
+    who = item.get("launched_by") if isinstance(item.get("launched_by"), dict) else {}
+    agent = _AGENT_CLIENTS.get(who.get("client"))
+    if agent:
+        return agent
+    if who.get("api_key_name"):
+        return f"API key {who['api_key_name']}"
+    return who.get("user_name") or "-"
+
+
+def _compute_row(item: dict) -> list[str]:
+    group = item.get("group") if isinstance(item.get("group"), dict) else None
+    name = str(item.get("name") or item.get("id") or "")
+    if group and group.get("size"):
+        name += f" ({group['size']} runs)"
+    count, gpu = item.get("gpu_count"), item.get("gpu")
+    gpu_text = "-" if not gpu else (f"{count}x {gpu}" if isinstance(count, int) and count > 1 else str(gpu))
+    kind = {"instance": "Instance", "training": "Training"}.get(item.get("type"), str(item.get("type") or "-"))
+    return [name, kind, gpu_text, str(item.get("status_text") or item.get("state") or "-"), _launched_by(item)]
+
+
+def _cmd_ps(args: argparse.Namespace) -> int:
+    with Client(base_url=args.base_url) as client:
+        items = [item for state in (("running", "history") if args.all else ("running",))
+                 for item in client.compute.iterate(state=state)]
+    if args.json:
+        print(json.dumps(items, indent=2, default=str))
+        return 0
+    show_table(["NAME", "TYPE", "GPU", "STATUS", "LAUNCHED BY"], [_compute_row(item) for item in items],
+               empty="Nothing is running." if not args.all else "No compute yet.", plain=True)
+    return 0
+
+
+def _read_public_key(path: str | None) -> str | None:
+    return Path(path).expanduser().read_text() if path else None
+
+
+def _cmd_launch(args: argparse.Namespace) -> int:
+    with Client(base_url=args.base_url) as client:
+        machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
+                                ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
+                                keep_files=args.keep_files, wait=args.wait, timeout_seconds=args.timeout,
+                                poll_seconds=args.poll_seconds, idempotency_key=args.idempotency_key)
+        if not args.wait:
+            print(_safe_line(f"{machine.id} {machine.state}. Connect when ready with: nodus ssh {machine.id}"))
+            return 0
+        connection = machine.ssh()
+    print(_safe_line(f"{machine.name} ({machine.id}) is ready. It stops itself after {args.hours} hours."))
+    print(_safe_line(connection.get("command", "")))
+    return 0
+
+
+def _cmd_ssh(args: argparse.Namespace) -> int:
+    with Client(base_url=args.base_url) as client:
+        connection = client.workspaces.get(args.workspace_id).ssh()
+    print(_safe_line(connection.get("command", "")))
+    print(_safe(connection.get("ssh_config", "")))
+    return 0
+
+
+def _cmd_stop(args: argparse.Namespace) -> int:
+    with Client(base_url=args.base_url) as client:
+        machine = client.workspaces.get(args.workspace_id)
+        with _sandbox_mutation(args.idempotency_key, sandbox_id=machine.id, noun="instance") as key:
+            machine.stop(idempotency_key=key)
+    print(_safe_line(f"{machine.id} {machine.state}"))
+    return 0
+
+
 def _sandbox_exec_failure(process):
     state = getattr(process.state, "value", process.state)
     detail = process.failure_code or f"exit code {process.exit_code}"
@@ -1252,6 +1325,28 @@ Use nodus COMMAND --help for command options.""",
     from ._agent_cli import add_parser as agent_parser
     agent_parser(sub, _positive_cost, _page_limit)
 
+    launch = sub.add_parser("launch", help="rent a GPU machine and print its SSH command when ready")
+    launch.add_argument("--gpu", default="H100", help="GPU model, such as H100 or \"A100-40GB\" (default H100)")
+    launch.add_argument("--gpus", type=int, default=1, help="1, 2, 4 or 8 GPUs on one machine")
+    launch.add_argument("--disk", type=int, default=100, help="local disk in GB, from 80 to 2048")
+    launch.add_argument("--env", help="software environment, such as pytorch-cuda")
+    launch.add_argument("--ssh-key", help="path to an SSH public key (default ~/.ssh/id_ed25519.pub)")
+    launch.add_argument("--name", help="machine name (default instance- and 8 random characters)")
+    launch.add_argument("--hours", type=_positive_integer, default=4, help="stop automatically after this many hours")
+    launch.add_argument("--keep-files", action="store_true", help="save project files between sessions as a workspace")
+    launch.add_argument("--no-wait", dest="wait", action="store_false", help="return once compute is requested")
+    launch.add_argument("--timeout", type=float, default=900.0, help="seconds to wait for SSH")
+    launch.add_argument("--poll-seconds", type=float, default=5.0)
+    launch.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
+    ps = sub.add_parser("ps", help="list running instances and training")
+    ps.add_argument("--all", action="store_true", help="include stopped and finished compute")
+    ps.add_argument("--json", action="store_true", help="print the items as JSON")
+    ssh = sub.add_parser("ssh", help="print the SSH command for an instance or workspace")
+    ssh.add_argument("workspace_id", metavar="NAME_OR_ID")
+    stop = sub.add_parser("stop", help="stop an instance or workspace and release its GPU")
+    stop.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
+    stop.add_argument("workspace_id", metavar="NAME_OR_ID")
+
     workspace = sub.add_parser("workspace", help="GPU workspaces with VS Code, JupyterLab and SSH")
     workspace_sub = workspace.add_subparsers(dest="workspace_cmd", required=True, metavar="COMMAND")
     workspace_new = workspace_sub.add_parser("new", help="save a workspace configuration without renting compute")
@@ -1424,6 +1519,10 @@ def main(argv: list[str] | None = None) -> int:
         "pools": lambda: _cmd_pools(args),
         "sandbox": lambda: _cmd_sandbox(args),
         "workspace": lambda: _cmd_workspace(args),
+        "launch": lambda: _cmd_launch(args),
+        "ps": lambda: _cmd_ps(args),
+        "ssh": lambda: _cmd_ssh(args),
+        "stop": lambda: _cmd_stop(args),
         "agent": lambda: _cmd_agent(args),
         "benchmark": lambda: _cmd_benchmark(args),
         "list": lambda: _cmd_list(args),
@@ -1440,7 +1539,8 @@ def main(argv: list[str] | None = None) -> int:
         "explain": lambda: _cmd_explain(args),
     }
     try:
-        return handlers[args.cmd]()
+        with acting_as("cli"):
+            return handlers[args.cmd]()
     except (NodusError, ValueError, TypeError, OSError) as exc:
         message = _safe(exc)
         if isinstance(exc, APIConnectionError) and not args.debug:

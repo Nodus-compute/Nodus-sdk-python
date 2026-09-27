@@ -162,6 +162,36 @@ with nodus.Client() as client:
 See [GPU workspaces](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/workspaces.md) for uploads, SSH, background jobs
 and the `nodus workspace` commands.
 
+## Launch a GPU
+
+`launch` rents one GPU machine, waits until SSH accepts connections and returns
+its handle. It uses your `~/.ssh/id_ed25519.pub` unless you pass `ssh_key`.
+The machine stops itself after `max_hours`, which is 4 unless you set it.
+Local disk is not kept after it stops. Pass `keep_files=True` to save project
+files as a workspace instead.
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    gpu = client.launch("H100", max_hours=2)
+    print(gpu.ssh()["command"])
+    gpu.stop()
+```
+
+From the terminal:
+
+```bash
+nodus launch --gpu H100 --hours 2
+nodus ps
+nodus ssh NAME_OR_ID
+nodus stop NAME_OR_ID
+```
+
+If the wait times out, the machine keeps running and the error names its ID.
+`nodus ps` and `client.compute.list()` show running instances and training.
+They need a Nodus server that provides the Compute list.
+
 ## Prefer the terminal?
 
 ```bash

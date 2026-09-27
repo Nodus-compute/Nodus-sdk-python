@@ -6,7 +6,9 @@ from typing import Any
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from ._client_identity import acting_as, mcp_caller
 from . import AsyncClient, _resolve, _valid_id, _valid_idempotency_key
+from ._compute import _query
 from ._workspaces import AsyncWorkspace, _CONFIGURATION_FIELDS, _job, _tool
 
 
@@ -41,7 +43,8 @@ def register_workspace_tools(server, base_url, request, check_origin):
     def client():
         key, origin = _resolve(None, base_url)
         check_origin(origin)
-        return AsyncClient(api_key=key, base_url=origin, timeout=300)
+        with acting_as(mcp_caller()):
+            return AsyncClient(api_key=key, base_url=origin, timeout=300)
 
     @server.tool(structured_output=False, annotations=read)
     async def get_workspace_capabilities(ctx: Context) -> str:
@@ -135,3 +138,39 @@ def register_workspace_tools(server, base_url, request, check_origin):
         async with client() as api:
             saved = await AsyncWorkspace(api, identifier).download(destination, overwrite=False)
         return json.dumps({"workspace_id": identifier, "path": str(saved), "verified": True})
+
+    @server.tool(structured_output=False, annotations=write)
+    async def launch_gpu(idempotency_key: str, gpu: str, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+                         disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
+                         name: str | None = None, max_hours: int = 4, keep_files: bool = False) -> str:
+        """Rent one GPU machine for SSH and return once compute is requested. It stops itself after max_hours.
+
+        ssh_key defaults to the public key in ~/.ssh on this machine. keep_files saves project files as a
+        workspace. Poll get_workspace until connections.ssh is true, then call get_workspace_connection.
+        When an error names a workspace ID, retry start_workspace for it with the same key. Do not launch again.
+        """
+        key = _valid_idempotency_key(idempotency_key)
+        async with client() as api:
+            machine = await api.launch(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                                       environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
+                                       keep_files=keep_files, wait=False, idempotency_key=key)
+        return json.dumps(machine.raw)
+
+    @server.tool(structured_output=False, annotations=read)
+    async def list_compute(ctx: Context, state: str = "running", type: str | None = None,
+                           launched_by: str | None = None, limit: int | None = None,
+                           cursor: str | None = None) -> str:
+        """List running instances and training, one row per sweep. Pass next_cursor as cursor for more."""
+        params = _query(state, type, launched_by, limit)
+        if cursor is not None:
+            params["cursor"] = _valid_idempotency_key(cursor)
+        return await request(ctx.request_context.lifespan_context, "GET", "/v1/compute", base_url=base_url,
+                             params=params)
+
+    @server.tool(structured_output=False, annotations=destructive)
+    async def stop_compute(id: str, idempotency_key: str) -> str:
+        """Stop an instance or workspace by ID and release its GPU. Cancel training with cancel_workload."""
+        key, identifier = _valid_idempotency_key(idempotency_key), _valid_id(id)
+        async with client() as api:
+            machine = await AsyncWorkspace(api, identifier).stop(idempotency_key=key)
+        return json.dumps(machine.raw)

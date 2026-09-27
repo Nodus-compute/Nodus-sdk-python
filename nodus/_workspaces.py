@@ -789,12 +789,12 @@ class Workspaces:
             try:
                 return workspace.refresh()
             except NotFoundError as missing:
-                found = _by_name([ws.raw for ws in self.list()], reference)
+                found = self._find(reference)
                 if found is None:
                     raise missing
                 workspace._absorb(found)
                 return workspace
-        found = _by_name([ws.raw for ws in self.list()], reference)
+        found = self._find(reference)
         if found is None:
             raise NotFoundError(f"No workspace is named {reference!r}", status_code=404)
         workspace._absorb(found)
@@ -803,19 +803,28 @@ class Workspaces:
     def list(self) -> list[Workspace]:
         """Every workspace the account can see."""
         result: list[Workspace] = []
+        for row in self._rows():
+            workspace = Workspace(self._client)
+            workspace._absorb(row)
+            result.append(workspace)
+        return result
+
+    def _rows(self, kind: str | None = None) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         cursor, seen = "", set()
         while True:
-            params = {"limit": 100, **({"cursor": cursor} if cursor else {})}
+            params = {"limit": 100, **({"kind": kind} if kind else {}), **({"cursor": cursor} if cursor else {})}
             rows, cursor = _page(self._client._request("GET", _BASE, params=params))
-            for row in rows:
-                workspace = Workspace(self._client)
-                workspace._absorb(row)
-                result.append(workspace)
+            result.extend(rows)
             if not cursor:
                 return result
             if cursor in seen:
                 raise APIError("Workspace pagination repeated a cursor")
             seen.add(cursor)
+
+    def _find(self, name: str) -> dict[str, Any] | None:
+        """A workspace by name, else an instance by name: the server lists the two kinds separately."""
+        return _by_name(self._rows(), name) or _by_name(self._rows("instance"), name)
 
 
 class AsyncWorkspaces:
@@ -875,12 +884,12 @@ class AsyncWorkspaces:
             try:
                 return await workspace.refresh()
             except NotFoundError as missing:
-                found = _by_name([ws.raw for ws in await self.list()], reference)
+                found = await self._find(reference)
                 if found is None:
                     raise missing
                 workspace._absorb(found)
                 return workspace
-        found = _by_name([ws.raw for ws in await self.list()], reference)
+        found = await self._find(reference)
         if found is None:
             raise NotFoundError(f"No workspace is named {reference!r}", status_code=404)
         workspace._absorb(found)
@@ -888,16 +897,24 @@ class AsyncWorkspaces:
 
     async def list(self) -> list[AsyncWorkspace]:
         result: list[AsyncWorkspace] = []
+        for row in await self._rows():
+            workspace = AsyncWorkspace(self._client)
+            workspace._absorb(row)
+            result.append(workspace)
+        return result
+
+    async def _rows(self, kind: str | None = None) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         cursor, seen = "", set()
         while True:
-            params = {"limit": 100, **({"cursor": cursor} if cursor else {})}
+            params = {"limit": 100, **({"kind": kind} if kind else {}), **({"cursor": cursor} if cursor else {})}
             rows, cursor = _page(await self._client._request("GET", _BASE, params=params))
-            for row in rows:
-                workspace = AsyncWorkspace(self._client)
-                workspace._absorb(row)
-                result.append(workspace)
+            result.extend(rows)
             if not cursor:
                 return result
             if cursor in seen:
                 raise APIError("Workspace pagination repeated a cursor")
             seen.add(cursor)
+
+    async def _find(self, name: str) -> dict[str, Any] | None:
+        return _by_name(await self._rows(), name) or _by_name(await self._rows("instance"), name)

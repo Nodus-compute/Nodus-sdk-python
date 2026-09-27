@@ -44,6 +44,7 @@ from ._rl import (
 from ._secrets import Secrets, AsyncSecrets
 from ._connections import Connections, AsyncConnections
 from ._workspaces import Workspaces, AsyncWorkspaces, Workspace, AsyncWorkspace
+from ._compute import Compute, AsyncCompute
 from ._volumes import Volumes, AsyncVolumes
 from ._operations import Operations, AsyncOperations, OperationDefinition, OperationCatalog, WorkloadPage, WorkloadValidation, RunDraft, RunDraftValues, RunDraftPatch
 
@@ -174,6 +175,8 @@ __all__ = [
     "AsyncSecrets",
     "Sandbox",
     "Workspace",
+    "Compute",
+    "AsyncCompute",
     "AsyncWorkspace",
     "Workspaces",
     "AsyncWorkspaces",
@@ -514,10 +517,12 @@ def _redact(key: str) -> str:
     return f"{key[:6]}...{key[-4:]}" if len(key) > 12 else "***"
 
 
-def _headers(api_key: str) -> dict[str, str]:
+def _headers(api_key: str, client: str | None = None) -> dict[str, str]:
+    from . import _client_identity
     return {
         "Authorization": f"Bearer {api_key}",
         "User-Agent": f"nodus-python/{__version__}",
+        _client_identity.HEADER: _client_identity.identify(client or _client_identity.current()),
     }
 
 
@@ -996,6 +1001,28 @@ class Client(_Transport):
         return Workspaces(self)
 
     @property
+    def compute(self) -> Compute:
+        """Running instances and training, as the Compute page lists them."""
+        return Compute(self)
+
+    def launch(self, gpu: str | None = None, *, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+               disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
+               name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
+               timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
+               idempotency_key: str | None = None) -> Workspace:
+        """Rent one GPU machine and wait until SSH accepts connections. Returns its handle.
+
+        Local disk only unless ``keep_files=True``, which saves project files as a workspace. The machine
+        stops itself after ``max_hours`` (4 unless set). ``ssh_key`` defaults to ``~/.ssh/id_ed25519.pub``,
+        ``id_ecdsa.pub`` or ``id_rsa.pub``. A wait that times out leaves the machine running.
+        """
+        from ._compute import launch
+        return launch(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                      environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
+                      keep_files=keep_files, wait=wait, timeout_seconds=timeout_seconds,
+                      poll_seconds=poll_seconds, idempotency_key=idempotency_key)
+
+    @property
     def volumes(self) -> Volumes:
         """Named storage volumes that sandboxes mount between sessions."""
         return Volumes(self)
@@ -1463,6 +1490,23 @@ class AsyncClient(_Transport):
     def workspaces(self) -> AsyncWorkspaces:
         """GPU workspaces: create, start, connect, run jobs, move files, stop."""
         return AsyncWorkspaces(self)
+
+    @property
+    def compute(self) -> AsyncCompute:
+        """Running instances and training, as the Compute page lists them."""
+        return AsyncCompute(self)
+
+    async def launch(self, gpu: str | None = None, *, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+                     disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
+                     name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
+                     timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
+                     idempotency_key: str | None = None) -> AsyncWorkspace:
+        """Asynchronous counterpart of :meth:`Client.launch`."""
+        from ._compute import launch_async
+        return await launch_async(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                                  environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
+                                  keep_files=keep_files, wait=wait, timeout_seconds=timeout_seconds,
+                                  poll_seconds=poll_seconds, idempotency_key=idempotency_key)
 
     @property
     def volumes(self) -> AsyncVolumes:

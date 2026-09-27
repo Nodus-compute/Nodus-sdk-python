@@ -4,6 +4,7 @@ import json
 
 from mcp.types import ToolAnnotations
 
+from ._client_identity import acting_as, mcp_caller
 from . import AsyncClient, AsyncSandbox, _resolve, _valid_id, _valid_idempotency_key
 from ._assets import _id as _asset_id, _upload_headers
 from ._projects import archive_project, project_limit
@@ -17,7 +18,8 @@ def register_transfer_tools(server, base_url, check_origin):
     def client():
         key, origin = _resolve(None, base_url)
         check_origin(origin)
-        return AsyncClient(api_key=key, base_url=origin, timeout=300)
+        with acting_as(mcp_caller()):
+            return AsyncClient(api_key=key, base_url=origin, timeout=300)
 
     @server.tool(structured_output=False, annotations=write)
     async def upload_project(project: str, idempotency_key: str) -> str:
