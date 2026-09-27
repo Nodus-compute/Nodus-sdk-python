@@ -537,3 +537,42 @@ def test_legacy_volume_create_moves_to_client_volumes_with_a_warning():
             assert client.workspaces.create("repo", size_gb=0.1) == record
         with pytest.raises(ValidationError, match="gpu"):
             client.workspaces.create("repo", size_gb=0.1, gpu_count=8)
+
+
+@pytest.mark.parametrize("gpu,expected", [
+    ("H100", {"gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}),
+    ("H100:2", {"gpu": "H100", "gpu_count": 2, "gpu_memory_gb": 80}),
+    ("A100-40GB", {"gpu": "A100", "gpu_count": 1, "gpu_memory_gb": 40}),
+    ("A100-80GB:4", {"gpu": "A100", "gpu_count": 4, "gpu_memory_gb": 80}),
+    ("a100 40gb", {"gpu": "a100", "gpu_count": 1, "gpu_memory_gb": 40}),
+    ("V100-16GB", {"gpu": "V100", "gpu_count": 1, "gpu_memory_gb": 16}),
+    ("RTX 4090:8", {"gpu": "RTX 4090", "gpu_count": 8, "gpu_memory_gb": 24}),
+])
+def test_gpu_shorthand_carries_memory_and_count_like_other_clouds(gpu, expected):
+    server = Server({("POST", BASE): (201, STOPPED)})
+    with sync_client(server) as client:
+        client.workspaces.create("lab", gpu=gpu, max_hours=1, size_gb=1)
+    body = server.requests[-1][2]
+    assert {field: body[field] for field in expected} == expected
+
+
+def test_gpu_shorthand_conflicts_and_unknown_models_are_refused_before_network():
+    def handler(_):
+        pytest.fail("a refused configuration must not reach the API")
+    with sync_client(handler) as client:
+        with pytest.raises(ValidationError, match="gpu_count"):
+            client.workspaces.create("lab", gpu="H100:2", gpu_count=4, max_hours=1, size_gb=1)
+        with pytest.raises(ValidationError, match="gpu_memory_gb"):
+            client.workspaces.create("lab", gpu="A100-40GB", gpu_memory_gb=80, max_hours=1, size_gb=1)
+        with pytest.raises(ValidationError, match="gpu_memory_gb"):
+            client.workspaces.create("lab", gpu="V100", max_hours=1, size_gb=1)
+        with pytest.raises(ValidationError, match="gpu_count"):
+            client.workspaces.create("lab", gpu="H100:3", max_hours=1, size_gb=1)
+
+
+def test_run_accepts_the_same_gpu_shorthand():
+    server = Server({("POST", BASE + "/ws_kernel/workloads"): (202, RECEIPT)})
+    with sync_client(server) as client:
+        Workspace(client, "ws_kernel").run("python x.py", budget_usd=1, gpu="A100-80GB:2")
+    assert server.requests[-1][2] == {"command": "python x.py", "budget_usd": 1, "gpu": "A100", "gpu_count": 2,
+                                      "gpu_memory_gb": 80}

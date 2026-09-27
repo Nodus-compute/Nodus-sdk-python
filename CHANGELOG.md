@@ -2,6 +2,7 @@
 
 ## 0.8.0
 
+- GPU names accept memory and count suffixes, as in `A100-40GB`, `A100-80GB:4` and `H100:2`, for `create` and `run`.
 - `client.workspaces` manages GPU workspaces. `create` returns a `Workspace` handle with `start`, `wait_until_ready`, `connect`, `ssh`, `run`, `upload`, `download`, `configure`, `schedule` and `stop`, with an asynchronous counterpart.
 - Named sandbox storage volumes move to `client.volumes`, including `list`, `list_page` and `iter`. `client.workspaces.list()` now returns GPU workspaces, and `client.workspaces.create(name, size_gb=...)` without a GPU still creates a volume and raises a `FutureWarning`.
 - The local MCP server gains every workspace operation plus `upload_workspace_files` and `download_workspace_files`.
