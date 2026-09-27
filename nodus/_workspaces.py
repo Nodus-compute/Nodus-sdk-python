@@ -68,13 +68,12 @@ def _parse_gpu(gpu: str) -> tuple[str, float | None, int | None]:
 
 
 def _gpu_fields(gpu: str, gpu_count: int | None, gpu_memory_gb: float | None, *,
-                require_memory: bool, allow_default_count: bool = False) -> dict[str, Any]:
+                require_memory: bool) -> dict[str, Any]:
     """The gpu, gpu_count and gpu_memory_gb the server needs, from a name and explicit overrides."""
     model, named_memory, named_count = _parse_gpu(_text(gpu, "gpu", limit=64))
     if gpu_count is not None:
         _count(gpu_count, "gpu_count", _GPU_COUNTS)
-    if (named_count is not None and gpu_count is not None and gpu_count != named_count
-            and not (allow_default_count and gpu_count == 1)):
+    if named_count is not None and gpu_count is not None and gpu_count != named_count:
         raise ValidationError(f"gpu_count {gpu_count} disagrees with the count in {gpu!r}")
     if named_memory is not None and gpu_memory_gb is not None and gpu_memory_gb != named_memory:
         raise ValidationError(f"gpu_memory_gb {gpu_memory_gb} disagrees with the memory in {gpu!r}")
@@ -203,18 +202,20 @@ def _default_size_gb(capabilities: Any) -> float:
     return limit / 1024 ** 3
 
 
-def _configuration(name: str, *, gpu: str | None, gpu_count: int, gpu_memory_gb: float | None,
+def _configuration(name: str, *, gpu: str | None, gpu_count: int | None, gpu_memory_gb: float | None,
                    environment: str | None, editor: str, max_hours: int | None, size_gb: float | None,
                    budget_usd: float | None, ssh_key: str | None, cpus: int | None, memory_gb: float | None,
                    disk_gb: int | None, repository: str | None, ref: str | None, runtime_id: str | None,
                    form_factor: str | None) -> dict[str, Any]:
     body: dict[str, Any] = {"name": _text(name, "name", limit=128)}
+    if gpu_count is not None:
+        _count(gpu_count, "gpu_count", _GPU_COUNTS)
     if environment is not None:
         _text(environment, "environment", limit=64)
     if form_factor is not None:
         _choice(form_factor, "form_factor", ("pcie", "sxm", "nvl"))
     if cpus is not None:
-        if gpu is not None or gpu_count != 1 or gpu_memory_gb is not None or form_factor is not None:
+        if gpu is not None or gpu_count not in (None, 1) or gpu_memory_gb is not None or form_factor is not None:
             raise ValidationError("A CPU workspace takes cpus and memory_gb, not gpu, gpu_count, gpu_memory_gb or form_factor")
         body["environment"] = environment or "pytorch-cpu"
         body["editor"] = editor
@@ -226,7 +227,8 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int, gpu_memory_gb:
     else:
         if gpu is None:
             raise ValidationError("Choose a gpu such as \"H100\", or cpus for a CPU-only workspace")
-        fields = _gpu_fields(gpu, gpu_count, gpu_memory_gb, require_memory=True, allow_default_count=True)
+        fields = _gpu_fields(gpu, gpu_count, gpu_memory_gb, require_memory=True)
+        fields.setdefault("gpu_count", 1)
         body["environment"] = environment or ("pytorch-rocm" if _compact_gpu(fields["gpu"]) in _AMD else "pytorch-cuda")
         body["editor"] = editor
         body.update(fields)
@@ -737,8 +739,9 @@ class AsyncWorkspace(_WorkspaceState):
 
 def _legacy_volume(kwargs: dict[str, Any]) -> bool:
     """A create with a size and no compute names a sandbox volume."""
+    count = kwargs.get("gpu_count")
     return kwargs.get("gpu") is None and kwargs.get("cpus") is None and kwargs.get("size_gb") is not None \
-        and kwargs.get("gpu_count") == 1 and kwargs.get("editor") == "vscode" \
+        and (count is None or type(count) is int and count == 1) and kwargs.get("editor") == "vscode" \
         and all(value is None for field, value in kwargs.items() if field not in ("size_gb", "gpu_count", "editor"))
 
 
@@ -761,7 +764,7 @@ class Workspaces:
         """The account's saved-file usage, allowance and charges."""
         return self._client._request("GET", _BASE + "/storage")
 
-    def create(self, name: str, *, gpu: str | None = None, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+    def create(self, name: str, *, gpu: str | None = None, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                environment: str | None = None, editor: str = "vscode", max_hours: int | None = None,
                size_gb: float | None = None, budget_usd: float | None = None, ssh_key: str | None = None,
                cpus: int | None = None, memory_gb: float | None = None, disk_gb: int | None = None,
@@ -852,7 +855,7 @@ class AsyncWorkspaces:
     async def storage(self) -> dict[str, Any]:
         return await self._client._request("GET", _BASE + "/storage")
 
-    async def create(self, name: str, *, gpu: str | None = None, gpu_count: int = 1,
+    async def create(self, name: str, *, gpu: str | None = None, gpu_count: int | None = None,
                      gpu_memory_gb: float | None = None, environment: str | None = None, editor: str = "vscode",
                      max_hours: int | None = None, size_gb: float | None = None, budget_usd: float | None = None,
                      ssh_key: str | None = None, cpus: int | None = None, memory_gb: float | None = None,

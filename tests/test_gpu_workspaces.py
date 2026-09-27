@@ -300,10 +300,17 @@ def test_create_refuses_to_guess_memory_for_unknown_hardware_and_money():
             client.workspaces.create("lab", gpu="H100", max_hours=1, size_gb=10, budget_usd=float("nan"))
 
 
-def test_cpu_workspaces_send_the_vm_compute_class():
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_cpu_workspaces_send_the_vm_compute_class(async_mode):
     server = Server({("POST", BASE): (201, {**STOPPED, "configuration": {**CONFIGURATION, "gpu": ""}})})
-    with sync_client(server) as client:
-        client.workspaces.create("cpu-lab", cpus=4, memory_gb=16, max_hours=2, size_gb=10)
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            await call(client.workspaces.create("cpu-lab", cpus=4, memory_gb=16, max_hours=2, size_gb=10))
+
+    run(async_mode, scenario)
+    assert len(server.requests) == 1
     assert server.requests[-1][2] == {"name": "cpu-lab", "environment": "pytorch-cpu", "editor": "vscode",
                                       "compute_class": "vm", "vcpus": 4, "host_memory_gb": 16,
                                       "max_hours": 2, "size_gb": 10}
@@ -568,8 +575,10 @@ def test_workspace_meter_preserves_pending_then_fixed_compute_charge(async_mode)
     run(async_mode, scenario)
 
 
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize("gpu,expected", [
     ("H100", {"gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}),
+    ("H100:8", {"gpu": "H100", "gpu_count": 8, "gpu_memory_gb": 80}),
     ("H100:2", {"gpu": "H100", "gpu_count": 2, "gpu_memory_gb": 80}),
     ("A100-40GB", {"gpu": "A100", "gpu_count": 1, "gpu_memory_gb": 40}),
     ("A100-80GB:4", {"gpu": "A100", "gpu_count": 4, "gpu_memory_gb": 80}),
@@ -577,12 +586,19 @@ def test_workspace_meter_preserves_pending_then_fixed_compute_charge(async_mode)
     ("V100-16GB", {"gpu": "V100", "gpu_count": 1, "gpu_memory_gb": 16}),
     ("RTX 4090:8", {"gpu": "RTX 4090", "gpu_count": 8, "gpu_memory_gb": 24}),
 ])
-def test_gpu_shorthand_carries_memory_and_count_like_other_clouds(gpu, expected):
+def test_gpu_shorthand_carries_memory_and_count_like_other_clouds(async_mode, gpu, expected):
     server = Server({("POST", BASE): (201, STOPPED)})
-    with sync_client(server) as client:
-        client.workspaces.create("lab", gpu=gpu, max_hours=1, size_gb=1)
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            await call(client.workspaces.create("lab", gpu=gpu, max_hours=1, size_gb=1, budget_usd=3.5))
+
+    run(async_mode, scenario)
+    assert len(server.requests) == 1
     body = server.requests[-1][2]
     assert {field: body[field] for field in expected} == expected
+    assert body["budget_usd"] == 3.5
 
 
 def test_gpu_shorthand_conflicts_and_unknown_models_are_refused_before_network():
@@ -599,12 +615,21 @@ def test_gpu_shorthand_conflicts_and_unknown_models_are_refused_before_network()
             client.workspaces.create("lab", gpu="H100:3", max_hours=1, size_gb=1)
 
 
-def test_run_accepts_the_same_gpu_shorthand():
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_run_accepts_the_same_gpu_shorthand(async_mode):
     server = Server({("POST", BASE + "/ws_kernel/workloads"): (202, RECEIPT)})
-    with sync_client(server) as client:
-        Workspace(client, "ws_kernel").run("python x.py", budget_usd=1, gpu="A100-80GB:2")
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            workspace = AsyncWorkspace(client, "ws_kernel") if async_mode else Workspace(client, "ws_kernel")
+            await call(workspace.run("python x.py", budget_usd=1, gpu="A100-80GB:2", idempotency_key="same-shorthand-run"))
+
+    run(async_mode, scenario)
+    assert len(server.requests) == 1
     assert server.requests[-1][2] == {"command": "python x.py", "budget_usd": 1, "gpu": "A100", "gpu_count": 2,
                                       "gpu_memory_gb": 80}
+    assert server.requests[-1][3]["idempotency-key"] == "same-shorthand-run"
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
@@ -624,10 +649,10 @@ def test_run_gpu_shorthand_rejects_explicit_count_before_network(async_mode, gpu
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
-@pytest.mark.parametrize("gpu_count", [True, 1.0, 8.0], ids=["boolean", "float-one", "float-eight"])
+@pytest.mark.parametrize("gpu_count", [1, True, 1.0, 8.0], ids=["conflicting-one", "boolean", "float-one", "float-eight"])
 def test_create_gpu_shorthand_validates_explicit_count_before_network(async_mode, gpu_count):
     def handler(_):
-        pytest.fail("invalid explicit count must not save a workspace configuration")
+        pytest.fail("conflicting or invalid explicit count must not save a workspace configuration")
 
     async def scenario():
         client = async_client(handler) if async_mode else sync_client(handler)

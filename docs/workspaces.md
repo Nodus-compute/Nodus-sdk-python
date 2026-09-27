@@ -25,7 +25,8 @@ catalog, such as `H100`, `A100`, `H200`, `B200`, `L40S`, `L4`, `A10`,
 `RTX A6000`, `RTX 3090`, `RTX 4090` and `RTX 5090`: the SDK sends the memory
 per GPU the console publishes for that model. Other models take the memory in
 the name, as in `V100-16GB`, or `gpu_memory_gb`. `gpu_count` and
-`gpu_memory_gb` remain available as keyword arguments. Project
+`gpu_memory_gb` remain available as keyword arguments. An explicit count must
+match any count in the GPU name. Omitting both selects one GPU. Project
 storage defaults to the deployment limit reported by
 `client.workspaces.capabilities()`, or pass `size_gb`. Sessions draw on account
 funding without a per-session cap unless you pass `budget_usd`. Use

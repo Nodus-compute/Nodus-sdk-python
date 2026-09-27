@@ -1272,7 +1272,7 @@ Use nodus COMMAND --help for command options.""",
     workspace_new = workspace_sub.add_parser("new", help="save a workspace configuration without renting compute")
     workspace_new.add_argument("name")
     workspace_new.add_argument("--gpu", help="GPU model, such as H100 or RTX 4090")
-    workspace_new.add_argument("--gpu-count", type=int, default=1, help="1, 2, 4 or 8 GPUs on one machine")
+    workspace_new.add_argument("--gpu-count", type=int, help="1, 2, 4 or 8 GPUs on one machine")
     workspace_new.add_argument("--gpu-memory-gb", type=float, help="memory per GPU when the model is not known to the SDK")
     workspace_new.add_argument("--cpus", type=int, help="CPU-only workspace with this many vCPUs")
     workspace_new.add_argument("--memory-gb", type=float, help="system RAM for a CPU-only workspace")

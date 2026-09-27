@@ -79,6 +79,42 @@ def test_workspace_cli_run_requires_a_budget_and_new_requires_hours():
     assert error.value.code == 2
 
 
+@pytest.mark.parametrize("count", ["1", "0", "3", "-1"])
+def test_workspace_cli_create_rejects_conflicting_or_invalid_count_before_network(monkeypatch, capsys, count):
+    def handler(_):
+        pytest.fail("an invalid GPU count must not save a workspace configuration")
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "new", "lab", "--gpu", "H100:8", "--gpu-count", count,
+                     "--max-hours", "1", "--size-gb", "1", "--budget", "3.5"]) == 2
+    assert "gpu_count" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("options,expected", [
+    (["--gpu", "H100:8"], {"gpu": "H100", "gpu_count": 8, "gpu_memory_gb": 80}),
+    (["--gpu", "H100:8", "--gpu-count", "8"], {"gpu": "H100", "gpu_count": 8, "gpu_memory_gb": 80}),
+    (["--gpu", "H100"], {"gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}),
+    (["--cpus", "4", "--memory-gb", "16"], {"compute_class": "vm", "vcpus": 4, "host_memory_gb": 16}),
+])
+def test_workspace_cli_create_preserves_omitted_count_and_budget(monkeypatch, capsys, options, expected):
+    requests = []
+
+    def handler(request):
+        assert request.method == "POST" and request.url.path == BASE
+        requests.append(json.loads(request.content))
+        return httpx.Response(201, json=STOPPED)
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "new", "lab", *options, "--max-hours", "1", "--size-gb", "1",
+                     "--budget", "3.5"]) == 0
+    assert capsys.readouterr().out.strip() == "ws_kernel"
+    assert len(requests) == 1
+    assert requests[0]["budget_usd"] == 3.5
+    assert {key: requests[0][key] for key in expected} == expected
+    if "vcpus" in expected:
+        assert not {"gpu", "gpu_count", "gpu_memory_gb"}.intersection(requests[0])
+
+
 def test_workspace_cli_upload_and_download_use_the_handle(monkeypatch, capsys, tmp_path):
     seen = {}
 
