@@ -1024,7 +1024,7 @@ class Client(_Transport):
         """Running instances and training, as the Compute page lists them."""
         return Compute(self)
 
-    def launch(self, gpu: str | None = None, *, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+    def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
                name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
                timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
@@ -1515,7 +1515,7 @@ class AsyncClient(_Transport):
         """Running instances and training, as the Compute page lists them."""
         return AsyncCompute(self)
 
-    async def launch(self, gpu: str | None = None, *, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+    async def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                      disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
                      name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
                      timeout_seconds: float = 900.0, poll_seconds: float = 5.0,

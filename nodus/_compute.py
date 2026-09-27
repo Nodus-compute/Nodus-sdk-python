@@ -134,7 +134,7 @@ def default_name(prefix: str, key: str) -> str:
     return f"{prefix}-{hashlib.sha256(key.encode()).hexdigest()[:8]}"
 
 
-def instance_body(gpu: str | None, *, gpu_count: int, gpu_memory_gb: float | None, disk_gb: int,
+def instance_body(gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
                   environment: str | None, ssh_key: str | None, name: str, max_hours: int) -> dict[str, Any]:
     """A POST /v1/research-workspaces body for an SSH instance with local disk only."""
     body = _configuration(name, gpu=gpu, gpu_count=gpu_count,
@@ -172,7 +172,7 @@ def _timed_out(machine: Any, error: WorkspaceNotReadyError) -> WorkspaceNotReady
         "or release it with .stop().", body=machine.raw)
 
 
-def launch(client: Any, gpu: str | None, *, gpu_count: int, gpu_memory_gb: float | None, disk_gb: int,
+def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
            environment: str | None, ssh_key: str | None, name: str | None, max_hours: int, keep_files: bool,
            wait: bool, timeout_seconds: float, poll_seconds: float, idempotency_key: str | None) -> Workspace:
     _check_gpu(gpu)
@@ -203,7 +203,7 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int, gpu_memory_gb: float
     return machine
 
 
-async def launch_async(client: Any, gpu: str | None, *, gpu_count: int, gpu_memory_gb: float | None, disk_gb: int,
+async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
                        environment: str | None, ssh_key: str | None, name: str | None, max_hours: int,
                        keep_files: bool, wait: bool, timeout_seconds: float, poll_seconds: float,
                        idempotency_key: str | None) -> AsyncWorkspace:

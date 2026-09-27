@@ -1,6 +1,50 @@
 {
   "components": {
     "schemas": {
+      "ComputeGroup": {
+        "type": "object",
+        "required": ["id", "sweep_id", "kind", "size", "running", "succeeded", "failed"],
+        "properties": {"id": {"type": "string", "description": "Sweep item id, sweep_ followed by the sweep id."}, "sweep_id": {"type": "string"}, "kind": {"type": "string", "enum": ["sweep"]}, "size": {"type": "integer"}, "running": {"type": "integer"}, "succeeded": {"type": "integer"}, "failed": {"type": "integer"}}
+      },
+      "ComputeItem": {
+        "type": "object",
+        "required": ["id", "type", "name", "gpu", "gpu_count", "gpu_memory_gb", "state", "status_text", "created_at", "started_at", "ended_at", "launched_by", "group", "resource"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"type": "string", "enum": ["instance", "training", "workspace"]},
+          "name": {"type": "string"},
+          "gpu": {"type": ["string", "null"]},
+          "gpu_count": {"type": "integer"},
+          "gpu_memory_gb": {"type": ["number", "null"]},
+          "state": {"type": "string", "enum": ["starting", "ready", "running", "recovering", "stopping", "stopped", "succeeded", "failed", "cancelled"]},
+          "status_text": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "started_at": {"type": ["string", "null"], "format": "date-time"},
+          "ended_at": {"type": ["string", "null"], "format": "date-time"},
+          "launched_by": {
+            "type": "object",
+            "required": ["client", "user_id", "user_name", "api_key_id", "api_key_name"],
+            "properties": {
+              "client": {"type": "string", "enum": ["console", "python-sdk", "cli", "mcp", "claude-code", "codex", "cursor", "api"]},
+              "user_id": {"type": ["string", "null"]},
+              "user_name": {"type": ["string", "null"]},
+              "api_key_id": {"type": ["string", "null"]},
+              "api_key_name": {"type": ["string", "null"]}
+            }
+          },
+          "group": {"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/ComputeGroup"}]},
+          "resource": {"type": "object", "required": ["kind", "id"], "properties": {"kind": {"type": "string", "enum": ["research_workspace", "workload", "sweep"]}, "id": {"type": "string"}}}
+        }
+      },
+      "ComputeList": {
+        "type": "object",
+        "required": ["items", "next_cursor", "summary"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/ComputeItem"}},
+          "next_cursor": {"type": ["string", "null"]},
+          "summary": {"type": "object", "required": ["running"], "properties": {"running": {"type": "object", "required": ["instance", "training", "workspace"], "properties": {"instance": {"type": "integer"}, "training": {"type": "integer"}, "workspace": {"type": "integer"}}}}}
+        }
+      },
       "AgentEvent": {
         "type": "object",
         "additionalProperties": false,
@@ -4114,9 +4158,12 @@
       },
       "ResearchWorkspaceSSHConnection": {
         "type": "object",
-        "required": ["host", "ssh_config", "gateway_fingerprint", "gateway_known_hosts"],
+        "required": ["host", "alias", "user", "command", "ssh_config", "gateway_fingerprint", "gateway_known_hosts"],
         "properties": {
           "host": {"type": "string", "description": "SSH configuration alias to open in a local SSH client or VS Code Remote SSH."},
+          "alias": {"type": "string", "description": "Same as host. Derived from the workspace name, or nodus- followed by the workspace id."},
+          "user": {"type": "string", "const": "nodus"},
+          "command": {"type": "string", "description": "One-line ssh command that works without the configuration block. It names the workspace and contains no credential."},
           "ssh_config": {"type": "string", "description": "OpenSSH configuration using the workspace gateway as ProxyJump. Requires the private key corresponding to the saved public key. Do not disable host-key checking."},
           "gateway_fingerprint": {"type": "string", "description": "SHA256 fingerprint of the deployment's stable SSH gateway host key."},
           "gateway_known_hosts": {"type": "string", "description": "OpenSSH known_hosts entry for the gateway, to install before connecting. The guest has a separate project-persisted host key and first-use confirmation."}
@@ -4124,9 +4171,13 @@
       },
       "WorkspaceWebSocketSSHConnection": {
         "type": "object",
-        "required": ["host", "ssh_config", "transport", "workspace_id", "session_id", "generation"],
+        "required": ["host", "alias", "user", "command", "requires", "ssh_config", "transport", "workspace_id", "session_id", "generation"],
         "properties": {
           "host": {"type": "string", "description": "OpenSSH configuration alias to open from a terminal or VS Code Remote SSH."},
+          "alias": {"type": "string", "description": "Same as host. Derived from the workspace name, or nodus- followed by the workspace id."},
+          "user": {"type": "string", "const": "nodus"},
+          "command": {"type": "string", "description": "One-line ssh command using nodus workspaces ssh-proxy. It names the workspace and contains no credential."},
+          "requires": {"type": "string", "const": "nodus-cli", "description": "Local tool the command runs."},
           "ssh_config": {"type": "string", "description": "OpenSSH configuration using nodus workspaces ssh-proxy as ProxyCommand. The command reads the existing Nodus sign-in and contains no credential. The matching SSH private key is still required. Confirm the project host key on first use."},
           "transport": {"type": "string", "const": "websocket"},
           "workspace_id": {"type": "string"},
@@ -17688,6 +17739,40 @@
               "application/json": {"schema": {"$ref": "#/components/schemas/SandboxError"}}
             }
           }
+        }
+      }
+    },
+    "/v1/compute": {
+      "get": {
+        "operationId": "listCompute",
+        "summary": "List instances and training launched by this account",
+        "tags": ["Compute"],
+        "description": "Requires a Bearer API key or console session. Returns standalone instances and training workloads newest first. Training that shares a sweep_id is one item whose id is sweep_ followed by the sweep id, with a group summary. Running saved workspaces appear in summary.running.workspace and become items only with include=workspaces or type=workspace. Contains no cost or price fields. Rows without recorded attribution report launched_by.client api.",
+        "parameters": [
+          {"name": "state", "in": "query", "schema": {"type": "string", "enum": ["running", "history"], "default": "running"}},
+          {"name": "type", "in": "query", "schema": {"type": "string", "enum": ["instance", "training", "workspace"]}, "description": "workspace selects running saved workspaces and returns no history."},
+          {"name": "include", "in": "query", "schema": {"type": "string", "enum": ["workspaces"]}, "description": "Adds running saved workspaces as items of type workspace."},
+          {"name": "launched_by", "in": "query", "schema": {"type": "string", "enum": ["me", "agents"]}, "description": "agents selects claude-code, codex, cursor and mcp. me requires a credential associated with a team member."},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}},
+          {"name": "cursor", "in": "query", "schema": {"type": "string"}, "description": "Opaque next_cursor from the previous page with the same filters."},
+          {"name": "Nodus-Client", "in": "header", "schema": {"type": "string"}, "description": "Launch attribution recorded on creation requests: python-sdk, cli, mcp, claude-code, codex or cursor. console is accepted only from console sessions. Other values are recorded as api."}
+        ],
+        "responses": {
+          "200": {"description": "Compute page", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ComputeList"}}}},
+          "default": {"description": "Authentication, rate limits and transient failures apply.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/v1/compute/groups/{id}": {
+      "get": {
+        "operationId": "getComputeGroup",
+        "summary": "Read one training sweep and its runs",
+        "tags": ["Compute"],
+        "description": "Requires a Bearer API key or console session. The id is a sweep item id from GET /v1/compute. Group counts cover every member. Items are paged newest first. Returns 404 when the sweep has no training in the caller's account. Contains no cost or price fields.",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "pattern": "^sweep_.+"}}, {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}, {"name": "cursor", "in": "query", "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Sweep group", "content": {"application/json": {"schema": {"type": "object", "required": ["group", "items", "next_cursor"], "properties": {"group": {"$ref": "#/components/schemas/ComputeGroup"}, "items": {"type": "array", "items": {"$ref": "#/components/schemas/ComputeItem"}}, "next_cursor": {"type": ["string", "null"]}}}}}},
+          "default": {"description": "Authentication, rate limits and transient failures apply.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },

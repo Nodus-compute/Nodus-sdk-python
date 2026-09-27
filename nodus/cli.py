@@ -1378,7 +1378,7 @@ Use nodus COMMAND --help for command options.""",
 
     launch = sub.add_parser("launch", help="rent a GPU machine and print its SSH command when ready")
     launch.add_argument("--gpu", default="H100", help="GPU model, such as H100 or \"A100-40GB\" (default H100)")
-    launch.add_argument("--gpus", type=int, default=1, help="1, 2, 4 or 8 GPUs on one machine")
+    launch.add_argument("--gpus", type=int, default=None, help="1, 2, 4 or 8 GPUs on one machine (default 1, or the count in --gpu such as H100:2)")
     launch.add_argument("--disk", type=int, default=100, help="local disk in GB, from 80 to 2048")
     launch.add_argument("--env", help="software environment, such as pytorch-cuda")
     launch.add_argument("--ssh-key", help="path to an SSH public key (default ~/.ssh/id_ed25519.pub)")
