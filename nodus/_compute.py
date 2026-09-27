@@ -1,8 +1,8 @@
 """Running compute across instances and training, and launching one SSH-ready GPU."""
 from __future__ import annotations
 
+import hashlib
 import re
-import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
@@ -13,8 +13,8 @@ from ._workspaces import (AsyncWorkspace, Workspace, _BASE, _configuration, _fre
 _STATES = ("running", "history")
 _TYPES = ("instance", "training")
 _LAUNCHED_BY = ("me", "agents")
-_GROUP_ID = re.compile(r"[A-Za-z0-9_-]{1,256}", re.ASCII)
-# The public keys ssh itself offers first, in its order. Private key files are never read.
+_GROUP_ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,255}", re.ASCII)
+# Default OpenSSH public key names, tried in this order. Private key files are never read.
 _DEFAULT_PUBLIC_KEYS = ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
 
 
@@ -122,10 +122,15 @@ def default_public_key() -> str:
                           "id_ecdsa.pub or id_rsa.pub was found.")
 
 
+def default_name(prefix: str, key: str) -> str:
+    """The console's name shape, derived from the key: the server matches a repeated create by name."""
+    return f"{prefix}-{hashlib.sha256(key.encode()).hexdigest()[:8]}"
+
+
 def instance_body(gpu: str | None, *, gpu_count: int, gpu_memory_gb: float | None, disk_gb: int,
-                  environment: str | None, ssh_key: str | None, name: str | None, max_hours: int) -> dict[str, Any]:
+                  environment: str | None, ssh_key: str | None, name: str, max_hours: int) -> dict[str, Any]:
     """A POST /v1/research-workspaces body for an SSH instance with local disk only."""
-    body = _configuration(name or "instance-" + uuid.uuid4().hex[:8], gpu=gpu, gpu_count=gpu_count,
+    body = _configuration(name, gpu=gpu, gpu_count=gpu_count,
                           gpu_memory_gb=gpu_memory_gb, environment=environment, editor="ssh", max_hours=max_hours,
                           size_gb=None, budget_usd=None, ssh_key=ssh_key or default_public_key(), cpus=None,
                           memory_gb=None, disk_gb=disk_gb, repository=None, ref=None, runtime_id=None,
@@ -168,12 +173,13 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int, gpu_memory_gb: float
     key = _key(idempotency_key or _fresh_key())
     if keep_files:
         machine = client.workspaces.create(
-            name or "workspace-" + uuid.uuid4().hex[:8], gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb,
+            name or default_name("workspace", key), gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb,
             environment=environment, editor="ssh", max_hours=max_hours, ssh_key=ssh_key or default_public_key(),
             disk_gb=disk_gb)
     else:
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                             environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours)
+                             environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
+                             max_hours=max_hours)
         machine = Workspace(client)
         # Create rents nothing. Start is the paid step, and it replays by key.
         machine._absorb(client._request("POST", _BASE, json=body, idempotency_key=key))
@@ -199,12 +205,13 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int, gpu_memo
     key = _key(idempotency_key or _fresh_key())
     if keep_files:
         machine = await client.workspaces.create(
-            name or "workspace-" + uuid.uuid4().hex[:8], gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb,
+            name or default_name("workspace", key), gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb,
             environment=environment, editor="ssh", max_hours=max_hours, ssh_key=ssh_key or default_public_key(),
             disk_gb=disk_gb)
     else:
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                             environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours)
+                             environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
+                             max_hours=max_hours)
         machine = AsyncWorkspace(client)
         # Create rents nothing. Start is the paid step, and it replays by key.
         machine._absorb(await client._request("POST", _BASE, json=body, idempotency_key=key))

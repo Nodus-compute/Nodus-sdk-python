@@ -165,7 +165,8 @@ and the `nodus workspace` commands.
 ## Launch a GPU
 
 `launch` rents one GPU machine, waits until SSH accepts connections and returns
-its handle. It uses your `~/.ssh/id_ed25519.pub` unless you pass `ssh_key`.
+its handle. It uses your `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or
+`id_rsa.pub` unless you pass `ssh_key`.
 The machine stops itself after `max_hours`, which is 4 unless you set it.
 Local disk is not kept after it stops. Pass `keep_files=True` to save project
 files as a workspace instead.
@@ -190,7 +191,8 @@ nodus stop NAME_OR_ID
 
 If the wait times out, the machine keeps running and the error names its ID.
 `nodus ps` and `client.compute.list()` show running instances and training.
-They need a Nodus server that provides the Compute list.
+They need a Nodus server that provides the Compute list. A machine launched
+with `keep_files=True` is a workspace, so `nodus workspace ls` lists it.
 
 ## Prefer the terminal?
 

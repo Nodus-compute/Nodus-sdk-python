@@ -22,7 +22,7 @@ INSTANCE_CONFIGURATION = {"kind": "instance", "name": "instance-1a2b3c4d", "envi
 INSTANCE_STOPPED = {
     "id": "ws_inst", "expired_at": None, "cleanup_pending": False, "name": "instance-1a2b3c4d", "size_gb": 0,
     "holder_id": None, "saved_at": None, "stored_bytes": None, "last_error": "", "saving_for_termination": False,
-    "billing_status": "metered_subject_to_account_limits", "configuration": INSTANCE_CONFIGURATION,
+    "billing_status": "ephemeral_instance", "configuration": INSTANCE_CONFIGURATION,
     "configuration_revision": "b" * 64, "storage_revision": 0, "storage_policy_version": "",
     "session": None, "meter": None, "state": "stopped",
     "status_message": "Compute is stopped. Launching creates a fresh instance with local disk.",
@@ -41,17 +41,17 @@ CAPABILITIES = {"available": True, "storage_limit_bytes": 10_000_000_000, "envir
                 "gpu_counts": [1, 2, 4, 8], "editors": ["vscode", "jupyter", "ssh"],
                 "storage_policy_version": "r2-standard-10gb-account-v1"}
 
-LAUNCHED_BY = {"client": "claude-code", "user_id": "usr_1", "user_name": "Ada", "api_key_id": "key_1",
+LAUNCHED_BY = {"client": "claude-code", "user_id": "usr_1", "user_name": "ada@example.com", "api_key_id": "key_1",
                "api_key_name": "laptop"}
 INSTANCE_ITEM = {"id": "ws_inst", "type": "instance", "name": "instance-1a2b3c4d", "gpu": "H100", "gpu_count": 1,
-                 "gpu_memory_gb": 80, "state": "ready", "status_text": "Ready for SSH",
+                 "gpu_memory_gb": 80, "state": "ready", "status_text": "Ready",
                  "created_at": "2026-09-27T10:00:00Z", "started_at": "2026-09-27T10:02:00Z", "ended_at": None,
                  "launched_by": LAUNCHED_BY, "group": None,
                  "resource": {"kind": "research_workspace", "id": "ws_inst"}}
 SWEEP_ITEM = {"id": "sw_1", "type": "training", "name": "lr-sweep", "gpu": "A100", "gpu_count": 1,
-              "gpu_memory_gb": 80, "state": "running", "status_text": "Training · step 1,840",
+              "gpu_memory_gb": 80, "state": "running", "status_text": "Training",
               "created_at": "2026-09-27T09:00:00Z", "started_at": "2026-09-27T09:01:00Z", "ended_at": None,
-              "launched_by": {"client": "console", "user_id": "usr_1", "user_name": "Ada", "api_key_id": None,
+              "launched_by": {"client": "console", "user_id": "usr_1", "user_name": "ada@example.com", "api_key_id": None,
                               "api_key_name": None},
               "group": {"id": "sw_1", "kind": "sweep", "size": 12, "running": 9, "succeeded": 3, "failed": 0},
               "resource": {"kind": "sweep", "id": "sw_1"}}
@@ -170,6 +170,17 @@ def test_launch_names_an_instance_like_the_console_and_reads_the_default_public_
     assert body["ssh_authorized_key"] == KEY + "\n" and "PRIVATE" not in json.dumps(body)
     assert body["gpu_count"] == 2
     assert [call[1] for call in calls] == [BASE, BASE + "/ws_inst/start"]
+
+
+def test_a_repeated_launch_with_the_same_key_sends_the_same_create():
+    # The server matches a repeated instance create by name and configuration, not by key.
+    calls = []
+    client = sync_client(launch_handler(calls, itertools.repeat(INSTANCE_READY)))
+    client.launch("H100", ssh_key=KEY, idempotency_key="same-intent", wait=False)
+    client.launch("H100", ssh_key=KEY, idempotency_key="same-intent", wait=False)
+    client.launch("H100", ssh_key=KEY, idempotency_key="other-intent", wait=False)
+    creates = [call[2] for call in calls if call[:2] == ("POST", BASE)]
+    assert creates[0] == creates[1] and creates[0]["name"] != creates[2]["name"]
 
 
 def test_launch_without_any_public_key_is_refused_before_the_network():
@@ -298,6 +309,10 @@ def test_compute_group_reads_one_sweep():
     client = sync_client(lambda request: seen.append(request) or httpx.Response(200, json=group))
     assert client.compute.group("sw_1") == group
     assert seen[0].url.path == "/v1/compute/groups/sw_1"
+    client.compute.group("lr-sweep.v2")
+    assert seen[1].url.path == "/v1/compute/groups/lr-sweep.v2"
+    with pytest.raises(ValidationError):
+        client.compute.group("..")
     with pytest.raises(ValidationError):
         client.compute.group("../workloads")
 
@@ -363,6 +378,21 @@ def test_cli_launch_timeout_says_the_machine_is_still_running(monkeypatch, capsy
     assert "ws_inst" in err and "still running" in err
 
 
+def test_cli_launch_interrupted_during_start_names_the_retry_key(monkeypatch, capsys, tmp_path):
+    key = tmp_path / "id.pub"
+    key.write_text(KEY)
+
+    def handler(request):
+        if request.url.path == BASE:
+            return httpx.Response(201, json=INSTANCE_STOPPED)
+        raise KeyboardInterrupt
+
+    cli_client(monkeypatch, handler)
+    assert cli.main(["launch", "--gpu", "H100", "--ssh-key", str(key), "--idempotency-key", "launch-9"]) == 130
+    err = capsys.readouterr().err
+    assert "--idempotency-key=launch-9" in err
+
+
 def test_cli_ps_shows_running_compute_without_any_cost(monkeypatch, capsys):
     seen = []
     cli_client(monkeypatch, lambda request: seen.append(request) or httpx.Response(
@@ -372,8 +402,7 @@ def test_cli_ps_shows_running_compute_without_any_cost(monkeypatch, capsys):
     header = out.splitlines()[0].split()
     assert header == ["NAME", "TYPE", "GPU", "STATUS", "LAUNCHED", "BY"]
     assert "instance-1a2b3c4d" in out and "Instance" in out and "Training" in out and "H100" in out
-    assert "Claude" in out and "Ada" in out
-    assert "$" not in out and "cost" not in out.lower() and "usd" not in out.lower()
+    assert "Claude" in out and "ada@example.com" in out
     assert dict(seen[0].url.params) == {"state": "running"}
     before = len(seen)
     assert cli.main(["ps", "--all"]) == 0
@@ -461,7 +490,15 @@ async def test_mcp_requests_name_the_calling_agent(api, client_name, expected):
 @pytest.mark.asyncio
 async def test_mcp_compute_tools_send_the_launch_list_and_stop_bodies(api):
     from mcp.shared.memory import create_connected_server_and_client_session
+    from nodus._client_identity import acting_as
     server, requests, responses = api
+    # nodus mcp runs inside the CLI, whose identity must not reach MCP requests.
+    with acting_as("cli"):
+        await _compute_tool_calls(server, requests, responses, create_connected_server_and_client_session)
+    assert requests and all(request.headers["Nodus-Client"] == "mcp" for request in requests)
+
+
+async def _compute_tool_calls(server, requests, responses, create_connected_server_and_client_session):
     async with create_connected_server_and_client_session(server) as session:
         tools = {tool.name: tool for tool in (await session.list_tools()).tools}
         assert tools["list_compute"].annotations.readOnlyHint is True

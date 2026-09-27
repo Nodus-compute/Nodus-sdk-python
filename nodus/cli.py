@@ -725,12 +725,19 @@ def _read_public_key(path: str | None) -> str | None:
 
 
 def _cmd_launch(args: argparse.Namespace) -> int:
+    from ._compute import _timed_out
+    from .errors import WorkspaceNotReadyError
     with Client(base_url=args.base_url) as client:
-        machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
-                                ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
-                                keep_files=args.keep_files, wait=args.wait, timeout_seconds=args.timeout,
-                                poll_seconds=args.poll_seconds, idempotency_key=args.idempotency_key)
-        if not args.wait:
+        with _sandbox_mutation(args.idempotency_key, noun="instance") as key:
+            machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
+                                    ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
+                                    keep_files=args.keep_files, wait=False, idempotency_key=key)
+        if args.wait:
+            try:
+                machine.wait_until_ready(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
+            except WorkspaceNotReadyError as error:
+                raise _timed_out(machine, error) from None
+        else:
             print(_safe_line(f"{machine.id} {machine.state}. Connect when ready with: nodus ssh {machine.id}"))
             return 0
         connection = machine.ssh()
@@ -1333,7 +1340,8 @@ Use nodus COMMAND --help for command options.""",
     launch.add_argument("--ssh-key", help="path to an SSH public key (default ~/.ssh/id_ed25519.pub)")
     launch.add_argument("--name", help="machine name (default instance- and 8 random characters)")
     launch.add_argument("--hours", type=_positive_integer, default=4, help="stop automatically after this many hours")
-    launch.add_argument("--keep-files", action="store_true", help="save project files between sessions as a workspace")
+    launch.add_argument("--keep-files", action="store_true",
+                        help="save project files as a workspace. Workspaces are listed by nodus workspace ls, not ps")
     launch.add_argument("--no-wait", dest="wait", action="store_false", help="return once compute is requested")
     launch.add_argument("--timeout", type=float, default=900.0, help="seconds to wait for SSH")
     launch.add_argument("--poll-seconds", type=float, default=5.0)
