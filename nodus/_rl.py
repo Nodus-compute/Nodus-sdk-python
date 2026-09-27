@@ -453,14 +453,18 @@ class RLEnvironment:
 def _output_names(paths: list[str]) -> dict[str, str]:
     """Name each result file the way the console does, so none is lost.
 
-    A name the console would keep but ``run()`` refuses, such as a Windows
-    device name like ``CON``, gets the same ``result_`` prefix as a reserved one.
+    Results are stored after the work has run, under 1-64 characters of
+    ``[a-z0-9._-]`` with no leading dot or hyphen, so each name is derived to
+    meet that rule. Names ``run()`` refuses, a Windows device name such as
+    ``con`` or a trailing dot, take a ``result_`` prefix as a reserved one does.
     """
     outputs: dict[str, str] = {}
     for path in paths:
-        basename = re.sub(r"[^a-zA-Z0-9._-]", "_", path.rsplit("/", 1)[-1])
-        if not basename or basename.startswith("nodus.") or not portable_output_name(basename):
+        basename = re.sub(r"[^a-z0-9._-]", "_", path.rsplit("/", 1)[-1].lower())
+        if (not basename or basename.startswith("nodus.") or basename[0] in ".-"
+                or not portable_output_name(basename)):
             basename = "result_" + basename.rstrip(".")
+        basename = basename[:56].rstrip(".")
         name, suffix = basename, 2
         while name in outputs:
             name, suffix = f"{suffix}_{basename}", suffix + 1

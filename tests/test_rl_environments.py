@@ -136,11 +136,24 @@ def test_an_example_whose_runner_url_was_never_resolved_is_not_offered() -> None
     assert client([], catalog=catalog).rl.list_environments()[0].examples == []
 
 
-def test_a_result_named_like_a_windows_device_still_gets_a_name_run_accepts() -> None:
-    from nodus._outputs import portable_output_name
+def test_every_result_gets_a_name_run_accepts_and_the_upload_step_stores() -> None:
+    # Results are stored after the work has run, under 1-64 characters of
+    # [a-z0-9._-] with no leading dot or hyphen, so a name that breaks that
+    # rule loses a paid run's results. run() also refuses Windows device names
+    # and names that differ only in case.
+    import re
 
-    catalog = _catalog_with(launch_overrides={"results": ["outputs/CON", "outputs/aux.json", "outputs/final."]})
+    from nodus._brief import _validate_outputs
+
+    paths = ["outputs/results.json", "results/Model.bin", "outputs/CON", "outputs/con.json",
+             "out/.hidden", "out/-x", "out/final.", "out/NODUS.json", "a/Model.BIN",
+             "out/" + "Long" * 20 + ".bin", "out/\u00e9.txt", "outputs/con", "outputs/result_CON"]
+    catalog = _catalog_with(launch_overrides={"results": paths})
     example = nodus.RLEnvironment.from_dict(catalog["environments"][0]).examples[0]
     outputs = example.run_arguments()["outputs"]
-    assert sorted(outputs.values()) == ["outputs/CON", "outputs/aux.json", "outputs/final."]
-    assert all(portable_output_name(name) for name in outputs), outputs
+    assert sorted(outputs.values()) == sorted(paths)
+    assert outputs["results.json"] == "outputs/results.json"
+    for name in outputs:
+        assert re.fullmatch(r"[a-z0-9_][a-z0-9._-]{0,63}", name), name
+        assert not name.startswith("nodus."), name
+    _validate_outputs(outputs)
