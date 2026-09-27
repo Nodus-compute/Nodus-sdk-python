@@ -204,14 +204,23 @@ def _check_gpu(gpu: Any) -> None:
         raise ValidationError("Choose a gpu such as \"H100\" or \"H100:2\"")
 
 
-def _refuse_replayed_stop(machine: Any, keep_files: bool, headers: dict[str, str]) -> None:
-    """A replayed workspace that is stopped may have run already. Its start does not replay by key."""
+def _replayed_stop(machine: Any, keep_files: bool, headers: dict[str, str]) -> bool:
+    """A replayed workspace that is stopped. Its start does not replay by key, so its history decides."""
     from . import _was_replayed
-    if keep_files and machine.state == "stopped" and _was_replayed(headers):
-        raise WorkspaceNotReadyError(
-            f"{machine.id} was already created with this idempotency key and is stopped. It may have run and "
-            f"been stopped since, so it is not started again. Start it with nodus workspace start {machine.id} "
-            "or launch with a new key.", body=machine.raw)
+    return keep_files and machine.state == "stopped" and _was_replayed(headers)
+
+
+def _replay_refused(machine: Any, reason: str) -> WorkspaceNotReadyError:
+    return WorkspaceNotReadyError(
+        f"{machine.id} was already created with this idempotency key and is stopped. {reason}, so it is not "
+        f"started again. Start it with nodus workspace start {machine.id} or launch with a new key.",
+        body=machine.raw)
+
+
+def _check_history(machine: Any, sessions: Any) -> None:
+    """Sessions are receipts of rented machines: none means starting cannot rent a second one."""
+    if sessions:
+        raise _replay_refused(machine, "It has run before")
 
 
 def _start_uncertain(machine: Any, error: NodusError, key: str) -> NodusError:
@@ -254,7 +263,12 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb
     machine, answered = Workspace(client), {}
     # The server replays a repeated key and body as the original record. Older servers match an instance by name.
     machine._absorb(client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
-    _refuse_replayed_stop(machine, keep_files, answered)
+    if _replayed_stop(machine, keep_files, answered):
+        try:
+            sessions = machine.sessions()
+        except NodusError:
+            raise _replay_refused(machine, "Its session history could not be read") from None
+        _check_history(machine, sessions)
     if machine.state == "stopped":
         try:
             machine.start(idempotency_key=key)
@@ -286,7 +300,12 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, g
                              max_hours=max_hours)
     machine, answered = AsyncWorkspace(client), {}
     machine._absorb(await client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
-    _refuse_replayed_stop(machine, keep_files, answered)
+    if _replayed_stop(machine, keep_files, answered):
+        try:
+            sessions = await machine.sessions()
+        except NodusError:
+            raise _replay_refused(machine, "Its session history could not be read") from None
+        _check_history(machine, sessions)
     if machine.state == "stopped":
         try:
             await machine.start(idempotency_key=key)

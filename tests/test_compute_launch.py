@@ -833,23 +833,57 @@ def test_compute_group_pages_and_iterate_group_follows_the_cursor():
     assert first["items"][0]["id"] == "wl_2" and every == ["wl_1", "wl_2"]
 
 
-@pytest.mark.parametrize("asynchronous", [False, True])
-def test_a_replayed_keep_files_create_that_is_stopped_is_never_restarted(asynchronous):
-    # A workspace start does not replay by key, so restarting a replayed stopped workspace could rent again.
-    calls = []
+# listResearchWorkspaceSessions: finished sessions are receipts, written only for a machine that was rented.
+RECEIPT = {"id": "rcpt_1", "gpu": "H100", "gpu_count": 1, "cloud": "secure", "rate_usd_hour": 2.5,
+           "requested_at": "2026-09-27T10:00:00Z", "ready_at": "2026-09-27T10:03:00Z",
+           "ended_at": "2026-09-27T11:00:00Z", "billed_seconds": 3420, "charged_usd": 2.38,
+           "charge_state": "final", "settled": True, "stop_reason": "user", "saved": True,
+           "public_price_available": True}
 
+
+def replayed_workspace_handler(calls, sessions):
     def handler(request):
-        calls.append((request.method, request.url.path))
+        calls.append((request.method, request.url.path, request.headers.get("Idempotency-Key")))
         if request.url.path == BASE + "/capabilities":
             return httpx.Response(200, json=CAPABILITIES)
         if request.url.path == BASE and request.method == "POST":
             return httpx.Response(201, json=INSTANCE_STOPPED, headers={"Idempotent-Replayed": "true"})
-        pytest.fail("unexpected " + request.method + " " + request.url.path)
+        if request.url.path == BASE + "/ws_inst/sessions":
+            return httpx.Response(sessions[0], json=sessions[1])
+        if request.url.path == BASE + "/ws_inst/start":
+            return httpx.Response(202, json=INSTANCE_CREATING)
+        if request.url.path == BASE + "/ws_inst":
+            return httpx.Response(200, json=INSTANCE_READY)
+        return httpx.Response(418)
+    return handler
 
+
+def launch_replayed(asynchronous, handler):
     client = (async_client if asynchronous else sync_client)(handler)
-    with pytest.raises(WorkspaceNotReadyError) as raised:
-        result = client.launch("H100", ssh_key=KEY, keep_files=True, idempotency_key="done-1")
-        if asynchronous:
-            asyncio.run(result)
-    assert "ws_inst" in str(raised.value) and "start" in str(raised.value)
-    assert not any(path.endswith("/start") for _, path in calls)
+    result = client.launch("H100", ssh_key=KEY, keep_files=True, idempotency_key="done-1", poll_seconds=0.1)
+    return asyncio.run(result) if asynchronous else result
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_a_replayed_workspace_that_never_ran_is_started_with_the_launch_key(asynchronous):
+    calls = []
+    machine = launch_replayed(asynchronous, replayed_workspace_handler(calls, (200, {"sessions": []})))
+    assert machine.ready
+    assert ("POST", BASE + "/ws_inst/start", "done-1") in calls
+    assert calls.index(("GET", BASE + "/ws_inst/sessions", None)) < calls.index(("POST", BASE + "/ws_inst/start", "done-1"))
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("status,body", [
+    (200, {"sessions": [RECEIPT]}),
+    (500, {"error": {"code": "internal", "message": "boom"}}),
+    (200, {"sessions": "none"}),
+    (404, {"error": {"code": "not_found", "message": "gone"}}),
+])
+def test_a_replayed_workspace_that_ran_or_cannot_be_checked_is_not_started(asynchronous, status, body):
+    # A workspace start does not replay by key, so starting one that already ran could rent again.
+    calls = []
+    with pytest.raises(nodus.NodusError) as raised:
+        launch_replayed(asynchronous, replayed_workspace_handler(calls, (status, body)))
+    assert "ws_inst" in str(raised.value) and "nodus workspace start ws_inst" in str(raised.value)
+    assert not any(path.endswith("/start") for _, path, _ in calls)
