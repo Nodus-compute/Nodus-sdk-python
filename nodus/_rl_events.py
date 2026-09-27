@@ -24,6 +24,7 @@ import math
 import sys
 import threading
 import unicodedata
+from decimal import Decimal
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, TextIO
 
@@ -151,7 +152,13 @@ class RLEventEmitter:
             duration_ms=duration_ms,
             message=message,
         )
-        diagnostic = f"RL task {event['task_id']} raised {type(exception).__name__}\n"
+        # The runner scans stderr for events too. An exception name is a plain
+        # identifier almost always; anything else is quoted so it stays on this
+        # one line and cannot begin a forged event.
+        name = type(exception).__name__
+        if not name.isidentifier():
+            name = repr(name)
+        diagnostic = f"RL task {event['task_id']} raised {name}\n"
         line = _encode_line(event)
         with self._lock:
             self._stderr.write(diagnostic)
@@ -301,7 +308,11 @@ def _identity_text(field: str, value: Any, *, limit: int) -> str:
         raise EventValidationError(f"{field} must be text")
     if not value or value.strip() != value:
         raise EventValidationError(f"{field} must be nonempty without edge whitespace")
-    if len(value.encode("utf-8")) > limit:
+    try:
+        encoded_value = value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise EventValidationError(f"{field} must be valid UTF-8 text") from None
+    if len(encoded_value) > limit:
         raise EventValidationError(f"{field} exceeds {limit} UTF-8 bytes")
     if any(unicodedata.category(char) == "Cc" for char in value):
         raise EventValidationError(f"{field} contains a control character")
@@ -313,7 +324,11 @@ def _payload_text(field: str, value: Any, *, limit: int) -> str:
         raise EventValidationError(f"{field} must be text")
     if not value:
         raise EventValidationError(f"{field} must not be empty when supplied")
-    if len(value.encode("utf-8")) > limit:
+    try:
+        encoded_value = value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise EventValidationError(f"{field} must be valid UTF-8 text") from None
+    if len(encoded_value) > limit:
         raise EventValidationError(f"{field} exceeds {limit} UTF-8 bytes")
     if any(
         unicodedata.category(char) == "Cc" and char not in "\n\r\t"
@@ -326,10 +341,27 @@ def _payload_text(field: str, value: Any, *, limit: int) -> str:
 def _finite_number(field: str, value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise EventValidationError(f"{field} must be a finite number")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        raise EventValidationError(f"{field} must be a finite number") from None
     if not math.isfinite(number):
         raise EventValidationError(f"{field} must be a finite number")
     return number
+
+
+def _go_number_growth(value: float) -> int:
+    """How many bytes longer the runner's re-encoding of a number is.
+
+    The runner decodes each event and encodes it again the way Go does, which
+    writes plain digits for magnitudes from 1e-6 up to 1e21. Python switches to
+    an exponent at 1e16, so 1e16 grows from five bytes to seventeen. Measuring
+    the Python text alone would accept an event the runner then drops.
+    """
+    text = json.dumps(value)
+    if ("e" in text or "E" in text) and (value == 0 or 1e-6 <= abs(value) < 1e21):
+        return max(0, len(format(Decimal(repr(value)), "f")) - len(text))
+    return 0
 
 
 def _encode_line(event: dict[str, Any]) -> str:
@@ -340,7 +372,8 @@ def _encode_line(event: dict[str, Any]) -> str:
         allow_nan=False,
     ).translate(GO_JSON_ESCAPES)
     encoded = encoded_text.encode("utf-8")
-    if len(encoded) > MAX_EVENT_BYTES:
+    growth = sum(_go_number_growth(value) for value in event.values() if isinstance(value, float))
+    if len(encoded) + growth > MAX_EVENT_BYTES:
         raise EventValidationError(
             f"event JSON exceeds the {MAX_EVENT_BYTES} byte limit"
         )

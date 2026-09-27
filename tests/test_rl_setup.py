@@ -104,3 +104,48 @@ def test_extra_still_reaches_the_payload_for_a_caller_already_using_it() -> None
                       "mode": "train", "model": "m", "planned_tasks": 4}},
     )
     assert captured[0]["rl"]["mode"] == "train"
+
+
+# The control plane's rules, exactly. A value it rejects must fail here, before
+# submission, not as a 400 after it.
+@pytest.mark.parametrize("environment_id", ["-abc", "a" * 65, "custom\n", "--", ""])
+def test_environment_ids_the_server_rejects_are_refused(environment_id: str) -> None:
+    captured: list[dict] = []
+    with pytest.raises(ValueError):
+        client(captured).run(command="python train.py", image="python:3.12",
+                             rl=nodus.RLSetup(environment_id=environment_id, mode="train",
+                                              model="m", planned_tasks=8))
+    assert captured == []
+
+
+@pytest.mark.parametrize("model", [" gpt", "gpt ", "a\nb", "x\x00y", "é" * 129])
+def test_models_the_server_rejects_are_refused(model: str) -> None:
+    captured: list[dict] = []
+    with pytest.raises(ValueError):
+        client(captured).run(command="python train.py", image="python:3.12",
+                             rl=nodus.RLSetup(environment_id="custom", mode="train",
+                                              model=model, planned_tasks=8))
+    assert captured == []
+
+
+def test_rl_and_extra_rl_together_are_refused_rather_than_one_silently_winning() -> None:
+    captured: list[dict] = []
+    with pytest.raises(ValueError):
+        client(captured).run(
+            command="python train.py", image="python:3.12",
+            rl=nodus.RLSetup(environment_id="custom", mode="train", model="m", planned_tasks=8),
+            extra={"rl": {"schema_version": 1, "environment_id": "gsm8k", "mode": "train",
+                          "model": "m", "planned_tasks": 8}},
+        )
+    assert captured == []
+
+
+@pytest.mark.parametrize("mapping", [
+    {"environment_id": "custom", "mode": "train", "model": "m", "planned_tasks": 8, "recipe": {"id": "x"}},
+    {"environment_id": "custom", "mode": "train", "model": "m", "planned_tasks": 8, "schema_version": 2},
+])
+def test_a_mapping_with_fields_rl_cannot_carry_is_refused(mapping: dict) -> None:
+    captured: list[dict] = []
+    with pytest.raises(ValueError):
+        client(captured).run(command="python train.py", image="python:3.12", rl=mapping)
+    assert captured == []

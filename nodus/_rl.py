@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 import math
+import re
 from typing import TYPE_CHECKING, Any
 
 from .errors import APIError, NodusError, ValidationError
@@ -369,7 +370,7 @@ class RLExample:
     def run_arguments(self) -> dict[str, Any]:
         from ._rl_setup import RLSetup
 
-        outputs = {path.rsplit("/", 1)[-1]: path for path in self.results}
+        outputs = _output_names(self.results)
         return {
             # An example command chains steps with &&, so it needs a shell, as
             # the console gives it. Split into argv, the && would be a literal
@@ -406,8 +407,14 @@ class RLEnvironment:
             launch = _mapping(launch, "launch")
             image, model = _required_text(launch, "image"), _required_text(launch, "model")
             planned = _required_int(launch, "default_tasks", 1)
-            results = _strings(launch.get("results"), "results")
+            if planned > 10000:
+                raise APIError("RL response field 'default_tasks' must be at most 10000", body=dict(launch))
+            results = _strings(launch["results"], "results") if launch.get("results") is not None else []
             for item in _rows(launch.get("examples"), "examples"):
+                # A command still holding its placeholder never had a runner URL
+                # resolved; running it would pay for a machine that cannot start.
+                if "{{" in str(item.get("command", "")):
+                    continue
                 minutes = item.get("runtime_minutes")
                 if minutes is not None and (isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 1):
                     raise APIError("RL response field 'runtime_minutes' must be a positive integer", body=dict(item))
@@ -440,6 +447,20 @@ class RLEnvironment:
             examples=examples,
             raw=row,
         )
+
+
+def _output_names(paths: list[str]) -> dict[str, str]:
+    """Name each result file the way the console does, so none is lost."""
+    outputs: dict[str, str] = {}
+    for path in paths:
+        basename = re.sub(r"[^a-zA-Z0-9._-]", "_", path.rsplit("/", 1)[-1])
+        if not basename or basename.startswith("nodus."):
+            basename = "result_" + basename
+        name, suffix = basename, 2
+        while name in outputs:
+            name, suffix = f"{suffix}_{basename}", suffix + 1
+        outputs[name] = path
+    return outputs
 
 
 def _environments(body: Any) -> list[RLEnvironment]:

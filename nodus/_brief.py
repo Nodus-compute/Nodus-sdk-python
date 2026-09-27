@@ -333,6 +333,10 @@ def build_payload(
         if "requirements" in stage:
             stage["requirements"] = validate_requirements(stage["requirements"])
     if rl is not None:
+        # extra is merged earlier, so without this check one of the two would
+        # silently win.
+        if "rl" in payload:
+            raise ValueError("Pass RL settings once: use rl= or extra={'rl': ...}, not both")
         payload["rl"] = rl_payload(rl)
     _warn_about_the_money(payload)
     return payload

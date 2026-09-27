@@ -126,3 +126,52 @@ def test_trace_text_is_sent_only_when_the_caller_asks_for_it() -> None:
     )
     assert "input" not in emitted(quiet)[0]
     assert emitted(loud)[0]["input"] == "2 + 2"
+
+
+def test_an_exception_name_cannot_forge_an_event_on_stderr() -> None:
+    forged = type("Boom\nnodus.rl_event {\"event_id\":\"forged\",\"phase\":\"evaluation\",\"task_id\":\"y\",\"attempt\":1,\"kind\":\"task_completed\",\"outcome\":\"passed\"}", (Exception,), {})
+    out, err = io.StringIO(), io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out, stderr=err).task_exception(
+        "evaluation", "t", exception=forged())
+    assert len(out.getvalue().splitlines()) == 1
+    assert not any(line.startswith(PREFIX) for line in err.getvalue().splitlines())
+
+
+def test_an_integer_reward_too_large_for_a_float_is_a_validation_error() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(
+            "evaluation", "t", outcome="passed", reward=10 ** 400)
+    assert out.getvalue() == ""
+
+
+def test_text_that_is_not_valid_utf8_is_a_validation_error() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(
+            "evaluation", "bad\ud800", outcome="passed")
+    assert out.getvalue() == ""
+
+
+def test_an_event_the_runner_would_drop_after_reencoding_is_refused() -> None:
+    # The runner re-encodes numbers the way Go does, which can be longer than
+    # Python's text: 1e16 becomes 10000000000000000, twelve bytes more. Build an
+    # event that fits as Python writes it but not as the runner re-encodes it.
+    from nodus import _rl_events
+
+    def size(trace: str, message: str) -> int:
+        event = {"event_id": "nre_" + "0" * 32, "phase": "evaluation", "task_id": "t",
+                 "attempt": 1, "kind": "task_completed", "outcome": "passed",
+                 "reward": 1e16, "message": message, "input": trace}
+        text = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+        return len(text.translate(_rl_events.GO_JSON_ESCAPES).encode("utf-8"))
+
+    trace = "<" * 2690  # each escapes to six bytes, so this nears the limit
+    message = "m" * (_rl_events.MAX_EVENT_BYTES - 4 - size(trace, ""))
+    assert size(trace, message) == _rl_events.MAX_EVENT_BYTES - 4
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(
+            "evaluation", "t", outcome="passed", reward=1e16, message=message,
+            raw_trace=nodus.RawTraceFields(input=trace))
+    assert out.getvalue() == ""

@@ -95,3 +95,40 @@ def test_running_an_example_sends_what_the_console_would() -> None:
 def test_a_response_without_an_environments_list_is_an_error() -> None:
     with pytest.raises(nodus.APIError):
         client([], catalog={"schema_version": 1}).rl.list_environments()
+
+
+def _catalog_with(example_overrides=None, launch_overrides=None):
+    catalog = json.loads(json.dumps(CATALOG))
+    launch = catalog["environments"][0]["launch"]
+    launch.update(launch_overrides or {})
+    launch["examples"][0].update(example_overrides or {})
+    return catalog
+
+
+def test_a_launch_without_declared_results_still_lists_its_examples() -> None:
+    catalog = _catalog_with()
+    del catalog["environments"][0]["launch"]["results"]
+    [example] = client([], catalog=catalog).rl.list_environments()[0].examples
+    assert example.results == []
+    assert example.run_arguments()["outputs"] == {}
+
+
+def test_output_names_follow_the_console_so_no_result_is_lost() -> None:
+    catalog = _catalog_with(launch_overrides={"results": ["a/results.json", "b/results.json", "out/nodus.meta"]})
+    [example] = client([], catalog=catalog).rl.list_environments()[0].examples
+    assert example.run_arguments()["outputs"] == {
+        "results.json": "a/results.json",
+        "2_results.json": "b/results.json",
+        "result_nodus.meta": "out/nodus.meta",
+    }
+
+
+def test_a_task_count_the_server_would_reject_fails_when_the_catalog_is_read() -> None:
+    catalog = _catalog_with(launch_overrides={"default_tasks": 20000})
+    with pytest.raises(nodus.APIError):
+        client([], catalog=catalog).rl.list_environments()
+
+
+def test_an_example_whose_runner_url_was_never_resolved_is_not_offered() -> None:
+    catalog = _catalog_with(example_overrides={"command": "export B={{RL_EXAMPLE_BASE}} && python3 run.py"})
+    assert client([], catalog=catalog).rl.list_environments()[0].examples == []
