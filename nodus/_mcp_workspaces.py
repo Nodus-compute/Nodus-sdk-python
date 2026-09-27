@@ -159,9 +159,9 @@ def register_workspace_tools(server, base_url, request, check_origin):
     @server.tool(structured_output=False, annotations=read)
     async def list_compute(ctx: Context, state: str = "running", type: str | None = None,
                            launched_by: str | None = None, limit: int | None = None,
-                           cursor: str | None = None) -> str:
-        """List running instances and training, one row per sweep. Pass next_cursor as cursor for more."""
-        params = _query(state, type, launched_by, limit)
+                           cursor: str | None = None, include_workspaces: bool = True) -> str:
+        """List running instances, workspaces and training, one row per sweep. Pass next_cursor as cursor for more."""
+        params = _query(state, type, launched_by, limit, include_workspaces)
         if cursor is not None:
             params["cursor"] = _valid_idempotency_key(cursor)
         return await request(ctx.request_context.lifespan_context, "GET", "/v1/compute", base_url=base_url,

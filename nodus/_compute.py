@@ -11,7 +11,7 @@ from ._workspaces import (AsyncWorkspace, Workspace, _BASE, _configuration, _fre
                           _wait_bounds)
 
 _STATES = ("running", "history")
-_TYPES = ("instance", "training")
+_TYPES = ("instance", "training", "workspace")
 _LAUNCHED_BY = ("me", "agents")
 _GROUP_ID = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,255}", re.ASCII)
 # Default OpenSSH public key names, tried in this order. Private key files are never read.
@@ -24,7 +24,7 @@ def _choice(value: Any, field: str, choices: tuple[str, ...]) -> str:
     return value
 
 
-def _query(state: Any, type: Any, launched_by: Any, limit: Any) -> dict[str, Any]:
+def _query(state: Any, type: Any, launched_by: Any, limit: Any, include_workspaces: Any = False) -> dict[str, Any]:
     params: dict[str, Any] = {"state": _choice(state, "state", _STATES)}
     if type is not None:
         params["type"] = _choice(type, "type", _TYPES)
@@ -34,6 +34,10 @@ def _query(state: Any, type: Any, launched_by: Any, limit: Any) -> dict[str, Any
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValidationError("limit must be a whole number from 1 to 100")
         params["limit"] = limit
+    if not isinstance(include_workspaces, bool):
+        raise ValidationError("include_workspaces must be True or False")
+    if include_workspaces:
+        params["include"] = "workspaces"
     return params
 
 
@@ -54,20 +58,23 @@ def _group_path(group_id: Any) -> str:
 
 
 class Compute:
-    """What is running now: instances and training, one row per sweep."""
+    """What is running now: instances, training (one row per sweep) and optionally workspaces."""
 
     def __init__(self, client: Any):
         self._client = client
 
     def list(self, *, state: str = "running", type: str | None = None, launched_by: str | None = None,
-             limit: int | None = None) -> list[dict[str, Any]]:
-        """One page of compute items as the server sends them. Use ``iterate()`` for every page."""
-        return _items(self._client._request("GET", "/v1/compute", params=_query(state, type, launched_by, limit)))[0]
+             limit: int | None = None, include_workspaces: bool = False) -> list[dict[str, Any]]:
+        """One page of compute items as the server sends them. Use ``iterate()`` for every page.
+
+        ``include_workspaces=True`` adds running GPU workspaces as items of type ``workspace``.
+        """
+        return _items(self._client._request("GET", "/v1/compute", params=_query(state, type, launched_by, limit, include_workspaces)))[0]
 
     def iterate(self, *, state: str = "running", type: str | None = None, launched_by: str | None = None,
-                limit: int | None = None) -> Iterator[dict[str, Any]]:
+                limit: int | None = None, include_workspaces: bool = False) -> Iterator[dict[str, Any]]:
         """Every compute item, following ``next_cursor``. ``limit`` sets the page size."""
-        params, seen = _query(state, type, launched_by, limit), set()
+        params, seen = _query(state, type, launched_by, limit, include_workspaces), set()
         while True:
             items, cursor = _items(self._client._request("GET", "/v1/compute", params=params))
             yield from items
@@ -90,13 +97,13 @@ class AsyncCompute:
         self._client = client
 
     async def list(self, *, state: str = "running", type: str | None = None, launched_by: str | None = None,
-                   limit: int | None = None) -> list[dict[str, Any]]:
-        params = _query(state, type, launched_by, limit)
+                   limit: int | None = None, include_workspaces: bool = False) -> list[dict[str, Any]]:
+        params = _query(state, type, launched_by, limit, include_workspaces)
         return _items(await self._client._request("GET", "/v1/compute", params=params))[0]
 
     async def iterate(self, *, state: str = "running", type: str | None = None, launched_by: str | None = None,
-                      limit: int | None = None) -> AsyncIterator[dict[str, Any]]:
-        params, seen = _query(state, type, launched_by, limit), set()
+                      limit: int | None = None, include_workspaces: bool = False) -> AsyncIterator[dict[str, Any]]:
+        params, seen = _query(state, type, launched_by, limit, include_workspaces), set()
         while True:
             items, cursor = _items(await self._client._request("GET", "/v1/compute", params=params))
             for item in items:

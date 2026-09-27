@@ -704,14 +704,19 @@ def _compute_row(item: dict) -> list[str]:
         name += f" ({group['size']} runs)"
     count, gpu = item.get("gpu_count"), item.get("gpu")
     gpu_text = "-" if not gpu else (f"{count}x {gpu}" if isinstance(count, int) and count > 1 else str(gpu))
-    kind = {"instance": "Instance", "training": "Training"}.get(item.get("type"), str(item.get("type") or "-"))
+    kind = {"instance": "Instance", "training": "Training", "workspace": "Workspace"}.get(item.get("type"), str(item.get("type") or "-"))
     return [name, kind, gpu_text, str(item.get("status_text") or item.get("state") or "-"), _launched_by(item)]
 
 
 def _cmd_ps(args: argparse.Namespace) -> int:
     with Client(base_url=args.base_url) as client:
-        items = [item for state in (("running", "history") if args.all else ("running",))
-                 for item in client.compute.iterate(state=state)]
+        try:
+            items = [item for state in (("running", "history") if args.all else ("running",))
+                     for item in client.compute.iterate(state=state, include_workspaces=True)]
+        except NotFoundError:
+            print("Error: This Nodus server does not list running compute yet. "
+                  "Use nodus workspace ls and nodus list instead.", file=sys.stderr)
+            return 2
     if args.json:
         print(json.dumps(items, indent=2, default=str))
         return 0
@@ -1341,12 +1346,12 @@ Use nodus COMMAND --help for command options.""",
     launch.add_argument("--name", help="machine name (default instance- and 8 random characters)")
     launch.add_argument("--hours", type=_positive_integer, default=4, help="stop automatically after this many hours")
     launch.add_argument("--keep-files", action="store_true",
-                        help="save project files as a workspace. Workspaces are listed by nodus workspace ls, not ps")
+                        help="save project files between sessions as a workspace")
     launch.add_argument("--no-wait", dest="wait", action="store_false", help="return once compute is requested")
     launch.add_argument("--timeout", type=float, default=900.0, help="seconds to wait for SSH")
     launch.add_argument("--poll-seconds", type=float, default=5.0)
     launch.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
-    ps = sub.add_parser("ps", help="list running instances and training")
+    ps = sub.add_parser("ps", help="list running instances, workspaces and training")
     ps.add_argument("--all", action="store_true", help="include stopped and finished compute")
     ps.add_argument("--json", action="store_true", help="print the items as JSON")
     ssh = sub.add_parser("ssh", help="print the SSH command for an instance or workspace")

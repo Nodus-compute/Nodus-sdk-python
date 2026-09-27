@@ -190,9 +190,10 @@ nodus stop NAME_OR_ID
 ```
 
 If the wait times out, the machine keeps running and the error names its ID.
-`nodus ps` and `client.compute.list()` show running instances and training.
-They need a Nodus server that provides the Compute list. A machine launched
-with `keep_files=True` is a workspace, so `nodus workspace ls` lists it.
+`nodus ps` shows running instances, workspaces and training, including
+machines launched with `keep_files=True`. In Python, call
+`client.compute.list(include_workspaces=True)`. Both need a Nodus server that
+provides the Compute list.
 
 ## Prefer the terminal?
 

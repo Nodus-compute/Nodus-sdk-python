@@ -56,6 +56,12 @@ SWEEP_ITEM = {"id": "sw_1", "type": "training", "name": "lr-sweep", "gpu": "A100
               "group": {"id": "sw_1", "kind": "sweep", "size": 12, "running": 9, "succeeded": 3, "failed": 0},
               "resource": {"kind": "sweep", "id": "sw_1"}}
 SUMMARY = {"running": {"instance": 1, "training": 9, "workspace": 0}}
+WORKSPACE_ITEM = {"id": "ws_lab", "type": "workspace", "name": "lab", "gpu": "H100", "gpu_count": 1,
+                  "gpu_memory_gb": 80, "state": "ready", "status_text": "Ready",
+                  "created_at": "2026-09-27T08:00:00Z", "started_at": "2026-09-27T08:02:00Z", "ended_at": None,
+                  "launched_by": {"client": "cli", "user_id": "usr_1", "user_name": "ada@example.com",
+                                  "api_key_id": "key_1", "api_key_name": "laptop"},
+                  "group": None, "resource": {"kind": "research_workspace", "id": "ws_lab"}}
 
 
 def sync_client(handler) -> nodus.Client:
@@ -403,7 +409,7 @@ def test_cli_ps_shows_running_compute_without_any_cost(monkeypatch, capsys):
     assert header == ["NAME", "TYPE", "GPU", "STATUS", "LAUNCHED", "BY"]
     assert "instance-1a2b3c4d" in out and "Instance" in out and "Training" in out and "H100" in out
     assert "Claude" in out and "ada@example.com" in out
-    assert dict(seen[0].url.params) == {"state": "running"}
+    assert dict(seen[0].url.params) == {"state": "running", "include": "workspaces"}
     before = len(seen)
     assert cli.main(["ps", "--all"]) == 0
     capsys.readouterr()
@@ -523,7 +529,7 @@ async def _compute_tool_calls(server, requests, responses, create_connected_serv
         result = await session.call_tool("list_compute", {"state": "running", "launched_by": "agents"})
         assert not result.isError, result
         assert requests[-1].url.path == "/v1/compute"
-        assert dict(requests[-1].url.params) == {"state": "running", "launched_by": "agents"}
+        assert dict(requests[-1].url.params) == {"state": "running", "launched_by": "agents", "include": "workspaces"}
 
         responses.extend([httpx.Response(200, json=INSTANCE_READY),
                           httpx.Response(202, json={**INSTANCE_READY, "state": "stopping"})])
@@ -550,3 +556,63 @@ async def test_mcp_compute_arguments_are_refused_before_network(api, tool, argum
         result = await session.call_tool(tool, arguments)
         assert result.isError
     assert requests == []
+
+
+# -- workspaces in the compute list ----------------------------------------------------------------------------
+
+
+def test_compute_list_includes_workspaces_only_when_asked():
+    seen = []
+    client = sync_client(lambda request: seen.append(dict(request.url.params)) or httpx.Response(
+        200, json={"items": [WORKSPACE_ITEM], "next_cursor": None, "summary": SUMMARY}))
+    client.compute.list()
+    client.compute.list(include_workspaces=True, type="workspace")
+    list(client.compute.iterate(include_workspaces=True))
+    assert seen == [{"state": "running"}, {"state": "running", "type": "workspace", "include": "workspaces"},
+                    {"state": "running", "include": "workspaces"}]
+
+    async def scenario():
+        aclient = async_client(lambda request: seen.append(dict(request.url.params)) or httpx.Response(
+            200, json={"items": [], "next_cursor": None, "summary": SUMMARY}))
+        await aclient.compute.list(include_workspaces=True)
+        return [item async for item in aclient.compute.iterate(include_workspaces=True)]
+    asyncio.run(scenario())
+    assert seen[-2:] == [{"state": "running", "include": "workspaces"}] * 2
+
+
+def test_include_workspaces_must_be_a_bool():
+    client = sync_client(lambda request: pytest.fail("no request expected"))
+    with pytest.raises(ValidationError):
+        client.compute.list(include_workspaces="yes")
+
+
+def test_cli_ps_includes_workspaces_by_default(monkeypatch, capsys):
+    seen = []
+    cli_client(monkeypatch, lambda request: seen.append(dict(request.url.params)) or httpx.Response(
+        200, json={"items": [INSTANCE_ITEM, WORKSPACE_ITEM], "next_cursor": None, "summary": SUMMARY}))
+    assert cli.main(["ps"]) == 0
+    out = capsys.readouterr().out
+    assert seen == [{"state": "running", "include": "workspaces"}]
+    row = next(line for line in out.splitlines() if line.startswith("lab "))
+    assert "Workspace" in row
+
+
+def test_cli_ps_explains_a_server_without_the_compute_list(monkeypatch, capsys):
+    cli_client(monkeypatch, lambda request: httpx.Response(404, text="404 page not found\n"))
+    assert cli.main(["ps"]) == 2
+    captured = capsys.readouterr()
+    lines = captured.err.strip().splitlines()
+    assert len(lines) == 1 and "does not list running compute" in lines[0] and "nodus workspace ls" in lines[0]
+    assert "Traceback" not in captured.err and captured.out == ""
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_compute_includes_workspaces_by_default(api):
+    from mcp.shared.memory import create_connected_server_and_client_session
+    server, requests, _ = api
+    async with create_connected_server_and_client_session(server) as session:
+        assert not (await session.call_tool("list_compute", {})).isError
+        assert not (await session.call_tool("list_compute", {"include_workspaces": False,
+                                                             "type": "instance"})).isError
+    assert dict(requests[0].url.params) == {"state": "running", "include": "workspaces"}
+    assert dict(requests[1].url.params) == {"state": "running", "type": "instance"}
