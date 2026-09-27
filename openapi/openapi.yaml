@@ -3252,6 +3252,7 @@
           "size_gb"
         ],
         "properties": {
+          "kind": {"type": "string", "enum": ["", "workspace", "instance"], "description": "Omission or an empty value preserves a saved workspace. instance creates standalone compute with SSH and local disk only. The kind cannot change after creation. An existing SSH workspace remains a workspace."},
           "name": {
             "type": "string",
             "minLength": 1,
@@ -3273,7 +3274,7 @@
               "jupyter",
               "ssh"
             ],
-            "description": "Development-tool preference retained for compatibility with existing configurations. Direct sessions offer browser VS Code and SSH on the same compute. Use the response connections flags to determine current access. On legacy sessions, omission or an empty value preserves both browser tools, and ssh requires ssh_authorized_key."
+            "description": "Instances require ssh and expose only SSH connections. For saved workspaces, this is the development-tool preference retained for compatibility with existing configurations. Direct workspace sessions offer browser VS Code and SSH on the same compute. Use the response connections flags to determine current access. On legacy sessions, omission or an empty value preserves both browser tools, and ssh requires ssh_authorized_key."
           },
           "repository": {
             "type": "string",
@@ -3318,9 +3319,9 @@
           },
           "size_gb": {
             "type": "number",
-            "minimum": 9.5367431640625e-07,
+            "minimum": 0,
             "maximum": 10,
-            "description": "Project capacity within capabilities.storage_limit_bytes. With storage_policy_version included-10gb-v1 or r2-standard-10gb-account-v1, send exactly 10 for the 10,000,000,000-byte per-workspace capacity. The account policy shares its free allowance across workspaces. Other deployments use GiB and their displayed capacity limit."
+            "description": "Instances require zero and have no saved project storage. For workspaces, positive project capacity within capabilities.storage_limit_bytes. With storage_policy_version included-10gb-v1 or r2-standard-10gb-account-v1, send exactly 10 for the 10,000,000,000-byte per-workspace capacity. The account policy shares its free allowance across workspaces. Other deployments use GiB and their displayed capacity limit."
           },
           "ssh_authorized_key": {
             "type": "string",
@@ -3328,6 +3329,14 @@
             "description": "Optional plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Account SSH keys can also provide access to direct sessions."
           }
         },
+        "allOf": [{
+          "if": {"required": ["kind"], "properties": {"kind": {"const": "instance"}}},
+          "then": {
+            "required": ["editor", "ssh_authorized_key"],
+            "properties": {"editor": {"const": "ssh"}, "ssh_authorized_key": {"minLength": 1}, "size_gb": {"const": 0}, "repository": {"maxLength": 0}, "ref": {"maxLength": 0}}
+          },
+          "else": {"properties": {"size_gb": {"minimum": 9.5367431640625e-07}}}
+        }],
         "if": {"required": ["compute_class"], "properties": {"compute_class": {"const": "vm"}}},
         "then": {
           "required": ["vcpus", "host_memory_gb"],
@@ -3362,6 +3371,7 @@
           "workload_source_limit_bytes"
         ],
         "properties": {
+          "standalone_instances": {"type": "boolean", "description": "Qualified direct compute is available for SSH-only standalone instances. Availability and account funding are rechecked at launch."},
           "runtimes": {
             "type": "array",
             "description": "Qualified workspace images visible to the authenticated team. These select container userspace, not the host kernel. Registry references and other teams' custom images are not exposed.",
@@ -4198,8 +4208,10 @@
               "disabled_no_approved_storage_rate",
               "metered_subject_to_account_limits",
               "included_workspace_storage",
-              "account_workspace_storage"
-            ]
+              "account_workspace_storage",
+              "ephemeral_instance"
+            ],
+            "description": "Storage billing policy for this record. ephemeral_instance has no saved storage or storage charge. Its compute session is billed separately."
           }
         }
       },
@@ -17509,9 +17521,9 @@
     "/v1/research-workspaces": {
       "post": {
         "operationId": "createResearchWorkspace",
-        "summary": "Create a saved research workspace",
+        "summary": "Create a workspace or standalone instance configuration",
         "tags": ["Research workspaces"],
-        "description": "Saves a unique named project and its environment configuration without starting compute. Requires a Bearer API key or console session. Duplicate names are rejected. This operation does not require an Idempotency-Key and is not an idempotent create. Use start to admit a compute session.",
+        "description": "Saves a unique named configuration without starting compute. Omitted kind creates a saved workspace. kind instance creates standalone SSH compute with local disk only and requires capabilities.standalone_instances. Requires a Bearer API key or console session. Workspace duplicate names are rejected. An instance retry with the exact same account, name and configuration returns the existing record. Different configurations still conflict. Use start to admit a compute session.",
         "requestBody": {
           "required": true,
           "content": {
@@ -17537,8 +17549,9 @@
         "operationId": "listResearchWorkspaces",
         "summary": "List saved research workspaces",
         "tags": ["Research workspaces"],
-        "description": "Returns a page of workspaces owned by the authenticated account, newest first. The default and maximum page size are 100. Includes compute-session costs, separate retained-storage costs and tool readiness. Continue with next_cursor until it is empty. Pages reflect current records and do not form a snapshot across concurrent changes.",
+        "description": "Returns a page owned by the authenticated account, newest first. The default kind workspace excludes standalone instances. Use kind instance for standalone instances. Cursors are bound to the selected kind. The default and maximum page size are 100. Includes compute-session costs, separate retained-storage costs and tool readiness. Continue with next_cursor until it is empty. Pages reflect current records and do not form a snapshot across concurrent changes.",
         "parameters": [
+          {"name": "kind", "in": "query", "schema": {"type": "string", "enum": ["workspace", "instance"], "default": "workspace"}, "description": "Select saved workspaces or standalone instances without duplicate rows."},
           {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100}, "description": "Maximum workspaces on this page."},
           {"name": "cursor", "in": "query", "schema": {"type": "string", "maxLength": 1024}, "description": "Opaque next_cursor from this account's previous research workspace page."}
         ],
