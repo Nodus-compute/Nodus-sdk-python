@@ -23,7 +23,7 @@ import webbrowser
 from typing import Any
 
 from . import Client, SandboxExec, __version__, _is_header_safe, _redact, _resolve_base_url, _current_hosted_url, config, login
-from ._terminal import clean, compute_label, format_cost, show_table, show_workload, status_label
+from ._terminal import clean, compute_label, format_cost, show_table, show_workload, status_label, workload_cost
 from ._brief import STATUS_FILTERS
 from .errors import ValidationError, NodusError, NotFoundError, AuthenticationError, APIError, APIConnectionError, APITimeoutError, asset_id_from_error
 from .types import _num
@@ -104,11 +104,10 @@ def _safe_line(text: Any) -> str:
 
 
 def _fmt_workload(wl: Any) -> str:
-    # cost_now_usd, not spend_usd and not the meter: settled charges do not move
-    # while a lease is open, and the meter counts only this billing period.
+    # Terminal metered costs remain explicitly pending until their lifetime total is final.
     route = _safe_line(wl.route.sku) if wl.route else "-"
     status = _safe_line(getattr(wl.status, "value", wl.status))
-    return f"{_safe_line(wl.id)}  {status:<13} {route:<28} {format_cost(wl.cost_now_usd)}"
+    return f"{_safe_line(wl.id)}  {status:<13} {route:<28} {workload_cost(wl)}"
 
 
 @contextmanager
@@ -537,6 +536,8 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
                         "name": sandbox.envelope.get("name", ""),
                         "state": getattr(sandbox.state, "value", sandbox.state),
                         "cost_usd": sandbox.cost_usd,
+                        "charge_state": sandbox.charge_state,
+                        "final_charge_usd": sandbox.final_charge_usd,
                         "url": sandbox.url,
                     }
                     for sandbox in sandboxes
@@ -544,7 +545,7 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
             else:
                 show_table(
                     ["Sandbox", "Name", "Status", "Cost"],
-                    [[sandbox.id, sandbox.envelope.get("name", ""), sandbox.state, format_cost(sandbox.cost_usd)] for sandbox in sandboxes],
+                    [[sandbox.id, sandbox.envelope.get("name", ""), sandbox.state, _sandbox_cost(sandbox)] for sandbox in sandboxes],
                     empty="No sandboxes yet. Use nodus sandbox new to create one.",
                     plain=args.plain,
                 )
@@ -585,6 +586,7 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
         if args.sandbox_cmd == "detail":
             print(json.dumps({"id": sandbox.id, "state": sandbox.state, "url": sandbox.url,
                               "cost_usd": sandbox.cost_usd, "envelope": sandbox.envelope,
+                              "charge_state": sandbox.charge_state, "final_charge_usd": sandbox.final_charge_usd,
                               "failure": sandbox.failure, "startup": sandbox.startup}, indent=2, default=str))
             return 0
         if args.sandbox_cmd == "files":
@@ -611,7 +613,7 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
             return 0
         if args.sandbox_cmd == "cost":
             sandbox.refresh()
-            print(format_cost(sandbox.cost_usd))
+            print(_sandbox_cost(sandbox))
             return 0
         with _sandbox_mutation(args.idempotency_key, sandbox_id=sandbox.id) as key:
             sandbox.terminate(idempotency_key=key)
@@ -620,7 +622,12 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
 
 
 def _workspace_line(workspace) -> str:
-    cost = format_cost(workspace.cost_usd) if workspace.cost_usd is not None else "-"
+    if workspace.charge_state == "estimated" and workspace.state in ("stopped", "terminated", "failed"):
+        cost = "Finalizing cost"
+    elif workspace.charge_state == "final":
+        cost = format_cost(workspace.final_charge_usd) if workspace.final_charge_usd is not None else "Not available"
+    else:
+        cost = format_cost(workspace.cost_usd) if workspace.cost_usd is not None else "-"
     tool = workspace.tool if workspace.ready else "-"
     return _safe_line(f"{workspace.id}  {workspace.name}  {workspace.state}  {tool}  {cost}")
 
@@ -792,6 +799,14 @@ def _cmd_stop(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sandbox_cost(sandbox):
+    if sandbox.charge_state == "estimated" and sandbox.is_terminal:
+        return "Finalizing cost"
+    if sandbox.charge_state == "final":
+        return format_cost(sandbox.final_charge_usd) if sandbox.final_charge_usd is not None else "Not available"
+    return format_cost(sandbox.cost_usd)
+
+
 def _sandbox_exec_failure(process):
     state = getattr(process.state, "value", process.state)
     detail = process.failure_code or f"exit code {process.exit_code}"
@@ -841,7 +856,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
                     "team": "No runs for this team.",
                 }.get(args.status, f"No runs with status {_safe_line(args.status)}.")
             show_table(["Run", "Status", "Compute", "Cost"],
-                       [[wl.id, status_label(wl.status), compute_label(wl.route), format_cost(wl.cost_now_usd)] for wl in workloads],
+                       [[wl.id, status_label(wl.status), compute_label(wl.route), workload_cost(wl)] for wl in workloads],
                        empty=empty, plain=args.plain)
     return 0
 
@@ -1390,7 +1405,7 @@ Use nodus COMMAND --help for command options.""",
     workspace_new = workspace_sub.add_parser("new", help="save a workspace configuration without renting compute")
     workspace_new.add_argument("name")
     workspace_new.add_argument("--gpu", help="GPU model, such as H100 or RTX 4090")
-    workspace_new.add_argument("--gpu-count", type=int, default=1, help="1, 2, 4 or 8 GPUs on one machine")
+    workspace_new.add_argument("--gpu-count", type=int, help="1, 2, 4 or 8 GPUs on one machine")
     workspace_new.add_argument("--gpu-memory-gb", type=float, help="memory per GPU when the model is not known to the SDK")
     workspace_new.add_argument("--cpus", type=int, help="CPU-only workspace with this many vCPUs")
     workspace_new.add_argument("--memory-gb", type=float, help="system RAM for a CPU-only workspace")

@@ -37,7 +37,16 @@ from pathlib import Path
 from ._freeze import WorkloadFreeze
 from ._outputs import download_path, verified_file, output_destinations
 from ._assets import Asset, Assets, AsyncAssets
+from ._rl_setup import RLSetup
+from ._rl_events import (
+    EpisodeScore,
+    EventValidationError,
+    RawTraceFields,
+    RLEventEmitter,
+)
 from ._rl import (
+    RLEnvironment,
+    RLExample,
     AsyncRL, RL, RLRecipe, RLRunPreview, RLEvent, RLEventRow, RLEventPage,
     RLGradingReceipt, RLGradingResults,
 )
@@ -131,6 +140,13 @@ __all__ = [
     "AsyncRL",
     "RLRecipe",
     "RLRunPreview",
+    "RLSetup",
+    "RLEnvironment",
+    "RLExample",
+    "RLEventEmitter",
+    "EpisodeScore",
+    "RawTraceFields",
+    "EventValidationError",
     "RLEvent",
     "RLEventRow",
     "RLEventPage",
@@ -600,14 +616,15 @@ class _WorkloadState:
 
     @property
     def cost_now_usd(self) -> float:
-        """What this workload has cost as of the last read.
+        """Return the fixed lifetime compute charge when final, otherwise an estimate.
 
-        ``meter.settled_usd`` counts only the current billing period and
-        ``spend_usd`` lags a settling lease, so what has been charged is the
-        larger of the two. ``meter.accruing_usd`` is open leases' money on top.
+        The pending estimate includes unposted usage. Check
+        ``meter.charge_state`` to distinguish pending metered costs from final.
         """
         if self.meter is None:
             return self.spend_usd
+        if self.meter.final_charge_usd is not None:
+            return self.meter.final_charge_usd
         return max(self.spend_usd, self.meter.settled_usd) + self.meter.accruing_usd
 
     @property
@@ -882,6 +899,7 @@ class Client(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "Workload":
@@ -928,6 +946,7 @@ class Client(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )
@@ -1666,6 +1685,7 @@ class AsyncClient(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "AsyncWorkload":
@@ -1694,6 +1714,7 @@ class AsyncClient(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )

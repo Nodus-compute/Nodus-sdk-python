@@ -2740,6 +2740,12 @@
               "object",
               "null"
             ],
+            "propertyNames": {
+              "pattern": "^[a-z0-9_][a-z0-9._-]{0,63}$",
+              "not": {
+                "pattern": "^nodus\\."
+              }
+            },
             "additionalProperties": {
               "oneOf": [
                 {
@@ -2750,7 +2756,7 @@
                 }
               ]
             },
-            "description": "Named output paths or file and database sink declarations. Sinks support CSV, JSONL and flat Parquet files. Credentials stay on the control plane. Outputs in one stage must use distinct connection and table targets."
+            "description": "Named output paths or file and database sink declarations. Output names are 1 to 64 lowercase letters, digits, dots, underscores or hyphens that do not begin with a dot, a hyphen or nodus. and other names are refused at submission. Sinks support CSV, JSONL and flat Parquet files. Credentials stay on the control plane. Outputs in one stage must use distinct connection and table targets."
           }
         },
         "required": [
@@ -3252,6 +3258,7 @@
           "size_gb"
         ],
         "properties": {
+          "kind": {"type": "string", "enum": ["", "workspace", "instance"], "description": "Omission or an empty value preserves a saved workspace. instance creates standalone compute with SSH and local disk only. The kind cannot change after creation. An existing SSH workspace remains a workspace."},
           "name": {
             "type": "string",
             "minLength": 1,
@@ -3273,7 +3280,7 @@
               "jupyter",
               "ssh"
             ],
-            "description": "Development-tool preference retained for compatibility with existing configurations. Direct sessions offer browser VS Code and SSH on the same compute. Use the response connections flags to determine current access. On legacy sessions, omission or an empty value preserves both browser tools, and ssh requires ssh_authorized_key."
+            "description": "Instances require ssh and expose only SSH connections. For saved workspaces, this is the development-tool preference retained for compatibility with existing configurations. Direct workspace sessions offer browser VS Code and SSH on the same compute. Use the response connections flags to determine current access. On legacy sessions, omission or an empty value preserves both browser tools, and ssh requires ssh_authorized_key."
           },
           "repository": {
             "type": "string",
@@ -3318,9 +3325,9 @@
           },
           "size_gb": {
             "type": "number",
-            "minimum": 9.5367431640625e-07,
+            "minimum": 0,
             "maximum": 10,
-            "description": "Project capacity within capabilities.storage_limit_bytes. With storage_policy_version included-10gb-v1 or r2-standard-10gb-account-v1, send exactly 10 for the 10,000,000,000-byte per-workspace capacity. The account policy shares its free allowance across workspaces. Other deployments use GiB and their displayed capacity limit."
+            "description": "Instances require zero and have no saved project storage. For workspaces, positive project capacity within capabilities.storage_limit_bytes. With storage_policy_version included-10gb-v1 or r2-standard-10gb-account-v1, send exactly 10 for the 10,000,000,000-byte per-workspace capacity. The account policy shares its free allowance across workspaces. Other deployments use GiB and their displayed capacity limit."
           },
           "ssh_authorized_key": {
             "type": "string",
@@ -3328,6 +3335,14 @@
             "description": "Optional plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Account SSH keys can also provide access to direct sessions."
           }
         },
+        "allOf": [{
+          "if": {"required": ["kind"], "properties": {"kind": {"const": "instance"}}},
+          "then": {
+            "required": ["editor", "ssh_authorized_key"],
+            "properties": {"editor": {"const": "ssh"}, "ssh_authorized_key": {"minLength": 1}, "size_gb": {"const": 0}, "repository": {"maxLength": 0}, "ref": {"maxLength": 0}}
+          },
+          "else": {"properties": {"size_gb": {"minimum": 9.5367431640625e-07}}}
+        }],
         "if": {"required": ["compute_class"], "properties": {"compute_class": {"const": "vm"}}},
         "then": {
           "required": ["vcpus", "host_memory_gb"],
@@ -3362,6 +3377,7 @@
           "workload_source_limit_bytes"
         ],
         "properties": {
+          "standalone_instances": {"type": "boolean", "description": "Qualified direct compute is available for SSH-only standalone instances. Availability and account funding are rechecked at launch."},
           "runtimes": {
             "type": "array",
             "description": "Qualified workspace images visible to the authenticated team. These select container userspace, not the host kernel. Registry references and other teams' custom images are not exposed.",
@@ -4198,8 +4214,10 @@
               "disabled_no_approved_storage_rate",
               "metered_subject_to_account_limits",
               "included_workspace_storage",
-              "account_workspace_storage"
-            ]
+              "account_workspace_storage",
+              "ephemeral_instance"
+            ],
+            "description": "Storage billing policy for this record. ephemeral_instance has no saved storage or storage charge. Its compute session is billed separately."
           }
         }
       },
@@ -6874,6 +6892,11 @@
             "maximum": 10000,
             "description": "Planned logical task count. The customer command must apply this selection and limit. Recorded attempts may include retries."
           },
+          "example_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "description": "Catalog example the run was started from. Set by the example run endpoint and the console's Run button."
+          },
           "recipe": {
             "anyOf": [
               {
@@ -7502,6 +7525,158 @@
           "evaluation_tasks_max",
           "training_steps_min",
           "training_steps_max"
+        ]
+      },
+      "RLEnvironment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "source_url": {
+            "type": "string"
+          },
+          "code_license": {
+            "type": "string"
+          },
+          "data_license": {
+            "type": "string"
+          },
+          "reward_type": {
+            "type": "string"
+          },
+          "reward_description": {
+            "type": "string"
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "train",
+                "evaluate"
+              ]
+            }
+          },
+          "launch": {
+            "$ref": "#/components/schemas/RLEnvironmentLaunch"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "publisher",
+          "summary",
+          "category",
+          "source_url",
+          "modes"
+        ]
+      },
+      "RLEnvironmentExample": {
+        "type": "object",
+        "description": "One example you can run today. Every number was measured by running it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable identifier. Start this example with POST /v1/rl-environments/{environment}/examples/{id}/runs."
+          },
+          "dataset": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "train",
+              "evaluate"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string",
+            "description": "Shell command. Run it through a shell, as the console does: it chains steps with &&."
+          },
+          "baseline_pass_rate": {
+            "type": "number",
+            "description": "Held-out pass rate before training, as a fraction."
+          },
+          "trained_pass_rate": {
+            "type": "number"
+          },
+          "measured_change_pp": {
+            "type": "number",
+            "description": "Measured change in percentage points after training."
+          },
+          "runtime_minutes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "dataset",
+          "name",
+          "command"
+        ]
+      },
+      "RLEnvironmentLaunch": {
+        "type": "object",
+        "description": "How to run this environment's examples. Absent when nothing is runnable yet.",
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "peak_memory_gb": {
+            "type": "number",
+            "description": "GPU memory the examples were measured with. A run started from an example requests at least this much."
+          },
+          "default_tasks": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "measured_on": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files each example writes and publishes for download."
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RLEnvironmentExample"
+            }
+          }
+        },
+        "required": [
+          "image",
+          "model",
+          "default_tasks",
+          "examples"
         ]
       },
       "RLRecipeDescriptor": {
@@ -13365,11 +13540,11 @@
           },
           "resource_id": {
             "type": "string",
-            "description": "Customer-owned AWS instance identity recorded by the administrator."
+            "description": "Customer-owned AWS EC2 instance ID or Google Compute Engine numeric instance ID recorded by the administrator."
           },
           "region": {
             "type": "string",
-            "description": "AWS region containing the observed instance."
+            "description": "Cloud region containing the observed instance."
           },
           "bound_at": {
             "type": "string",
@@ -13378,6 +13553,10 @@
           "execution_configured": {
             "type": "boolean",
             "description": "The enrolled host has declared the required Nodus execution configuration. Health, cloud authorization and available capacity are checked separately. This is not a physical host attestation."
+          },
+          "zone": {
+            "type": "string",
+            "description": "Google Compute Engine zone containing the instance. Omitted for AWS associations."
           }
         },
         "required": [
@@ -13387,7 +13566,7 @@
           "bound_at",
           "execution_configured"
         ],
-        "description": "An administrator-declared association between an enrolled Nodus host and observed AWS capacity. This association does not attest the physical instance identity or grant execution credentials."
+        "description": "An administrator-declared association between an enrolled Nodus host and observed AWS or Google Cloud capacity. This association does not attest the physical instance identity or grant execution credentials."
       },
       "CloudExecution": {
         "type": "object",
@@ -13441,11 +13620,17 @@
           },
           "resource_id": {
             "type": "string",
-            "pattern": "^i-(?:[a-f0-9]{8}|[a-f0-9]{17})$"
+            "pattern": "^(?:i-(?:[a-f0-9]{8}|[a-f0-9]{17})|[1-9][0-9]{0,19})$",
+            "description": "AWS EC2 instance ID or Google Compute Engine server-generated uint64 instance ID, supplied as a decimal string. IDs and regions must match the connection provider."
           },
           "region": {
             "type": "string",
-            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+            "pattern": "^(?:[a-z]{2}(?:-[a-z]+)+-[0-9]+|[a-z]+(?:-[a-z]+)+[0-9]+)$"
+          },
+          "zone": {
+            "type": "string",
+            "pattern": "^[a-z]+(?:-[a-z]+)+[0-9]+-[a-z]$",
+            "description": "Required for Google Cloud and must belong to the supplied region. Omit for AWS."
           }
         },
         "required": [
@@ -17509,9 +17694,9 @@
     "/v1/research-workspaces": {
       "post": {
         "operationId": "createResearchWorkspace",
-        "summary": "Create a saved research workspace",
+        "summary": "Create a workspace or standalone instance configuration",
         "tags": ["Research workspaces"],
-        "description": "Saves a unique named project and its environment configuration without starting compute. Requires a Bearer API key or console session. Duplicate names are rejected. This operation does not require an Idempotency-Key and is not an idempotent create. Use start to admit a compute session.",
+        "description": "Saves a unique named configuration without starting compute. Omitted kind creates a saved workspace. kind instance creates standalone SSH compute with local disk only and requires capabilities.standalone_instances. Requires a Bearer API key or console session. Workspace duplicate names are rejected. An instance retry with the exact same account, name and configuration returns the existing record. Different configurations still conflict. Use start to admit a compute session.",
         "requestBody": {
           "required": true,
           "content": {
@@ -17537,8 +17722,9 @@
         "operationId": "listResearchWorkspaces",
         "summary": "List saved research workspaces",
         "tags": ["Research workspaces"],
-        "description": "Returns a page of workspaces owned by the authenticated account, newest first. The default and maximum page size are 100. Includes compute-session costs, separate retained-storage costs and tool readiness. Continue with next_cursor until it is empty. Pages reflect current records and do not form a snapshot across concurrent changes.",
+        "description": "Returns a page owned by the authenticated account, newest first. The default kind workspace excludes standalone instances. Use kind instance for standalone instances. Cursors are bound to the selected kind. The default and maximum page size are 100. Includes compute-session costs, separate retained-storage costs and tool readiness. Continue with next_cursor until it is empty. Pages reflect current records and do not form a snapshot across concurrent changes.",
         "parameters": [
+          {"name": "kind", "in": "query", "schema": {"type": "string", "enum": ["workspace", "instance"], "default": "workspace"}, "description": "Select saved workspaces or standalone instances without duplicate rows."},
           {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100}, "description": "Maximum workspaces on this page."},
           {"name": "cursor", "in": "query", "schema": {"type": "string", "maxLength": 1024}, "description": "Opaque next_cursor from this account's previous research workspace page."}
         ],
@@ -19850,6 +20036,142 @@
           },
           "default": {
             "description": "Authentication, rate limits and transient failures apply. The JSON error and message fields describe the failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rl-environments/{environment}/examples/{example}/runs": {
+      "post": {
+        "operationId": "runRLExample",
+        "summary": "Start an RL example in one request",
+        "tags": [
+          "RL"
+        ],
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Environment id from GET /v1/rl-environments, such as gsm8k."
+          },
+          {
+            "name": "example",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Example id from that environment, such as gsm8k-trained."
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required stable key per logical run. Retrying with the same key returns the original run instead of starting another."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "description": "Run name. Defaults to the environment and example names."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitResult"
+                }
+              }
+            },
+            "headers": {
+              "Idempotent-Replayed": {
+                "description": "true on a replay of the original run.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Submits the run the example describes: its command through a shell, its runtime image, a GPU with at least peak_memory_gb, its result files and its RL details with example_id. A retry is matched by environment, example and name under the Idempotency-Key, so it returns the original run even if the catalog changed in between. Omitting name means the example's default name. The same key with a different example or name returns 409. It is an ordinary workload. Follow it with GET /v1/workloads/{id}, its RL events and its outputs. 404 means no runnable example has these ids. Admission, spending checks and errors are those of POST /v1/workloads."
+      }
+    },
+    "/v1/rl-environments": {
+      "get": {
+        "operationId": "listRLEnvironments",
+        "summary": "Discover RL environments and the examples you can run",
+        "tags": [
+          "RL"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "integer"
+                    },
+                    "reviewed_at": {
+                      "type": "string"
+                    },
+                    "environments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RLEnvironment"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "environments"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23125,11 +23447,11 @@
       },
       "put": {
         "operationId": "setCloudExecution",
-        "summary": "Enable or pause execution on existing AWS capacity",
+        "summary": "Enable or pause execution on existing AWS or Google Cloud capacity",
         "tags": [
           "Cloud observation"
         ],
-        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Enabling creates or reuses one dedicated Nodus pool for this AWS connection with free private routing and prediction. It does not create or start cloud instances, install software, enroll a host, grant a host execution credentials or authorize paid overflow. Submit through the existing workload API with placement.pool set to the returned pool_id. Disabling blocks new routing while retaining current workload ownership and cleanup. Retries reuse the same pool. Missing enabled returns 400. Initial execution setup currently supports AWS only.",
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Enabling creates or reuses one dedicated Nodus pool for this AWS or Google Cloud connection with free private routing and prediction. It does not create or start cloud instances, install software, enroll a host, grant a host execution credentials or authorize paid overflow. Submit through the existing workload API with placement.pool set to the returned pool_id. Disabling blocks new routing while retaining current workload ownership and cleanup. Retries reuse the same pool. Missing enabled returns 400. Execution setup supports AWS and Google Cloud.",
         "parameters": [
           {
             "name": "id",
@@ -23143,7 +23465,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Enable or pause execution on existing AWS capacity",
+            "description": "Enable or pause execution on existing AWS or Google Cloud capacity",
             "content": {
               "application/json": {
                 "schema": {
@@ -23178,11 +23500,11 @@
     "/v1/cloud-connections/{id}/execution/hosts": {
       "post": {
         "operationId": "associateCloudExecutionHost",
-        "summary": "Associate an enrolled host with observed AWS capacity",
+        "summary": "Associate an enrolled host with observed AWS or Google Cloud capacity",
         "tags": [
           "Cloud observation"
         ],
-        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Requires execution setup to be enabled and the Nodus host to belong to its dedicated pool. Checks the exact running GPU instance and region against ready account inventory collected within the last two hours. The administrator declares where the host was installed. This does not attest physical host identity or enable execution credentials. Existing associations are immutable, with exact retries returning the same record. Missing hosts return 404. Unavailable inventory and conflicting associations return 409.",
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Requires execution setup to be enabled and the Nodus host to belong to its dedicated pool. Checks the exact running GPU instance and region against ready account or project inventory collected within the last two hours. Google Cloud requires zone and matches its server-generated numeric instance ID in the connected project. The administrator declares where the host was installed. This does not attest physical host identity or enable execution credentials. Existing associations are immutable, with exact retries returning the same record. Missing hosts return 404. Unavailable inventory and conflicting associations return 409.",
         "parameters": [
           {
             "name": "id",
@@ -23196,7 +23518,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Associate an enrolled host with observed AWS capacity",
+            "description": "Associate an enrolled host with observed AWS or Google Cloud capacity",
             "content": {
               "application/json": {
                 "schema": {
