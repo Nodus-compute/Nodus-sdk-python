@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: nodus-compute/Nodus-sdk-python/actions/run@v0.7.2
+      - uses: nodus-compute/Nodus-sdk-python/actions/run@v0.8.0
         id: nodus
         with:
           api-key: ${{ secrets.NODUS_API_KEY }}
@@ -67,7 +67,7 @@ Set a top-level `idempotency_key` in your workload file once for the intended
 run. Preserve that key and file for uncertain retries:
 
 ```sh
-pip install 'nodus-compute==0.7.2'
+pip install 'nodus-compute==0.8.0'
 nodus run nodus.toml --plain
 ```
 
