@@ -23,6 +23,7 @@ import warnings
 from datetime import datetime, timezone
 from typing import Any
 
+from ._rl_setup import rl_payload
 from .types import WorkloadStatus
 from ._connections import _live_refs, _group
 from ._outputs import portable_output_name
@@ -185,6 +186,7 @@ def build_payload(
     stages: list[dict[str, Any]] | None = None,
     framework: str | None = None,
     policy: dict[str, Any] | None = None,
+    rl: Any = None,
     extra: dict[str, Any] | None = None,
     **unknown: Any,
 ) -> dict[str, Any]:
@@ -330,6 +332,8 @@ def build_payload(
             raise ValueError(UNSUPPORTED["expected_runtime_hours"])
         if "requirements" in stage:
             stage["requirements"] = validate_requirements(stage["requirements"])
+    if rl is not None:
+        payload["rl"] = rl_payload(rl)
     _warn_about_the_money(payload)
     return payload
 
