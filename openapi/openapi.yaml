@@ -13365,11 +13365,11 @@
           },
           "resource_id": {
             "type": "string",
-            "description": "Customer-owned AWS instance identity recorded by the administrator."
+            "description": "Customer-owned AWS EC2 instance ID or Google Compute Engine numeric instance ID recorded by the administrator."
           },
           "region": {
             "type": "string",
-            "description": "AWS region containing the observed instance."
+            "description": "Cloud region containing the observed instance."
           },
           "bound_at": {
             "type": "string",
@@ -13378,6 +13378,10 @@
           "execution_configured": {
             "type": "boolean",
             "description": "The enrolled host has declared the required Nodus execution configuration. Health, cloud authorization and available capacity are checked separately. This is not a physical host attestation."
+          },
+          "zone": {
+            "type": "string",
+            "description": "Google Compute Engine zone containing the instance. Omitted for AWS associations."
           }
         },
         "required": [
@@ -13387,7 +13391,7 @@
           "bound_at",
           "execution_configured"
         ],
-        "description": "An administrator-declared association between an enrolled Nodus host and observed AWS capacity. This association does not attest the physical instance identity or grant execution credentials."
+        "description": "An administrator-declared association between an enrolled Nodus host and observed AWS or Google Cloud capacity. This association does not attest the physical instance identity or grant execution credentials."
       },
       "CloudExecution": {
         "type": "object",
@@ -13441,11 +13445,17 @@
           },
           "resource_id": {
             "type": "string",
-            "pattern": "^i-(?:[a-f0-9]{8}|[a-f0-9]{17})$"
+            "pattern": "^(?:i-(?:[a-f0-9]{8}|[a-f0-9]{17})|[1-9][0-9]{0,19})$",
+            "description": "AWS EC2 instance ID or Google Compute Engine server-generated uint64 instance ID, supplied as a decimal string. IDs and regions must match the connection provider."
           },
           "region": {
             "type": "string",
-            "pattern": "^[a-z]{2}(?:-[a-z]+)+-[0-9]+$"
+            "pattern": "^(?:[a-z]{2}(?:-[a-z]+)+-[0-9]+|[a-z]+(?:-[a-z]+)+[0-9]+)$"
+          },
+          "zone": {
+            "type": "string",
+            "pattern": "^[a-z]+(?:-[a-z]+)+[0-9]+-[a-z]$",
+            "description": "Required for Google Cloud and must belong to the supplied region. Omit for AWS."
           }
         },
         "required": [
@@ -23125,11 +23135,11 @@
       },
       "put": {
         "operationId": "setCloudExecution",
-        "summary": "Enable or pause execution on existing AWS capacity",
+        "summary": "Enable or pause execution on existing AWS or Google Cloud capacity",
         "tags": [
           "Cloud observation"
         ],
-        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Enabling creates or reuses one dedicated Nodus pool for this AWS connection with free private routing and prediction. It does not create or start cloud instances, install software, enroll a host, grant a host execution credentials or authorize paid overflow. Submit through the existing workload API with placement.pool set to the returned pool_id. Disabling blocks new routing while retaining current workload ownership and cleanup. Retries reuse the same pool. Missing enabled returns 400. Initial execution setup currently supports AWS only.",
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Enabling creates or reuses one dedicated Nodus pool for this AWS or Google Cloud connection with free private routing and prediction. It does not create or start cloud instances, install software, enroll a host, grant a host execution credentials or authorize paid overflow. Submit through the existing workload API with placement.pool set to the returned pool_id. Disabling blocks new routing while retaining current workload ownership and cleanup. Retries reuse the same pool. Missing enabled returns 400. Execution setup supports AWS and Google Cloud.",
         "parameters": [
           {
             "name": "id",
@@ -23143,7 +23153,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Enable or pause execution on existing AWS capacity",
+            "description": "Enable or pause execution on existing AWS or Google Cloud capacity",
             "content": {
               "application/json": {
                 "schema": {
@@ -23178,11 +23188,11 @@
     "/v1/cloud-connections/{id}/execution/hosts": {
       "post": {
         "operationId": "associateCloudExecutionHost",
-        "summary": "Associate an enrolled host with observed AWS capacity",
+        "summary": "Associate an enrolled host with observed AWS or Google Cloud capacity",
         "tags": [
           "Cloud observation"
         ],
-        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Requires execution setup to be enabled and the Nodus host to belong to its dedicated pool. Checks the exact running GPU instance and region against ready account inventory collected within the last two hours. The administrator declares where the host was installed. This does not attest physical host identity or enable execution credentials. Existing associations are immutable, with exact retries returning the same record. Missing hosts return 404. Unavailable inventory and conflicting associations return 409.",
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Requires execution setup to be enabled and the Nodus host to belong to its dedicated pool. Checks the exact running GPU instance and region against ready account or project inventory collected within the last two hours. Google Cloud requires zone and matches its server-generated numeric instance ID in the connected project. The administrator declares where the host was installed. This does not attest physical host identity or enable execution credentials. Existing associations are immutable, with exact retries returning the same record. Missing hosts return 404. Unavailable inventory and conflicting associations return 409.",
         "parameters": [
           {
             "name": "id",
@@ -23196,7 +23206,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Associate an enrolled host with observed AWS capacity",
+            "description": "Associate an enrolled host with observed AWS or Google Cloud capacity",
             "content": {
               "application/json": {
                 "schema": {
