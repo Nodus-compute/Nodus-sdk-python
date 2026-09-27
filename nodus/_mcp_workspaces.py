@@ -140,7 +140,7 @@ def register_workspace_tools(server, base_url, request, check_origin):
         return json.dumps({"workspace_id": identifier, "path": str(saved), "verified": True})
 
     @server.tool(structured_output=False, annotations=write)
-    async def launch_gpu(idempotency_key: str, gpu: str, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+    async def launch_gpu(idempotency_key: str, gpu: str, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                          disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
                          name: str | None = None, max_hours: int = 4, keep_files: bool = False) -> str:
         """Rent one GPU machine for SSH and return once compute is requested. It stops itself after max_hours.

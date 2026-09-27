@@ -16,7 +16,7 @@
           "gpu": {"type": ["string", "null"]},
           "gpu_count": {"type": "integer"},
           "gpu_memory_gb": {"type": ["number", "null"]},
-          "state": {"type": "string", "enum": ["starting", "ready", "running", "recovering", "stopping", "stopped", "succeeded", "failed", "cancelled"]},
+          "state": {"type": "string", "enum": ["starting", "ready", "running", "recovering", "stopping", "stopped", "paused", "succeeded", "failed", "cancelled"], "description": "paused is frozen training. It holds no compute and lists under history."},
           "status_text": {"type": "string"},
           "created_at": {"type": "string", "format": "date-time"},
           "started_at": {"type": ["string", "null"], "format": "date-time"},
@@ -17747,7 +17747,7 @@
         "operationId": "listCompute",
         "summary": "List instances and training launched by this account",
         "tags": ["Compute"],
-        "description": "Requires a Bearer API key or console session. Returns standalone instances and training workloads newest first. Training that shares a sweep_id is one item whose id is sweep_ followed by the sweep id, with a group summary. Running saved workspaces appear in summary.running.workspace and become items only with include=workspaces or type=workspace. Contains no cost or price fields. Rows without recorded attribution report launched_by.client api.",
+        "description": "Requires a Bearer API key or console session. Returns standalone instances and training workloads newest first. Training that shares a sweep_id is one item whose id is sweep_ followed by the sweep id, with a group summary. Paused training holds no compute and lists under history, not in summary.running.training. A sweep is attributed to the launcher of its first submitted run, for both launched_by and the launched_by filter. Running saved workspaces appear in summary.running.workspace and become items only with include=workspaces or type=workspace. Contains no cost or price fields. Rows without recorded attribution report launched_by.client api.",
         "parameters": [
           {"name": "state", "in": "query", "schema": {"type": "string", "enum": ["running", "history"], "default": "running"}},
           {"name": "type", "in": "query", "schema": {"type": "string", "enum": ["instance", "training", "workspace"]}, "description": "workspace selects running saved workspaces and returns no history."},

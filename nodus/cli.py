@@ -745,15 +745,20 @@ def _cmd_launch(args: argparse.Namespace) -> int:
             machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
                                     ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
                                     keep_files=args.keep_files, wait=False, idempotency_key=key)
-        if args.wait:
+        if not args.wait:
+            print(_safe_line(f"{machine.id} {machine.state}. Connect when ready with: nodus ssh {machine.id}"))
+            return 0
+        try:
             try:
                 machine.wait_until_ready(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
             except WorkspaceNotReadyError as error:
                 raise _timed_out(machine, error) from None
-        else:
-            print(_safe_line(f"{machine.id} {machine.state}. Connect when ready with: nodus ssh {machine.id}"))
-            return 0
-        connection = machine.ssh()
+            connection = machine.ssh()
+        except (NodusError, KeyboardInterrupt):
+            print(_safe_line(f"{machine.name or machine.id} ({machine.id}) was launched and may still be running. "
+                             f"Check it with nodus ssh {machine.id} or release it with nodus stop {machine.id}."),
+                  file=sys.stderr)
+            raise
     print(_safe_line(f"{machine.name} ({machine.id}) is ready. It stops itself after {args.hours} hours."))
     reference = machine.name if machine.name and not machine.name.startswith("-") else machine.id
     print(_safe_line(f"Connect: nodus ssh {shlex.quote(reference)}"))

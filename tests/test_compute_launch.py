@@ -731,3 +731,125 @@ def test_nodus_ssh_accepts_an_integer_port(monkeypatch):
     executed = ssh_cli(monkeypatch, {**SSH, "port": 22022})
     assert cli.main(["ssh", "ws_inst"]) == 0
     assert executed[0][1][2] == "22022"
+
+
+# -- Greptile review: idempotent create, MCP gpu count, CLI wait errors, group pages -----------------------------
+
+
+def test_keep_files_create_sends_the_launch_key():
+    calls = []
+    workspace_view = {**INSTANCE_STOPPED, "size_gb": 10,
+                      "configuration": {k: v for k, v in {**INSTANCE_CONFIGURATION, "size_gb": 10}.items() if k != "kind"}}
+    client = sync_client(launch_handler(calls, itertools.repeat(INSTANCE_READY), create_view=workspace_view))
+    client.launch("H100", ssh_key=KEY, keep_files=True, idempotency_key="keep-1", wait=False)
+    create = next(call for call in calls if call[:2] == ("POST", BASE))
+    assert create[3] == "keep-1" and create[2]["size_gb"] == 10 and "kind" not in create[2]
+
+
+@pytest.mark.parametrize("keep_files", [False, True])
+def test_a_replayed_create_of_a_running_machine_is_not_started_again(keep_files):
+    # createResearchWorkspace answers a repeated key and body with the original record and Idempotent-Replayed.
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path, request.headers.get("Idempotency-Key")))
+        if request.url.path == BASE + "/capabilities":
+            return httpx.Response(200, json=CAPABILITIES)
+        if request.url.path == BASE and request.method == "POST":
+            return httpx.Response(201, json=INSTANCE_READY, headers={"Idempotent-Replayed": "true"})
+        if request.url.path == BASE + "/ws_inst":
+            return httpx.Response(200, json=INSTANCE_READY)
+        pytest.fail("unexpected " + request.method + " " + request.url.path)
+
+    client = sync_client(handler)
+    machine = client.launch("H100", ssh_key=KEY, keep_files=keep_files, idempotency_key="again-1", poll_seconds=0.1)
+    assert machine.id == "ws_inst" and machine.ready
+    assert not any(path.endswith("/start") for _, path, _ in calls)
+    assert [key for method, path, key in calls if method == "POST"] == ["again-1"]
+
+
+def test_async_keep_files_create_sends_the_launch_key():
+    calls = []
+    client = async_client(launch_handler(calls, itertools.repeat(INSTANCE_READY)))
+    asyncio.run(client.launch("H100", ssh_key=KEY, keep_files=True, idempotency_key="keep-2", wait=False))
+    assert next(call for call in calls if call[:2] == ("POST", BASE))[3] == "keep-2"
+
+
+@pytest.mark.asyncio
+async def test_mcp_launch_takes_the_gpu_count_from_the_gpu_spec(api):
+    from mcp.shared.memory import create_connected_server_and_client_session
+    server, requests, responses = api
+    responses.extend([httpx.Response(201, json=INSTANCE_STOPPED), httpx.Response(202, json=INSTANCE_CREATING)])
+    async with create_connected_server_and_client_session(server) as session:
+        result = await session.call_tool("launch_gpu", {"idempotency_key": "k-2", "gpu": "H100:2", "ssh_key": KEY})
+        assert not result.isError, result
+    assert json.loads(requests[0].content)["gpu_count"] == 2
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError("offline"), httpx.ReadTimeout("slow"), "500"])
+def test_cli_launch_wait_failure_names_the_machine_and_how_to_reach_it(monkeypatch, capsys, tmp_path, failure):
+    key = tmp_path / "id.pub"
+    key.write_text(KEY)
+
+    def handler(request):
+        if request.url.path == BASE:
+            return httpx.Response(201, json=INSTANCE_STOPPED)
+        if request.url.path == BASE + "/ws_inst/start":
+            return httpx.Response(202, json=INSTANCE_CREATING)
+        if failure == "500":
+            return httpx.Response(500, json={"error": {"code": "internal", "message": "boom"}})
+        raise failure
+
+    cli_client(monkeypatch, handler)
+    assert cli.main(["launch", "--gpu", "H100", "--ssh-key", str(key), "--poll-seconds", "0.1"]) != 0
+    err = capsys.readouterr().err
+    assert "ws_inst" in err and "nodus stop ws_inst" in err and "nodus ssh ws_inst" in err
+
+
+def test_compute_group_pages_and_iterate_group_follows_the_cursor():
+    member = {**SWEEP_ITEM, "id": "wl_1", "group": None, "resource": {"kind": "workload", "id": "wl_1"}}
+    pages = {None: {"group": SWEEP_ITEM["group"], "items": [member], "next_cursor": "g2"},
+             "g2": {"group": SWEEP_ITEM["group"], "items": [{**member, "id": "wl_2"}], "next_cursor": None}}
+    seen = []
+
+    def handler(request):
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json=pages[request.url.params.get("cursor")])
+
+    client = sync_client(handler)
+    assert client.compute.group("sw_1", limit=1, cursor="g2")["items"][0]["id"] == "wl_2"
+    assert seen[-1] == {"limit": "1", "cursor": "g2"}
+    assert [item["id"] for item in client.compute.iterate_group("sw_1", limit=1)] == ["wl_1", "wl_2"]
+    assert seen[-2:] == [{"limit": "1"}, {"limit": "1", "cursor": "g2"}]
+    with pytest.raises(ValidationError):
+        client.compute.group("sw_1", limit=0)
+
+    async def scenario():
+        aclient = async_client(handler)
+        first = await aclient.compute.group("sw_1", cursor="g2")
+        return first, [item["id"] async for item in aclient.compute.iterate_group("sw_1")]
+
+    first, every = asyncio.run(scenario())
+    assert first["items"][0]["id"] == "wl_2" and every == ["wl_1", "wl_2"]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_a_replayed_keep_files_create_that_is_stopped_is_never_restarted(asynchronous):
+    # A workspace start does not replay by key, so restarting a replayed stopped workspace could rent again.
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        if request.url.path == BASE + "/capabilities":
+            return httpx.Response(200, json=CAPABILITIES)
+        if request.url.path == BASE and request.method == "POST":
+            return httpx.Response(201, json=INSTANCE_STOPPED, headers={"Idempotent-Replayed": "true"})
+        pytest.fail("unexpected " + request.method + " " + request.url.path)
+
+    client = (async_client if asynchronous else sync_client)(handler)
+    with pytest.raises(WorkspaceNotReadyError) as raised:
+        result = client.launch("H100", ssh_key=KEY, keep_files=True, idempotency_key="done-1")
+        if asynchronous:
+            asyncio.run(result)
+    assert "ws_inst" in str(raised.value) and "start" in str(raised.value)
+    assert not any(path.endswith("/start") for _, path in calls)

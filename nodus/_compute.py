@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 from .errors import APIError, NodusError, ValidationError, WorkspaceNotReadyError
-from ._workspaces import (AsyncWorkspace, Workspace, _BASE, _configuration, _fresh_key, _key, _ssh_key, _uncertain,
-                          _wait_bounds)
+from ._workspaces import (AsyncWorkspace, Workspace, _BASE, _configuration, _default_size_gb, _fresh_key, _key,
+                          _ssh_key, _uncertain, _wait_bounds)
 
 _STATES = ("running", "history")
 _TYPES = ("instance", "training", "workspace")
@@ -51,6 +51,25 @@ def _items(response: Any) -> tuple[list[dict[str, Any]], str | None]:
     return items, cursor or None
 
 
+def _group_params(limit: Any, cursor: Any) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValidationError("limit must be a whole number from 1 to 100")
+        params["limit"] = limit
+    if cursor is not None:
+        if not isinstance(cursor, str) or not cursor or len(cursor) > 1024:
+            raise ValidationError("cursor must be a next_cursor returned by Nodus")
+        params["cursor"] = cursor
+    return params
+
+
+def _group_page(response: Any) -> tuple[list[dict[str, Any]], str | None]:
+    if not isinstance(response, dict) or not isinstance(response.get("group"), dict):
+        raise APIError("Compute group response is invalid", body=response)
+    return _items(response)
+
+
 def _group_path(group_id: Any) -> str:
     if not isinstance(group_id, str) or _GROUP_ID.fullmatch(group_id) is None:
         raise ValidationError("Use a group ID returned by client.compute.list()")
@@ -85,9 +104,22 @@ class Compute:
             seen.add(cursor)
             params = {**params, "cursor": cursor}
 
-    def group(self, group_id: str) -> dict[str, Any]:
-        """One training sweep: ``group`` and an item per run."""
-        return self._client._request("GET", _group_path(group_id))
+    def group(self, group_id: str, *, limit: int | None = None, cursor: str | None = None) -> dict[str, Any]:
+        """One page of a training sweep: ``group``, its runs as ``items`` and ``next_cursor``."""
+        return self._client._request("GET", _group_path(group_id), params=_group_params(limit, cursor))
+
+    def iterate_group(self, group_id: str, *, limit: int | None = None) -> Iterator[dict[str, Any]]:
+        """Every run in a training sweep, following ``next_cursor``. ``limit`` sets the page size."""
+        path, params, seen = _group_path(group_id), _group_params(limit, None), set()
+        while True:
+            items, cursor = _group_page(self._client._request("GET", path, params=params))
+            yield from items
+            if cursor is None:
+                return
+            if cursor in seen:
+                raise APIError("Compute group pagination repeated a cursor")
+            seen.add(cursor)
+            params = {**params, "cursor": cursor}
 
 
 class AsyncCompute:
@@ -115,8 +147,21 @@ class AsyncCompute:
             seen.add(cursor)
             params = {**params, "cursor": cursor}
 
-    async def group(self, group_id: str) -> dict[str, Any]:
-        return await self._client._request("GET", _group_path(group_id))
+    async def group(self, group_id: str, *, limit: int | None = None, cursor: str | None = None) -> dict[str, Any]:
+        return await self._client._request("GET", _group_path(group_id), params=_group_params(limit, cursor))
+
+    async def iterate_group(self, group_id: str, *, limit: int | None = None) -> AsyncIterator[dict[str, Any]]:
+        path, params, seen = _group_path(group_id), _group_params(limit, None), set()
+        while True:
+            items, cursor = _group_page(await self._client._request("GET", path, params=params))
+            for item in items:
+                yield item
+            if cursor is None:
+                return
+            if cursor in seen:
+                raise APIError("Compute group pagination repeated a cursor")
+            seen.add(cursor)
+            params = {**params, "cursor": cursor}
 
 
 def default_public_key() -> str:
@@ -145,9 +190,28 @@ def instance_body(gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: floa
     return {"kind": "instance", **body, "size_gb": 0}
 
 
+def workspace_body(gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
+                   environment: str | None, ssh_key: str | None, name: str, max_hours: int) -> dict[str, Any]:
+    """A POST /v1/research-workspaces body for an SSH workspace that keeps project files."""
+    return _configuration(name, gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, environment=environment,
+                          editor="ssh", max_hours=max_hours, size_gb=None, budget_usd=None,
+                          ssh_key=ssh_key or default_public_key(), cpus=None, memory_gb=None, disk_gb=disk_gb,
+                          repository=None, ref=None, runtime_id=None, form_factor=None)
+
+
 def _check_gpu(gpu: Any) -> None:
     if gpu is None:
         raise ValidationError("Choose a gpu such as \"H100\" or \"H100:2\"")
+
+
+def _refuse_replayed_stop(machine: Any, keep_files: bool, headers: dict[str, str]) -> None:
+    """A replayed workspace that is stopped may have run already. Its start does not replay by key."""
+    from . import _was_replayed
+    if keep_files and machine.state == "stopped" and _was_replayed(headers):
+        raise WorkspaceNotReadyError(
+            f"{machine.id} was already created with this idempotency key and is stopped. It may have run and "
+            f"been stopped since, so it is not started again. Start it with nodus workspace start {machine.id} "
+            "or launch with a new key.", body=machine.raw)
 
 
 def _start_uncertain(machine: Any, error: NodusError, key: str) -> NodusError:
@@ -179,17 +243,18 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb
     _wait_bounds(poll_seconds, timeout_seconds)
     key = _key(idempotency_key or _fresh_key())
     if keep_files:
-        machine = client.workspaces.create(
-            name or default_name("workspace", key), gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb,
-            environment=environment, editor="ssh", max_hours=max_hours, ssh_key=ssh_key or default_public_key(),
-            disk_gb=disk_gb)
+        body = workspace_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                              environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key),
+                              max_hours=max_hours)
+        body["size_gb"] = _default_size_gb(client.workspaces.capabilities())
     else:
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
                              environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
                              max_hours=max_hours)
-        machine = Workspace(client)
-        # Create rents nothing. Start is the paid step, and it replays by key.
-        machine._absorb(client._request("POST", _BASE, json=body, idempotency_key=key))
+    machine, answered = Workspace(client), {}
+    # The server replays a repeated key and body as the original record. Older servers match an instance by name.
+    machine._absorb(client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
+    _refuse_replayed_stop(machine, keep_files, answered)
     if machine.state == "stopped":
         try:
             machine.start(idempotency_key=key)
@@ -211,17 +276,17 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, g
     _wait_bounds(poll_seconds, timeout_seconds)
     key = _key(idempotency_key or _fresh_key())
     if keep_files:
-        machine = await client.workspaces.create(
-            name or default_name("workspace", key), gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb,
-            environment=environment, editor="ssh", max_hours=max_hours, ssh_key=ssh_key or default_public_key(),
-            disk_gb=disk_gb)
+        body = workspace_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                              environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key),
+                              max_hours=max_hours)
+        body["size_gb"] = _default_size_gb(await client.workspaces.capabilities())
     else:
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
                              environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
                              max_hours=max_hours)
-        machine = AsyncWorkspace(client)
-        # Create rents nothing. Start is the paid step, and it replays by key.
-        machine._absorb(await client._request("POST", _BASE, json=body, idempotency_key=key))
+    machine, answered = AsyncWorkspace(client), {}
+    machine._absorb(await client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
+    _refuse_replayed_stop(machine, keep_files, answered)
     if machine.state == "stopped":
         try:
             await machine.start(idempotency_key=key)
