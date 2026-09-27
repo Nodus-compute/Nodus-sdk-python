@@ -21521,7 +21521,19 @@
             "in": "query",
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Pass next_after from the preceding page with the same order. With order=newest, the cursor must identify a retained run owned by this agent and account."
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest"
+              ]
+            },
+            "description": "Use newest for descending submission time with descending run IDs breaking ties. Omitting order preserves ascending run ID pagination."
           },
           {
             "name": "limit",
