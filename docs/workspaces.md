@@ -17,11 +17,15 @@ with nodus.Client() as client:
 ```
 
 `create` saves the configuration and rents nothing. `max_hours` is required
-because the session stops itself after that many hours. The GPU model alone is
-a complete request for models in the console's GPU catalog, such as `H100`,
-`A100`, `H200`, `B200`, `L40S`, `L4`, `A10`, `RTX A6000`, `RTX 3090`,
-`RTX 4090` and `RTX 5090`: the SDK sends the memory per GPU the console
-publishes for that model. Pass `gpu_memory_gb` for other models. Project
+because the session stops itself after that many hours. Name the GPU the way
+you would elsewhere: `gpu="H100"`, `gpu="A100-40GB"`, `gpu="A100-80GB:4"` or
+`gpu="H100:2"`, where the suffix names the memory per GPU and the count on one
+machine. A bare model name is complete for models in the console's GPU
+catalog, such as `H100`, `A100`, `H200`, `B200`, `L40S`, `L4`, `A10`,
+`RTX A6000`, `RTX 3090`, `RTX 4090` and `RTX 5090`: the SDK sends the memory
+per GPU the console publishes for that model. Other models take the memory in
+the name, as in `V100-16GB`, or `gpu_memory_gb`. `gpu_count` and
+`gpu_memory_gb` remain available as keyword arguments. Project
 storage defaults to the deployment limit reported by
 `client.workspaces.capabilities()`, or pass `size_gb`. Sessions draw on account
 funding without a per-session cap unless you pass `budget_usd`. Use

@@ -546,7 +546,7 @@ def test_workspace_meter_preserves_pending_then_fixed_compute_charge(async_mode)
                       "platform_fee_accruing_usd": 0, "accruing_rate_usd_hour": 0}
     meters = [
         {**terminal_meter, "charge_state": "estimated"},
-        {**terminal_meter, "total_now_usd": 1.25, "compute_settled_usd": 1.25, "settled_usd": 1.25,
+        {**terminal_meter, "total_now_usd": 0.20, "compute_settled_usd": 0.20, "settled_usd": 0.20,
          "charge_state": "final", "final_charge_usd": 1.25},
         METER,
         None,
@@ -564,5 +564,91 @@ def test_workspace_meter_preserves_pending_then_fixed_compute_charge(async_mode)
             assert ws.charge_state == "" and ws.final_charge_usd is None and ws.cost_usd == 0.5
             await call(ws.refresh())
             assert ws.charge_state == "" and ws.final_charge_usd is None and ws.cost_usd is None
+
+    run(async_mode, scenario)
+
+
+@pytest.mark.parametrize("gpu,expected", [
+    ("H100", {"gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}),
+    ("H100:2", {"gpu": "H100", "gpu_count": 2, "gpu_memory_gb": 80}),
+    ("A100-40GB", {"gpu": "A100", "gpu_count": 1, "gpu_memory_gb": 40}),
+    ("A100-80GB:4", {"gpu": "A100", "gpu_count": 4, "gpu_memory_gb": 80}),
+    ("a100 40gb", {"gpu": "a100", "gpu_count": 1, "gpu_memory_gb": 40}),
+    ("V100-16GB", {"gpu": "V100", "gpu_count": 1, "gpu_memory_gb": 16}),
+    ("RTX 4090:8", {"gpu": "RTX 4090", "gpu_count": 8, "gpu_memory_gb": 24}),
+])
+def test_gpu_shorthand_carries_memory_and_count_like_other_clouds(gpu, expected):
+    server = Server({("POST", BASE): (201, STOPPED)})
+    with sync_client(server) as client:
+        client.workspaces.create("lab", gpu=gpu, max_hours=1, size_gb=1)
+    body = server.requests[-1][2]
+    assert {field: body[field] for field in expected} == expected
+
+
+def test_gpu_shorthand_conflicts_and_unknown_models_are_refused_before_network():
+    def handler(_):
+        pytest.fail("a refused configuration must not reach the API")
+    with sync_client(handler) as client:
+        with pytest.raises(ValidationError, match="gpu_count"):
+            client.workspaces.create("lab", gpu="H100:2", gpu_count=4, max_hours=1, size_gb=1)
+        with pytest.raises(ValidationError, match="gpu_memory_gb"):
+            client.workspaces.create("lab", gpu="A100-40GB", gpu_memory_gb=80, max_hours=1, size_gb=1)
+        with pytest.raises(ValidationError, match="gpu_memory_gb"):
+            client.workspaces.create("lab", gpu="V100", max_hours=1, size_gb=1)
+        with pytest.raises(ValidationError, match="gpu_count"):
+            client.workspaces.create("lab", gpu="H100:3", max_hours=1, size_gb=1)
+
+
+def test_run_accepts_the_same_gpu_shorthand():
+    server = Server({("POST", BASE + "/ws_kernel/workloads"): (202, RECEIPT)})
+    with sync_client(server) as client:
+        Workspace(client, "ws_kernel").run("python x.py", budget_usd=1, gpu="A100-80GB:2")
+    assert server.requests[-1][2] == {"command": "python x.py", "budget_usd": 1, "gpu": "A100", "gpu_count": 2,
+                                      "gpu_memory_gb": 80}
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("gpu_count", [1, True, 1.0, 8.0], ids=["conflicting-one", "boolean", "float-one", "float-eight"])
+def test_run_gpu_shorthand_rejects_explicit_count_before_network(async_mode, gpu_count):
+    def handler(_):
+        pytest.fail("conflicting or invalid explicit count must not submit a paid run")
+
+    async def scenario():
+        client = async_client(handler) if async_mode else sync_client(handler)
+        async with (client if async_mode else _sync_ctx(client)):
+            workspace = AsyncWorkspace(client, "ws_kernel") if async_mode else Workspace(client, "ws_kernel")
+            with pytest.raises(ValidationError, match="gpu_count"):
+                await call(workspace.run("python train.py", budget_usd=1, gpu="H100:8", gpu_count=gpu_count))
+
+    run(async_mode, scenario)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("gpu_count", [True, 1.0, 8.0], ids=["boolean", "float-one", "float-eight"])
+def test_create_gpu_shorthand_validates_explicit_count_before_network(async_mode, gpu_count):
+    def handler(_):
+        pytest.fail("invalid explicit count must not save a workspace configuration")
+
+    async def scenario():
+        client = async_client(handler) if async_mode else sync_client(handler)
+        async with (client if async_mode else _sync_ctx(client)):
+            with pytest.raises(ValidationError, match="gpu_count"):
+                await call(client.workspaces.create("lab", gpu="H100:8", gpu_count=gpu_count, max_hours=1, size_gb=1))
+
+    run(async_mode, scenario)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_workspace_final_charge_overflow_is_unavailable(async_mode):
+    view = {**STOPPED, "meter": {"charge_state": "final", "final_charge_usd": 10**400, "total_now_usd": 0.20}}
+    server = Server({("GET", BASE + "/ws_kernel"): (200, view)})
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            workspace = await call(client.workspaces.get("ws_kernel"))
+            assert workspace.charge_state == "final"
+            assert workspace.final_charge_usd is None
+            assert workspace.cost_usd is None
 
     run(async_mode, scenario)
