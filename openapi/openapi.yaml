@@ -2740,6 +2740,12 @@
               "object",
               "null"
             ],
+            "propertyNames": {
+              "pattern": "^[a-z0-9_][a-z0-9._-]{0,63}$",
+              "not": {
+                "pattern": "^nodus\\."
+              }
+            },
             "additionalProperties": {
               "oneOf": [
                 {
@@ -2750,7 +2756,7 @@
                 }
               ]
             },
-            "description": "Named output paths or file and database sink declarations. Sinks support CSV, JSONL and flat Parquet files. Credentials stay on the control plane. Outputs in one stage must use distinct connection and table targets."
+            "description": "Named output paths or file and database sink declarations. Output names are 1 to 64 lowercase letters, digits, dots, underscores or hyphens that do not begin with a dot, a hyphen or nodus. and other names are refused at submission. Sinks support CSV, JSONL and flat Parquet files. Credentials stay on the control plane. Outputs in one stage must use distinct connection and table targets."
           }
         },
         "required": [
@@ -6886,6 +6892,11 @@
             "maximum": 10000,
             "description": "Planned logical task count. The customer command must apply this selection and limit. Recorded attempts may include retries."
           },
+          "example_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "description": "Catalog example the run was started from. Set by the example run endpoint and the console's Run button."
+          },
           "recipe": {
             "anyOf": [
               {
@@ -7514,6 +7525,158 @@
           "evaluation_tasks_max",
           "training_steps_min",
           "training_steps_max"
+        ]
+      },
+      "RLEnvironment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "source_url": {
+            "type": "string"
+          },
+          "code_license": {
+            "type": "string"
+          },
+          "data_license": {
+            "type": "string"
+          },
+          "reward_type": {
+            "type": "string"
+          },
+          "reward_description": {
+            "type": "string"
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "train",
+                "evaluate"
+              ]
+            }
+          },
+          "launch": {
+            "$ref": "#/components/schemas/RLEnvironmentLaunch"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "publisher",
+          "summary",
+          "category",
+          "source_url",
+          "modes"
+        ]
+      },
+      "RLEnvironmentExample": {
+        "type": "object",
+        "description": "One example you can run today. Every number was measured by running it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable identifier. Start this example with POST /v1/rl-environments/{environment}/examples/{id}/runs."
+          },
+          "dataset": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "train",
+              "evaluate"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string",
+            "description": "Shell command. Run it through a shell, as the console does: it chains steps with &&."
+          },
+          "baseline_pass_rate": {
+            "type": "number",
+            "description": "Held-out pass rate before training, as a fraction."
+          },
+          "trained_pass_rate": {
+            "type": "number"
+          },
+          "measured_change_pp": {
+            "type": "number",
+            "description": "Measured change in percentage points after training."
+          },
+          "runtime_minutes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "dataset",
+          "name",
+          "command"
+        ]
+      },
+      "RLEnvironmentLaunch": {
+        "type": "object",
+        "description": "How to run this environment's examples. Absent when nothing is runnable yet.",
+        "properties": {
+          "image": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "peak_memory_gb": {
+            "type": "number",
+            "description": "GPU memory the examples were measured with. A run started from an example requests at least this much."
+          },
+          "default_tasks": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "measured_on": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files each example writes and publishes for download."
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RLEnvironmentExample"
+            }
+          }
+        },
+        "required": [
+          "image",
+          "model",
+          "default_tasks",
+          "examples"
         ]
       },
       "RLRecipeDescriptor": {
@@ -19873,6 +20036,142 @@
           },
           "default": {
             "description": "Authentication, rate limits and transient failures apply. The JSON error and message fields describe the failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rl-environments/{environment}/examples/{example}/runs": {
+      "post": {
+        "operationId": "runRLExample",
+        "summary": "Start an RL example in one request",
+        "tags": [
+          "RL"
+        ],
+        "parameters": [
+          {
+            "name": "environment",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Environment id from GET /v1/rl-environments, such as gsm8k."
+          },
+          {
+            "name": "example",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Example id from that environment, such as gsm8k-trained."
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Required stable key per logical run. Retrying with the same key returns the original run instead of starting another."
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "description": "Run name. Defaults to the environment and example names."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitResult"
+                }
+              }
+            },
+            "headers": {
+              "Idempotent-Replayed": {
+                "description": "true on a replay of the original run.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Submits the run the example describes: its command through a shell, its runtime image, a GPU with at least peak_memory_gb, its result files and its RL details with example_id. A retry is matched by environment, example and name under the Idempotency-Key, so it returns the original run even if the catalog changed in between. Omitting name means the example's default name. The same key with a different example or name returns 409. It is an ordinary workload. Follow it with GET /v1/workloads/{id}, its RL events and its outputs. 404 means no runnable example has these ids. Admission, spending checks and errors are those of POST /v1/workloads."
+      }
+    },
+    "/v1/rl-environments": {
+      "get": {
+        "operationId": "listRLEnvironments",
+        "summary": "Discover RL environments and the examples you can run",
+        "tags": [
+          "RL"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "integer"
+                    },
+                    "reviewed_at": {
+                      "type": "string"
+                    },
+                    "environments": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/RLEnvironment"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "environments"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
             "content": {
               "application/json": {
                 "schema": {

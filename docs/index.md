@@ -38,6 +38,7 @@ waiting. An accepted workload is not necessarily a completed workload.
 - [Attach code and datasets](guides/assets.md)
 - [Manage external data connections](guides/connections.md)
 - [Train or fine-tune a model](guides/gpu-workloads.md)
+- [Run reinforcement learning (RL)](guides/rl-runs.md), from a one-call example or your own code
 - [Run from a workload file](getting-started/workload-files.md)
 - [Run an agent sandbox](guides/agent-sandboxes.md)
 - [Open a GPU workspace in VS Code, JupyterLab or SSH](workspaces.md)
