@@ -129,8 +129,9 @@ class ValidationError(NodusError):
 class WorkspaceNotReadyError(NodusError):
     """The workspace cannot serve this request in its current state.
 
-    Compute is still starting, still saving, already stopped, or has no SSH
-    key. Read the message for the state and what changes it.
+    Compute is still starting or has not started within the wait, is still
+    saving or verifying an upload, has stopped or failed, or has no SSH key.
+    Read the message for the state and what changes it.
     """
 
 

@@ -18,11 +18,14 @@ with nodus.Client() as client:
 
 `create` saves the configuration and rents nothing. `max_hours` is required
 because the session stops itself after that many hours. The GPU model alone is
-a complete request for hardware the SDK knows, such as `H100`, `A100`,
-`RTX 4090`, `L40S` and `MI300X`. Pass `gpu_memory_gb` for other models. Project
+a complete request for models in the console's GPU catalog, such as `H100`,
+`A100`, `H200`, `B200`, `L40S`, `L4`, `A10`, `RTX A6000`, `RTX 3090`,
+`RTX 4090` and `RTX 5090`: the SDK sends the memory per GPU the console
+publishes for that model. Pass `gpu_memory_gb` for other models. Project
 storage defaults to the deployment limit reported by
-`client.workspaces.capabilities()`, or pass `size_gb`. Use `cpus=4, memory_gb=16`
-instead of `gpu` for a CPU-only workspace.
+`client.workspaces.capabilities()`, or pass `size_gb`. Sessions draw on account
+funding without a per-session cap unless you pass `budget_usd`. Use
+`cpus=4, memory_gb=16` instead of `gpu` for a CPU-only workspace.
 
 `start` returns as soon as compute is requested. `wait_until_ready` polls
 until the configured tool accepts connections and raises
@@ -42,8 +45,9 @@ The workspace keeps running. Read the job with `job.wait()` and
 `client.logs(job.id)`, and list earlier jobs with `ws.workloads()`.
 
 `stop` saves project files and releases compute. Stopping an already stopped
-workspace is not an error. `wait_until_stopped` polls until the save has
-finished. `client.workspaces.get()` accepts an ID or a unique name, and
+workspace is not an error. `wait_until_stopped` polls until compute has
+stopped. Read `ws.status_message` afterwards, which states whether the final
+save succeeded. `client.workspaces.get()` accepts an ID or a unique name, and
 `client.workspaces.list()` returns every workspace as a handle.
 
 `ws.configure(gpu_count=2)` changes the saved configuration for the next
@@ -136,4 +140,4 @@ a boolean indicating that cleanup remains pending. Expiration keeps the volume
 name available. Periodic saves preserve the latest useful archive. Files must
 fit the configured capacity. Storage billing is disabled unless the deployment
 has a configured price. `client.workspaces.create(name, size_gb=...)` without
-a `gpu` still creates a volume and warns, so older scripts keep working.
+a `gpu` creates a volume and raises a `FutureWarning`.

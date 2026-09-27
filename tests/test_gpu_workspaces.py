@@ -30,7 +30,11 @@ STOPPED = {
 SESSION = {"id": "sb_session", "state": "ready", "created_at": "2026-09-27T10:00:00Z"}
 CREATING = {**STOPPED, "state": "creating", "session": {**SESSION, "state": "creating"},
             "status_message": "Finding compute and starting your tools."}
-RUNNING = {**STOPPED, "state": "running", "session": SESSION, "meter": {"cost_usd": 0.5},
+METER = {"compute_settled_usd": 0, "platform_fee_settled_usd": 0, "subscription_settled_usd": 0,
+         "storage_settled_usd": 0, "model_settled_usd": 0, "compute_accruing_usd": 0.4,
+         "platform_fee_accruing_usd": 0.1, "settled_usd": 0, "accruing_usd": 0.5,
+         "accruing_rate_usd_hour": 2.5, "total_now_usd": 0.5, "as_of": "2026-09-27T10:12:00Z"}
+RUNNING = {**STOPPED, "state": "running", "session": SESSION, "meter": METER,
            "connections": {"editor": True, "notebook": True, "ssh": True},
            "status_message": "Compute is running. Closing this page does not stop it."}
 STOPPING = {**RUNNING, "state": "stopping", "connections": {"editor": False, "notebook": False, "ssh": False},
@@ -100,7 +104,7 @@ def test_create_start_wait_connect_run_and_stop(async_mode):
         ("GET", BASE + "/capabilities"): (200, CAPABILITIES),
         ("POST", BASE): (201, STOPPED),
         ("POST", BASE + "/ws_kernel/start"): (202, CREATING),
-        ("GET", BASE + "/ws_kernel"): [(200, CREATING), (200, RUNNING), (200, RUNNING)],
+        ("GET", BASE + "/ws_kernel"): [(200, CREATING), (200, RUNNING), (200, RUNNING), (200, RUNNING)],
         ("POST", BASE + "/ws_kernel/connections"): lambda r: (200, SSH if json.loads(r.content)["tool"] == "ssh"
                                                              else {"url": "https://ws-abc-8080.nodus.run/?tkn=t"}),
         ("POST", BASE + "/ws_kernel/workloads"): (202, RECEIPT),
@@ -135,14 +139,14 @@ def test_create_start_wait_connect_run_and_stop(async_mode):
         ("GET", BASE + "/capabilities"), ("POST", BASE), ("POST", BASE + "/ws_kernel/start"),
         ("GET", BASE + "/ws_kernel"), ("GET", BASE + "/ws_kernel"), ("POST", BASE + "/ws_kernel/connections"),
         ("POST", BASE + "/ws_kernel/connections"), ("POST", BASE + "/ws_kernel/workloads"),
-        ("POST", BASE + "/ws_kernel/stop"),
+        ("GET", BASE + "/ws_kernel"), ("POST", BASE + "/ws_kernel/stop"),
     ]
     created = server.requests[1][2]
     assert created == {"name": "kernel-lab", "environment": "pytorch-cuda", "editor": "vscode", "gpu": "H100",
                        "gpu_count": 1, "gpu_memory_gb": 80, "max_hours": 4, "size_gb": 10}
-    start_headers, stop_headers = server.requests[2][3], server.requests[8][3]
+    start_headers, stop_headers = server.requests[2][3], server.requests[9][3]
     assert start_headers["idempotency-key"] == "session-1" and stop_headers["idempotency-key"] == "stop-1"
-    assert server.requests[8][2] == {"session_id": "sb_session"}
+    assert server.requests[9][2] == {"session_id": "sb_session"}
     assert server.requests[5][2] == {"tool": "editor"} and server.requests[6][2] == {"tool": "ssh"}
     submitted = server.requests[7]
     assert submitted[2] == {"command": "python train.py", "budget_usd": 5}
@@ -162,15 +166,94 @@ class _sync_ctx:
         return self.client.__exit__(*exc)
 
 
-def test_create_defaults_come_from_the_server_and_the_hardware_table():
+def test_create_defaults_come_from_the_server_and_the_console_catalog():
     server = Server({("GET", BASE + "/capabilities"): (200, {**CAPABILITIES, "storage_limit_bytes": 20 * 1024 ** 3,
                                                                 "storage_policy_version": "included-20gib-v0"}),
                      ("POST", BASE): (201, STOPPED)})
     with sync_client(server) as client:
-        client.workspaces.create("rocm-lab", gpu="MI300X", gpu_count=2, editor="jupyter", max_hours=1)
-    body = server.requests[-1][2]
+        client.workspaces.create("rocm-lab", gpu="MI300X", gpu_memory_gb=192, gpu_count=2, editor="jupyter", max_hours=1)
+        client.workspaces.create("ada-lab", gpu="nvidia l40s", max_hours=1, size_gb=5)
+    body = server.requests[1][2]
     assert body["environment"] == "pytorch-rocm" and body["gpu_memory_gb"] == 192 and body["size_gb"] == 20
     assert body["gpu_count"] == 2 and body["editor"] == "jupyter"
+    assert server.requests[-1][2]["gpu_memory_gb"] == 48 and server.requests[-1][2]["environment"] == "pytorch-cuda"
+
+
+def test_private_keys_and_mixed_cpu_gpu_requests_never_leave_the_process():
+    def handler(_):
+        pytest.fail("a refused configuration must not reach the API")
+    private = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n"
+    with sync_client(handler) as client:
+        with pytest.raises(ValidationError, match="public key"):
+            client.workspaces.create("lab", gpu="H100", max_hours=1, size_gb=1, ssh_key=private)
+        with pytest.raises(ValidationError, match="public key"):
+            Workspace(client, "ws_kernel")._configure_body({"ssh_authorized_key": private})
+        with pytest.raises(ValidationError, match="cpus and memory_gb"):
+            client.workspaces.create("lab", cpus=4, memory_gb=8, gpu_count=8, max_hours=1, size_gb=1)
+        with pytest.raises(ValidationError, match="form_factor"):
+            client.workspaces.create("lab", gpu="H100", form_factor="mezzanine", max_hours=1, size_gb=1)
+
+
+def test_uncertain_paid_requests_carry_their_key_for_the_retry():
+    server = Server({("POST", BASE + "/ws_kernel/workloads"): [(504, {"error": "gateway_timeout"}), (202, {"status": "queued"})],
+                     ("GET", BASE + "/ws_kernel"): (200, RUNNING),
+                     ("POST", BASE + "/ws_kernel/stop"): (502, {"error": "bad_gateway"})})
+    with sync_client(server) as client:
+        ws = Workspace(client, "ws_kernel")
+        for call in (lambda: ws.run("python x.py", budget_usd=1), lambda: ws.run("python x.py", budget_usd=1),
+                     lambda: ws.stop()):
+            with pytest.raises(nodus.NodusError) as raised:
+                call()
+            key = raised.value.body["idempotency_key"]
+            assert key.startswith("nodus-") and key in str(raised.value)
+            sent = server.requests[-1][3]["idempotency-key"]
+            assert sent == key
+
+
+def test_stop_always_reads_the_current_session_before_acting():
+    newer = {**RUNNING, "session": {**SESSION, "id": "sb_newer"}}
+    server = Server({("GET", BASE + "/ws_kernel"): [(200, RUNNING), (200, newer)],
+                     ("POST", BASE + "/ws_kernel/stop"): (202, STOPPING)})
+    with sync_client(server) as client:
+        ws = client.workspaces.get("ws_kernel")
+        assert ws.session_id == "sb_session"
+        ws.stop(idempotency_key="stop-9")
+    assert server.requests[-1][2] == {"session_id": "sb_newer"}
+
+
+def test_configure_applies_the_creation_rules_to_each_change():
+    server = Server({("GET", BASE + "/ws_kernel"): (200, STOPPED)})
+    with sync_client(server) as client:
+        ws = client.workspaces.get("ws_kernel")
+        for changes in ({"budget_usd": None}, {"budget_usd": -5}, {"budget_usd": "lots"}, {"gpu_count": 3},
+                        {"max_hours": 0}, {"editor": "emacs"}, {"ssh_authorized_key": ""}):
+            with pytest.raises(ValidationError):
+                ws.configure(**changes)
+    assert [m for m, *_ in server.requests] == ["GET"]
+
+
+def test_get_by_name_accepts_dots_and_wait_loops_refuse_unbounded_arguments():
+    dotted = {**STOPPED, "id": "ws_dot", "name": "kernel.lab"}
+    server = Server({("GET", BASE): (200, {"workspaces": [dotted], "next_cursor": ""}),
+                     ("GET", BASE + "/ws_dot"): (200, dotted)})
+    with sync_client(server) as client:
+        assert client.workspaces.get("kernel.lab").id == "ws_dot"
+        ws = client.workspaces.get("ws_dot")
+        for kwargs in ({"poll_seconds": -1}, {"timeout_seconds": float("nan")}, {"poll_seconds": float("inf")}):
+            with pytest.raises(ValidationError):
+                ws.wait_until_ready(**kwargs)
+            with pytest.raises(ValidationError):
+                ws.wait_until_stopped(**kwargs)
+    assert [(m, p) for m, p, *_ in server.requests] == [("GET", BASE), ("GET", BASE + "/ws_dot")]
+
+
+def test_wait_until_stopped_reports_a_failed_session_instead_of_waiting():
+    failed = {**STOPPED, "state": "failed", "status_message": "The compute session could not continue."}
+    server = Server({("GET", BASE + "/ws_kernel"): (200, failed)})
+    with sync_client(server) as client:
+        with pytest.raises(WorkspaceNotReadyError, match="could not continue"):
+            Workspace(client, "ws_kernel").wait_until_stopped(poll_seconds=0, timeout_seconds=5)
+    assert len(server.requests) == 1
 
 
 def test_create_refuses_to_guess_memory_for_unknown_hardware_and_money():
@@ -394,11 +477,14 @@ def test_schedule_and_sessions_use_their_routes():
                      ("GET", BASE + "/storage"): (200, {"retained_bytes": 5})})
     with sync_client(server) as client:
         ws = Workspace(client, "ws_kernel")
-        assert ws.schedule(ready_by="2026-09-28T09:00:00Z", stop_at="2026-09-28T17:00:00Z") == plan
+        assert ws.schedule(ready_by="2026-09-28T09:00:00Z", stop_at="2026-09-28T17:00:00Z",
+                           idempotency_key="plan-1") == plan
         assert ws.unschedule().state == "stopped"
         assert ws.sessions() == [SESSION]
         assert client.workspaces.storage() == {"retained_bytes": 5}
     assert server.requests[0][2] == {"ready_by": "2026-09-28T09:00:00Z", "stop_at": "2026-09-28T17:00:00Z"}
+    assert server.requests[0][3]["idempotency-key"] == "plan-1"
+    assert server.requests[1][3]["idempotency-key"].startswith("nodus-")
 
 
 def test_invalid_view_is_an_api_error_not_a_silent_handle():
@@ -415,5 +501,5 @@ def test_legacy_volume_create_moves_to_client_volumes_with_a_warning():
     with sync_client(server) as client:
         assert client.volumes.create("repo", size_gb=0.1) == record
         assert client.volumes.list() == [record]
-        with pytest.warns(DeprecationWarning, match="client.volumes"):
+        with pytest.warns(FutureWarning, match="client.volumes"):
             assert client.workspaces.create("repo", size_gb=0.1) == record

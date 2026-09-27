@@ -11,7 +11,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-from .errors import APIError, NotFoundError, ValidationError, WorkspaceNotReadyError
+from .errors import APIError, NodusError, NotFoundError, ValidationError, WorkspaceNotReadyError
 
 
 _RESEARCH_WORKSPACE_ID = re.compile(r"[A-Za-z0-9_-]{1,256}", re.ASCII)
@@ -26,13 +26,13 @@ _CONFIGURATION_FIELDS = {
     "gpu_form_factor", "compute_class", "vcpus", "host_memory_gb", "disk_gb", "budget_usd", "max_hours", "size_gb",
     "ssh_authorized_key",
 }
-# Memory per GPU as the hardware ships it, so a model name alone is a complete request.
+# The console's GPU catalog: memory per model as it publishes it, so the same name means the same request.
 _GPU_MEMORY_GB = {
-    "A100": 80, "H100": 80, "H200": 141, "B200": 180, "B300": 288, "A40": 48, "A10": 24, "A10G": 24, "L4": 24,
-    "L40": 48, "L40S": 48, "T4": 16, "V100": 16, "RTXA6000": 48, "RTX3090": 24, "RTX4090": 24, "RTX5090": 32,
-    "MI300X": 192, "MI350X": 288,
+    "H100": 80, "A100": 80, "H200": 141, "B200": 180, "L40S": 48, "L4": 24, "A10": 24, "RTXA6000": 48,
+    "RTX3090": 24, "RTX4090": 24, "RTX5090": 32,
 }
 _AMD = {"MI300X", "MI350X"}
+_PRIVATE_KEY = "PRIVATE KEY"
 
 
 def _path(workspace_id: str) -> str:
@@ -59,11 +59,60 @@ def _compact_gpu(gpu: str) -> str:
 
 
 def _finite(value: Any, field: str, *, minimum: float, allow_equal: bool = False) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
-            or (value < minimum if allow_equal else value <= minimum):
-        bound = "at least" if allow_equal else "greater than"
+    bound = "at least" if allow_equal else "greater than"
+    try:
+        finite = not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite or (value < minimum if allow_equal else value <= minimum):
         raise ValidationError(f"{field} must be a finite number {bound} {minimum}")
     return value
+
+
+def _wait_bounds(poll_seconds: Any, timeout_seconds: Any) -> None:
+    _finite(poll_seconds, "poll_seconds", minimum=0, allow_equal=True)
+    _finite(timeout_seconds, "timeout_seconds", minimum=0, allow_equal=True)
+
+
+def _ssh_key(value: Any) -> str:
+    text = _text(value, "ssh_key", limit=8192)
+    if _PRIVATE_KEY in text.upper():
+        raise ValidationError("ssh_key must be a public key. A private key is never sent to Nodus")
+    return text
+
+
+def _choice(value: Any, field: str, choices: tuple[str, ...]) -> str:
+    if not isinstance(value, str) or value not in choices:
+        raise ValidationError(f"{field} must be one of {', '.join(choices)}")
+    return value
+
+
+def _validated_change(field: str, value: Any) -> Any:
+    """The same rules create applies, for one configuration field changed later."""
+    if value is None:
+        raise ValidationError(f"{field} cannot be cleared. Set a value or leave the field unchanged")
+    if field == "budget_usd":
+        return _finite(value, field, minimum=0, allow_equal=True)
+    if field in ("gpu_memory_gb", "size_gb", "host_memory_gb"):
+        return _finite(value, field, minimum=0)
+    if field == "gpu_count":
+        return _count(value, field, _GPU_COUNTS)
+    if field == "vcpus":
+        return _count(value, field, _CPU_COUNTS)
+    if field in ("max_hours", "disk_gb"):
+        low, high = (1, 168) if field == "max_hours" else (80, 2048)
+        if isinstance(value, bool) or type(value) is not int or not low <= value <= high:
+            raise ValidationError(f"{field} must be a whole number from {low} to {high}")
+        return value
+    if field == "editor":
+        return _choice(value, field, ("vscode", "jupyter", "ssh"))
+    if field == "compute_class":
+        return _choice(value, field, ("accelerator", "vm"))
+    if field == "gpu_form_factor":
+        return _choice(value, field, ("pcie", "sxm", "nvl"))
+    if field == "ssh_authorized_key":
+        return _ssh_key(value)
+    return _text(value, field, limit=8192 if field == "ssh_authorized_key" else 512)
 
 
 def _count(value: Any, field: str, choices: tuple[int, ...]) -> int:
@@ -96,9 +145,13 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int, gpu_memory_gb:
                    disk_gb: int | None, repository: str | None, ref: str | None, runtime_id: str | None,
                    form_factor: str | None) -> dict[str, Any]:
     body: dict[str, Any] = {"name": _text(name, "name", limit=128)}
+    if environment is not None:
+        _text(environment, "environment", limit=64)
+    if form_factor is not None:
+        _choice(form_factor, "form_factor", ("pcie", "sxm", "nvl"))
     if cpus is not None:
-        if gpu is not None:
-            raise ValidationError("Choose either gpu or cpus, not both")
+        if gpu is not None or gpu_count != 1 or gpu_memory_gb is not None or form_factor is not None:
+            raise ValidationError("A CPU workspace takes cpus and memory_gb, not gpu, gpu_count, gpu_memory_gb or form_factor")
         body["environment"] = environment or "pytorch-cpu"
         body["editor"] = editor
         body["compute_class"] = "vm"
@@ -117,16 +170,15 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int, gpu_memory_gb:
         if gpu_memory_gb is None:
             gpu_memory_gb = _GPU_MEMORY_GB.get(compact)
             if gpu_memory_gb is None:
-                raise ValidationError(f"Pass gpu_memory_gb: the memory of {gpu!r} is not known to this SDK")
+                raise ValidationError(f"Pass gpu_memory_gb: {gpu!r} is not in the console's GPU catalog")
         body["gpu_memory_gb"] = _finite(gpu_memory_gb, "gpu_memory_gb", minimum=0)
         if form_factor is not None:
             body["gpu_form_factor"] = form_factor
-    if editor not in ("vscode", "jupyter", "ssh"):
-        raise ValidationError("editor must be vscode, jupyter or ssh")
+    _choice(editor, "editor", ("vscode", "jupyter", "ssh"))
     if editor == "ssh" and not ssh_key:
         raise ValidationError("ssh_key is required for an SSH-only workspace")
     if ssh_key is not None:
-        body["ssh_authorized_key"] = _text(ssh_key, "ssh_key", limit=8192)
+        body["ssh_authorized_key"] = _ssh_key(ssh_key)
     if max_hours is None:
         raise ValidationError("max_hours is required: the session stops itself after this many hours")
     if isinstance(max_hours, bool) or type(max_hours) is not int or not 1 <= max_hours <= 168:
@@ -225,9 +277,9 @@ class _WorkspaceState:
         self.raw = {}
 
     def _absorb(self, view: Any) -> None:
-        if not isinstance(view, dict) or not isinstance(view.get("id"), str) or not isinstance(view.get("state"), str):
+        if not isinstance(view, dict) or not isinstance(view.get("id"), str) or not isinstance(view.get("state"), str) \
+                or _RESEARCH_WORKSPACE_ID.fullmatch(view["id"]) is None:
             raise APIError("Workspace response is invalid", body=view)
-        _path(view["id"])
         self.raw = view
         self.id = view["id"]
         self.name = view.get("name") if isinstance(view.get("name"), str) else ""
@@ -265,22 +317,35 @@ class _WorkspaceState:
 
     @property
     def cost_usd(self) -> float | None:
-        """Money the current session has cost so far, as the server reports it."""
-        if not self.meter:
-            return None
-        value = self.meter.get("cost_usd")
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        """The session's total so far as the server's meter states it, or None when it sends none."""
+        value = self.meter.get("total_now_usd") if self.meter else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
             return float(value)
-        settled = self.meter.get("compute_settled_usd")
-        accruing = self.meter.get("compute_accruing_usd")
-        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (settled, accruing)):
-            return float(settled) + float(accruing)
         return None
 
     def _stopped_early(self) -> str | None:
         if self.state in ("stopped", "failed", "stopping"):
             return self.status_message or f"Compute is {self.state}."
         return None
+
+    @staticmethod
+    def _with_key(error: NodusError, key: str) -> NodusError:
+        """Carry the request key on an uncertain failure so a retry is the same submission."""
+        if isinstance(error.body, dict):
+            error.body = {**error.body, "idempotency_key": key}
+        elif error.body is None:
+            error.body = {"idempotency_key": key}
+        if key not in error.message:
+            error.message = f"{error.message}\nRetry with idempotency_key={key!r} so the retry is the same request."
+            error.args = (error.message,)
+        return error
+
+    def _still_running(self) -> str | None:
+        if self.state == "stopped":
+            return None
+        if self.state == "failed":
+            return self.status_message or "The compute session failed."
+        return f"The workspace is still {self.state}."
 
     def _start_pending(self) -> str:
         return f"The workspace is still starting ({self.state}). Compute keeps running. " \
@@ -290,10 +355,11 @@ class _WorkspaceState:
         unknown = sorted(set(changes) - _CONFIGURATION_FIELDS)
         if unknown:
             raise ValidationError("unknown configuration field: " + ", ".join(unknown))
+        checked = {field: _validated_change(field, value) for field, value in changes.items()}
         if not self.configuration_revision:
             raise APIError("The workspace view carried no configuration revision")
         return {"configuration_revision": self.configuration_revision,
-                "configuration": {**self.configuration, **changes}}
+                "configuration": {**self.configuration, **checked}}
 
     def _replace_revision(self) -> int | None:
         return self.storage_revision or None
@@ -327,12 +393,16 @@ class Workspace(_WorkspaceState):
 
     def start(self, *, idempotency_key: str | None = None) -> "Workspace":
         """Rent compute and restore saved files. Returns before the tools are ready."""
-        self._absorb(self._client._request("POST", self._path("/start"), json={},
-                                           idempotency_key=idempotency_key or _fresh_key()))
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            self._absorb(self._client._request("POST", self._path("/start"), json={}, idempotency_key=key))
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         return self
 
     def wait_until_ready(self, *, poll_seconds: float = 5.0, timeout_seconds: float = 900.0) -> "Workspace":
         """Poll until the configured tool accepts connections. A timeout leaves compute running."""
+        _wait_bounds(poll_seconds, timeout_seconds)
         deadline = time.monotonic() + timeout_seconds
         while True:
             self.refresh()
@@ -347,23 +417,28 @@ class Workspace(_WorkspaceState):
 
     def stop(self, *, idempotency_key: str | None = None) -> "Workspace":
         """Save project files and release compute. Already stopped is not an error."""
+        self.refresh()
         if self.session_id is None:
-            self.refresh()
-            if self.session_id is None:
-                return self
-        self._absorb(self._client._request("POST", self._path("/stop"), json={"session_id": self.session_id},
-                                           idempotency_key=idempotency_key or _fresh_key()))
+            return self
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            self._absorb(self._client._request("POST", self._path("/stop"), json={"session_id": self.session_id},
+                                               idempotency_key=key))
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         return self
 
     def wait_until_stopped(self, *, poll_seconds: float = 5.0, timeout_seconds: float = 900.0) -> "Workspace":
-        """Poll until compute has stopped and files are saved."""
+        """Poll until compute has stopped. Read status_message to learn whether the final save succeeded."""
+        _wait_bounds(poll_seconds, timeout_seconds)
         deadline = time.monotonic() + timeout_seconds
         while True:
             self.refresh()
-            if self.state == "stopped":
+            pending = self._still_running()
+            if pending is None:
                 return self
-            if time.monotonic() >= deadline:
-                raise WorkspaceNotReadyError(f"The workspace is still {self.state}.", body=self.raw)
+            if self.state == "failed" or time.monotonic() >= deadline:
+                raise WorkspaceNotReadyError(pending, body=self.raw)
             time.sleep(poll_seconds)
 
     def connect(self, tool: str = "editor") -> dict[str, Any]:
@@ -379,12 +454,15 @@ class Workspace(_WorkspaceState):
         """Run a command against the saved project on separate GPU compute, as a workload."""
         from . import Workload
         body = _job(command, budget_usd=budget_usd, gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb)
-        result = self._client._request("POST", self._path("/workloads"), json=body,
-                                       idempotency_key=idempotency_key or _fresh_key())
-        workload = Workload(self._client)
-        workload._absorb(result or {})
-        if not workload.id:
-            raise APIError("Workspace run returned no workload id", body=result)
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            result = self._client._request("POST", self._path("/workloads"), json=body, idempotency_key=key)
+            workload = Workload(self._client)
+            workload._absorb(result or {})
+            if not workload.id:
+                raise APIError("Workspace run returned no workload id", body=result)
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         return workload
 
     def workloads(self) -> list[dict[str, Any]]:
@@ -399,12 +477,17 @@ class Workspace(_WorkspaceState):
                poll_seconds: float = 2.0, timeout_seconds: float = 600.0) -> dict[str, Any]:
         """Replace the saved project with a local folder while stopped, then wait for verification."""
         from ._workspace_files import upload_files
+        _wait_bounds(poll_seconds, timeout_seconds)
         self.refresh()
         blocked = self._upload_blocked()
         if blocked:
             raise WorkspaceNotReadyError(blocked, body=self.raw)
-        result = upload_files(self._client, self.id, directory, idempotency_key=idempotency_key or _fresh_key(),
-                              replace_revision=self._replace_revision())
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            result = upload_files(self._client, self.id, directory, idempotency_key=key,
+                                  replace_revision=self._replace_revision())
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         deadline = time.monotonic() + timeout_seconds
         while True:
             self.refresh()
@@ -434,13 +517,16 @@ class Workspace(_WorkspaceState):
         self._absorb(self._client._request("PATCH", self._path(), json=self._configure_body(changes)))
         return self
 
-    def schedule(self, *, ready_by: str, stop_at: str | None = None) -> dict[str, Any]:
+    def schedule(self, *, ready_by: str, stop_at: str | None = None,
+                 idempotency_key: str | None = None) -> dict[str, Any]:
         """Have compute ready by an RFC 3339 time, and optionally stop at another."""
-        return self._client._request("POST", self._path("/schedule"), json=_schedule(ready_by, stop_at))
+        return self._client._request("POST", self._path("/schedule"), json=_schedule(ready_by, stop_at),
+                                     idempotency_key=idempotency_key or _fresh_key())
 
-    def unschedule(self) -> "Workspace":
+    def unschedule(self, *, idempotency_key: str | None = None) -> "Workspace":
         """Cancel a schedule. Running compute is not affected."""
-        self._absorb(self._client._request("DELETE", self._path("/schedule")))
+        self._absorb(self._client._request("DELETE", self._path("/schedule"),
+                                           idempotency_key=idempotency_key or _fresh_key()))
         return self
 
 
@@ -459,11 +545,15 @@ class AsyncWorkspace(_WorkspaceState):
         return self
 
     async def start(self, *, idempotency_key: str | None = None) -> "AsyncWorkspace":
-        self._absorb(await self._client._request("POST", self._path("/start"), json={},
-                                                 idempotency_key=idempotency_key or _fresh_key()))
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            self._absorb(await self._client._request("POST", self._path("/start"), json={}, idempotency_key=key))
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         return self
 
     async def wait_until_ready(self, *, poll_seconds: float = 5.0, timeout_seconds: float = 900.0) -> "AsyncWorkspace":
+        _wait_bounds(poll_seconds, timeout_seconds)
         deadline = time.monotonic() + timeout_seconds
         while True:
             await self.refresh()
@@ -477,22 +567,27 @@ class AsyncWorkspace(_WorkspaceState):
             await asyncio.sleep(poll_seconds)
 
     async def stop(self, *, idempotency_key: str | None = None) -> "AsyncWorkspace":
+        await self.refresh()
         if self.session_id is None:
-            await self.refresh()
-            if self.session_id is None:
-                return self
-        self._absorb(await self._client._request("POST", self._path("/stop"), json={"session_id": self.session_id},
-                                                 idempotency_key=idempotency_key or _fresh_key()))
+            return self
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            self._absorb(await self._client._request("POST", self._path("/stop"), json={"session_id": self.session_id},
+                                                     idempotency_key=key))
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         return self
 
     async def wait_until_stopped(self, *, poll_seconds: float = 5.0, timeout_seconds: float = 900.0) -> "AsyncWorkspace":
+        _wait_bounds(poll_seconds, timeout_seconds)
         deadline = time.monotonic() + timeout_seconds
         while True:
             await self.refresh()
-            if self.state == "stopped":
+            pending = self._still_running()
+            if pending is None:
                 return self
-            if time.monotonic() >= deadline:
-                raise WorkspaceNotReadyError(f"The workspace is still {self.state}.", body=self.raw)
+            if self.state == "failed" or time.monotonic() >= deadline:
+                raise WorkspaceNotReadyError(pending, body=self.raw)
             await asyncio.sleep(poll_seconds)
 
     async def connect(self, tool: str = "editor") -> dict[str, Any]:
@@ -505,12 +600,15 @@ class AsyncWorkspace(_WorkspaceState):
                   gpu_memory_gb: float | None = None, idempotency_key: str | None = None):
         from . import AsyncWorkload
         body = _job(command, budget_usd=budget_usd, gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb)
-        result = await self._client._request("POST", self._path("/workloads"), json=body,
-                                             idempotency_key=idempotency_key or _fresh_key())
-        workload = AsyncWorkload(self._client)
-        workload._absorb(result or {})
-        if not workload.id:
-            raise APIError("Workspace run returned no workload id", body=result)
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            result = await self._client._request("POST", self._path("/workloads"), json=body, idempotency_key=key)
+            workload = AsyncWorkload(self._client)
+            workload._absorb(result or {})
+            if not workload.id:
+                raise APIError("Workspace run returned no workload id", body=result)
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         return workload
 
     async def workloads(self) -> list[dict[str, Any]]:
@@ -522,13 +620,17 @@ class AsyncWorkspace(_WorkspaceState):
     async def upload(self, directory: str | os.PathLike[str], *, idempotency_key: str | None = None,
                      poll_seconds: float = 2.0, timeout_seconds: float = 600.0) -> dict[str, Any]:
         from ._workspace_files import upload_files_async
+        _wait_bounds(poll_seconds, timeout_seconds)
         await self.refresh()
         blocked = self._upload_blocked()
         if blocked:
             raise WorkspaceNotReadyError(blocked, body=self.raw)
-        result = await upload_files_async(self._client, self.id, directory,
-                                          idempotency_key=idempotency_key or _fresh_key(),
-                                          replace_revision=self._replace_revision())
+        key = _key(idempotency_key or _fresh_key())
+        try:
+            result = await upload_files_async(self._client, self.id, directory, idempotency_key=key,
+                                              replace_revision=self._replace_revision())
+        except NodusError as error:
+            raise self._with_key(error, key) from None
         deadline = time.monotonic() + timeout_seconds
         while True:
             await self.refresh()
@@ -555,16 +657,19 @@ class AsyncWorkspace(_WorkspaceState):
         self._absorb(await self._client._request("PATCH", self._path(), json=self._configure_body(changes)))
         return self
 
-    async def schedule(self, *, ready_by: str, stop_at: str | None = None) -> dict[str, Any]:
-        return await self._client._request("POST", self._path("/schedule"), json=_schedule(ready_by, stop_at))
+    async def schedule(self, *, ready_by: str, stop_at: str | None = None,
+                       idempotency_key: str | None = None) -> dict[str, Any]:
+        return await self._client._request("POST", self._path("/schedule"), json=_schedule(ready_by, stop_at),
+                                           idempotency_key=idempotency_key or _fresh_key())
 
-    async def unschedule(self) -> "AsyncWorkspace":
-        self._absorb(await self._client._request("DELETE", self._path("/schedule")))
+    async def unschedule(self, *, idempotency_key: str | None = None) -> "AsyncWorkspace":
+        self._absorb(await self._client._request("DELETE", self._path("/schedule"),
+                                                 idempotency_key=idempotency_key or _fresh_key()))
         return self
 
 
 def _legacy_volume(kwargs: dict[str, Any]) -> bool:
-    """A create with only a name and size_gb is the older named-volume call."""
+    """A create with a size and no compute names a sandbox volume."""
     return kwargs.get("gpu") is None and kwargs.get("cpus") is None and kwargs.get("size_gb") is not None \
         and all(value is None for field, value in kwargs.items() if field not in ("size_gb", "gpu_count", "editor"))
 
@@ -602,7 +707,7 @@ class Workspaces:
         if _legacy_volume(options):
             warnings.warn("client.workspaces.create(name, size_gb=...) creates a sandbox volume. "
                           "Use client.volumes.create for volumes and pass gpu= for a GPU workspace.",
-                          DeprecationWarning, stacklevel=2)
+                          FutureWarning, stacklevel=2)
             return self._client.volumes.create(name, size_gb=size_gb)
         body = _configuration(name, **options)
         if "size_gb" not in body:
@@ -633,15 +738,23 @@ class Workspaces:
 
     def get(self, reference: str) -> Workspace:
         """A workspace by ID, or by its name when the name is unique."""
-        workspace = Workspace(self._client, reference)
-        try:
-            return workspace.refresh()
-        except NotFoundError:
-            found = _by_name([ws.raw for ws in self.list()], reference)
-            if found is None:
-                raise
-            workspace._absorb(found)
-            return workspace
+        _text(reference, "reference", limit=256)
+        workspace = Workspace(self._client)
+        if _RESEARCH_WORKSPACE_ID.fullmatch(reference):
+            workspace._init_state(reference)
+            try:
+                return workspace.refresh()
+            except NotFoundError as missing:
+                found = _by_name([ws.raw for ws in self.list()], reference)
+                if found is None:
+                    raise missing
+                workspace._absorb(found)
+                return workspace
+        found = _by_name([ws.raw for ws in self.list()], reference)
+        if found is None:
+            raise NotFoundError(f"No workspace is named {reference!r}", status_code=404)
+        workspace._absorb(found)
+        return workspace
 
     def list(self) -> list[Workspace]:
         """Every workspace the account can see."""
@@ -684,7 +797,7 @@ class AsyncWorkspaces:
         if _legacy_volume(options):
             warnings.warn("client.workspaces.create(name, size_gb=...) creates a sandbox volume. "
                           "Use client.volumes.create for volumes and pass gpu= for a GPU workspace.",
-                          DeprecationWarning, stacklevel=2)
+                          FutureWarning, stacklevel=2)
             return await self._client.volumes.create(name, size_gb=size_gb)
         body = _configuration(name, **options)
         if "size_gb" not in body:
@@ -711,15 +824,23 @@ class AsyncWorkspaces:
                                         idempotency_key=idempotency_key, replace_revision=replace_revision)
 
     async def get(self, reference: str) -> AsyncWorkspace:
-        workspace = AsyncWorkspace(self._client, reference)
-        try:
-            return await workspace.refresh()
-        except NotFoundError:
-            found = _by_name([ws.raw for ws in await self.list()], reference)
-            if found is None:
-                raise
-            workspace._absorb(found)
-            return workspace
+        _text(reference, "reference", limit=256)
+        workspace = AsyncWorkspace(self._client)
+        if _RESEARCH_WORKSPACE_ID.fullmatch(reference):
+            workspace._init_state(reference)
+            try:
+                return await workspace.refresh()
+            except NotFoundError as missing:
+                found = _by_name([ws.raw for ws in await self.list()], reference)
+                if found is None:
+                    raise missing
+                workspace._absorb(found)
+                return workspace
+        found = _by_name([ws.raw for ws in await self.list()], reference)
+        if found is None:
+            raise NotFoundError(f"No workspace is named {reference!r}", status_code=404)
+        workspace._absorb(found)
+        return workspace
 
     async def list(self) -> list[AsyncWorkspace]:
         result: list[AsyncWorkspace] = []

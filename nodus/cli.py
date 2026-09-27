@@ -339,8 +339,8 @@ def _resolve_sandbox(client, reference):
 
 
 @contextmanager
-def _sandbox_mutation(request_key, *, sandbox_id=None):
-    key = request_key or f"sandbox-cli-{uuid.uuid4()}"
+def _sandbox_mutation(request_key, *, sandbox_id=None, noun="sandbox"):
+    key = request_key or f"{noun}-cli-{uuid.uuid4()}"
     try:
         yield key
     except (KeyboardInterrupt, NodusError) as error:
@@ -349,7 +349,7 @@ def _sandbox_mutation(request_key, *, sandbox_id=None):
             uncertain = uncertain or bool(error.status_code and error.status_code >= 500)
             uncertain = uncertain or (isinstance(error, APIError) and error.status_code is None)
         if uncertain:
-            identity = f" Use sandbox ID {_safe_line(sandbox_id)} instead of its name." if sandbox_id else ""
+            identity = f" Use {noun} ID {_safe_line(sandbox_id)} instead of its name." if sandbox_id else ""
             print(
                 "Request outcome unknown. The operation may have been accepted."
                 + identity + " Retry the unchanged operation with --idempotency-key="
@@ -642,14 +642,14 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
             print(json.dumps(workspace.raw, indent=2, default=str))
             return 0
         if args.workspace_cmd == "start":
-            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id) as key:
+            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id, noun="workspace") as key:
                 workspace.start(idempotency_key=key)
             if args.wait:
                 workspace.wait_until_ready(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
             print(_workspace_line(workspace))
             return 0
         if args.workspace_cmd == "stop":
-            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id) as key:
+            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id, noun="workspace") as key:
                 workspace.stop(idempotency_key=key)
             if args.wait:
                 workspace.wait_until_stopped(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
@@ -666,7 +666,7 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
             print(_safe_line(connection.get("vscode_url", "")))
             return 0
         if args.workspace_cmd == "run":
-            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id) as key:
+            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id, noun="workspace") as key:
                 workload = workspace.run(args.command, budget_usd=args.budget, gpu=args.gpu, gpu_count=args.gpu_count,
                                          gpu_memory_gb=args.gpu_memory_gb, idempotency_key=key)
             print(_safe_line(workload.id))
@@ -675,8 +675,7 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
             print(json.dumps(workspace.workloads(), indent=2, default=str))
             return 0
         if args.workspace_cmd == "upload":
-            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id) as key:
-                upload = workspace.upload(args.directory, idempotency_key=key)
+            upload = workspace.upload(args.directory, idempotency_key=args.idempotency_key)
             print(_safe_line(f"{workspace.id} {upload.get('state', '')}"))
             return 0
         saved = workspace.download(args.destination, overwrite=args.overwrite)
