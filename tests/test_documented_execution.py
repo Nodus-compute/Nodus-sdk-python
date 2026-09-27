@@ -297,8 +297,8 @@ def docs_api(monkeypatch):
             if path == "/v1/research-workspaces/ws_docs/connections":
                 assert payload["tool"] in ("editor", "notebook", "ssh")
                 if payload["tool"] == "ssh":
-                    return self.reply({"transport": "direct", "host": "203.0.113.7", "port": "22022", "user": "root",
-                                       "command": "ssh -p 22022 root@203.0.113.7",
+                    return self.reply({"transport": "tcp", "host": "203.0.113.7", "port": "22022", "user": "nodus",
+                                       "command": "ssh -p 22022 nodus@203.0.113.7",
                                        "ssh_config": "Host nodus-instance-docs\n  HostName 203.0.113.7\n"})
                 return self.reply({"url": "https://ws-docs-8080.nodus.run/?tkn=docs"})
             if path == "/v1/research-workspaces/ws_docs/workloads":

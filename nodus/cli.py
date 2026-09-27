@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import sys
 import threading
 import time
@@ -747,15 +748,38 @@ def _cmd_launch(args: argparse.Namespace) -> int:
             return 0
         connection = machine.ssh()
     print(_safe_line(f"{machine.name} ({machine.id}) is ready. It stops itself after {args.hours} hours."))
-    print(_safe_line(connection.get("command", "")))
+    reference = machine.name if machine.name and not machine.name.startswith("-") else machine.id
+    print(_safe_line(f"Connect: nodus ssh {shlex.quote(reference)}"))
+    print(_safe_line(f"Or run: {connection.get('command', '')}"))
     return 0
 
 
 def _cmd_ssh(args: argparse.Namespace) -> int:
+    from ._ssh import UnsupportedTransport, ssh_argv
     with Client(base_url=args.base_url) as client:
         connection = client.workspaces.get(args.workspace_id).ssh()
-    print(_safe_line(connection.get("command", "")))
-    print(_safe(connection.get("ssh_config", "")))
+    if args.print:
+        print(_safe_line(connection.get("command", "")))
+        print(_safe(connection.get("ssh_config", "")))
+        return 0
+    try:
+        argv = ssh_argv(connection)
+    except UnsupportedTransport as unsupported:
+        print(_safe_line(f"Error: nodus ssh cannot open a {unsupported} connection directly. "
+                         "Review its details with nodus ssh --print before using them."), file=sys.stderr)
+        return 1
+    except ValidationError as refused:
+        print(_safe_line(f"Error: {refused} Nothing was run."), file=sys.stderr)
+        return 1
+    if shutil.which("ssh") is None:
+        print(_safe_line(shlex.join(argv)))
+        print("Error: ssh was not found. Install an OpenSSH client and run the command above.", file=sys.stderr)
+        return 1
+    if connection.get("transport") == "tunnel" and shutil.which("cloudflared") is None:
+        print(_safe_line(shlex.join(argv)))
+        print("Error: this connection needs cloudflared. Install it and run the command above.", file=sys.stderr)
+        return 1
+    os.execvp("ssh", argv)
     return 0
 
 
@@ -1354,7 +1378,8 @@ Use nodus COMMAND --help for command options.""",
     ps = sub.add_parser("ps", help="list running instances, workspaces and training")
     ps.add_argument("--all", action="store_true", help="include stopped and finished compute")
     ps.add_argument("--json", action="store_true", help="print the items as JSON")
-    ssh = sub.add_parser("ssh", help="print the SSH command for an instance or workspace")
+    ssh = sub.add_parser("ssh", help="open an SSH session on an instance or workspace")
+    ssh.add_argument("--print", action="store_true", help="print the SSH command and config entry instead")
     ssh.add_argument("workspace_id", metavar="NAME_OR_ID")
     stop = sub.add_parser("stop", help="stop an instance or workspace and release its GPU")
     stop.add_argument("--idempotency-key", help="reuse the key after an uncertain response")

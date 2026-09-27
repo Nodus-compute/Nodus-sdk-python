@@ -34,9 +34,10 @@ INSTANCE_CREATING = {**INSTANCE_STOPPED, "state": "creating", "session": INSTANC
                      "status_message": "Finding compute and starting your tools."}
 INSTANCE_READY = {**INSTANCE_CREATING, "state": "running", "session": {**INSTANCE_SESSION, "state": "ready"},
                   "connections": {"editor": False, "notebook": False, "ssh": True}}
-SSH = {"transport": "direct", "host": "203.0.113.7", "port": "22022", "user": "root",
-       "command": "ssh -p 22022 root@203.0.113.7",
-       "ssh_config": "Host nodus-instance-1a2b3c4d\n  HostName 203.0.113.7\n  Port 22022\n  User root\n"}
+SSH = {"transport": "tcp", "host": "203.0.113.7", "port": "22022", "user": "nodus",
+       "command": "ssh -p 22022 nodus@203.0.113.7",
+       "vscode_url": "vscode://vscode-remote/ssh-remote+nodus@203.0.113.7:22022/workspace",
+       "ssh_config": "Host nodus-instance-1a2b3c4d\n  HostName 203.0.113.7\n  Port 22022\n  User nodus\n"}
 CAPABILITIES = {"available": True, "storage_limit_bytes": 10_000_000_000, "environments": ["pytorch-cuda"],
                 "gpu_counts": [1, 2, 4, 8], "editors": ["vscode", "jupyter", "ssh"],
                 "storage_policy_version": "r2-standard-10gb-account-v1"}
@@ -160,7 +161,7 @@ def test_launch_creates_an_ssh_instance_starts_it_with_the_same_key_and_waits_fo
     assert create[3] == "launch-1"
     assert start == ("POST", BASE + "/ws_inst/start", {}, "launch-1")
     assert not any(call[1] == BASE + "/capabilities" for call in calls)
-    assert machine.ssh()["command"] == "ssh -p 22022 root@203.0.113.7"
+    assert machine.ssh()["command"] == "ssh -p 22022 nodus@203.0.113.7"
 
 
 def test_launch_names_an_instance_like_the_console_and_reads_the_default_public_key(tmp_path):
@@ -358,7 +359,8 @@ def test_cli_launch_prints_the_ssh_command_when_ready(monkeypatch, capsys, tmp_p
                      "--ssh-key", str(key), "--name", "instance-1a2b3c4d", "--hours", "6",
                      "--poll-seconds", "0.1"]) == 0
     out = capsys.readouterr().out
-    assert "ssh -p 22022 root@203.0.113.7" in out and "ws_inst" in out
+    assert "ssh -p 22022 nodus@203.0.113.7" in out and "ws_inst" in out
+    assert "nodus ssh instance-1a2b3c4d" in out
     body = calls[0][2]
     assert body["gpu_count"] == 2 and body["disk_gb"] == 200 and body["max_hours"] == 6
     assert body["environment"] == "pytorch-cuda" and body["kind"] == "instance"
@@ -452,8 +454,8 @@ def test_cli_ssh_and_stop_find_an_instance_by_name(monkeypatch, capsys):
         pytest.fail("unexpected " + request.url.path)
 
     cli_client(monkeypatch, handler)
-    assert cli.main(["ssh", "instance-1a2b3c4d"]) == 0
-    assert capsys.readouterr().out.splitlines()[0] == "ssh -p 22022 root@203.0.113.7"
+    assert cli.main(["ssh", "--print", "instance-1a2b3c4d"]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "ssh -p 22022 nodus@203.0.113.7"
     assert cli.main(["stop", "--idempotency-key", "stop-1", "instance-1a2b3c4d"]) == 0
     assert capsys.readouterr().out.strip() == "ws_inst stopping"
     assert calls[-1][1:] == (BASE + "/ws_inst/stop", {}, {"session_id": "pod_inst"})
@@ -616,3 +618,116 @@ async def test_mcp_list_compute_includes_workspaces_by_default(api):
                                                              "type": "instance"})).isError
     assert dict(requests[0].url.params) == {"state": "running", "include": "workspaces"}
     assert dict(requests[1].url.params) == {"state": "running", "type": "instance"}
+
+
+# -- nodus ssh opens the session -------------------------------------------------------------------------------
+
+TUNNEL = {"transport": "tunnel", "host": "ws-abc-2222.nodus.run", "port": "22", "user": "nodus",
+          "requires": "cloudflared",
+          "command": "ssh -o ProxyCommand='cloudflared access ssh --hostname %h' nodus@ws-abc-2222.nodus.run",
+          "vscode_url": "vscode://vscode-remote/ssh-remote+nodus@ws-abc-2222.nodus.run/workspace",
+          "ssh_config": "Host nodus-lab\n  HostName ws-abc-2222.nodus.run\n  User nodus\n"
+                        "  ProxyCommand cloudflared access ssh --hostname %h\n"}
+# workspaceSSHWebSocketConfig: no user, port or command, and a ProxyCommand this SDK does not provide.
+WEBSOCKET = {"host": "nodus-ws_inst", "transport": "websocket", "workspace_id": "ws_inst", "session_id": "sb_1",
+             "generation": 3,
+             "ssh_config": "Host nodus-ws_inst\n    HostName ws_inst\n    User nodus\n    Port 2222\n"
+                           "    ProxyCommand nodus workspaces ssh-proxy ws_inst --session sb_1 --generation 3\n"
+                           "    HostKeyAlias ws_inst\n    StrictHostKeyChecking ask\n"}
+
+
+def ssh_cli(monkeypatch, connection, *, installed=("ssh", "cloudflared")):
+    executed = []
+
+    def handler(request):
+        if request.url.path == BASE + "/ws_inst":
+            return httpx.Response(200, json=INSTANCE_READY)
+        if request.url.path == BASE + "/ws_inst/connections":
+            return httpx.Response(200, json=connection)
+        pytest.fail("unexpected " + request.url.path)
+
+    cli_client(monkeypatch, handler)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}" if name in installed else None)
+    monkeypatch.setattr(cli.os, "execvp", lambda file, argv: executed.append((file, argv)))
+    return executed
+
+
+def test_nodus_ssh_execs_ssh_with_an_argv_built_from_structured_fields(monkeypatch):
+    executed = ssh_cli(monkeypatch, SSH)
+    assert cli.main(["ssh", "ws_inst"]) == 0
+    assert executed == [("ssh", ["ssh", "-p", "22022", "-l", "nodus", "--", "203.0.113.7"])]
+
+
+def test_nodus_ssh_through_a_tunnel_uses_a_fixed_proxy_command(monkeypatch):
+    executed = ssh_cli(monkeypatch, TUNNEL)
+    assert cli.main(["ssh", "ws_inst"]) == 0
+    assert executed == [("ssh", ["ssh", "-o", "ProxyCommand=cloudflared access ssh --hostname %h", "-p", "22",
+                                 "-l", "nodus", "--", "ws-abc-2222.nodus.run"])]
+
+
+def test_nodus_ssh_through_a_tunnel_without_cloudflared_says_so(monkeypatch, capsys):
+    executed = ssh_cli(monkeypatch, TUNNEL, installed=("ssh",))
+    assert cli.main(["ssh", "ws_inst"]) == 1
+    assert executed == [] and "cloudflared" in capsys.readouterr().err
+
+
+def test_nodus_ssh_without_ssh_prints_the_command_and_a_hint(monkeypatch, capsys):
+    executed = ssh_cli(monkeypatch, SSH, installed=())
+    assert cli.main(["ssh", "ws_inst"]) == 1
+    captured = capsys.readouterr()
+    assert executed == [] and captured.out.strip() == "ssh -p 22022 -l nodus -- 203.0.113.7"
+    assert len(captured.err.strip().splitlines()) == 1 and "OpenSSH" in captured.err
+
+
+def test_nodus_ssh_refuses_a_transport_it_cannot_open(monkeypatch, capsys):
+    executed = ssh_cli(monkeypatch, WEBSOCKET)
+    assert cli.main(["ssh", "ws_inst"]) == 1
+    captured = capsys.readouterr()
+    # Server-written ssh_config can carry a ProxyCommand, so it is shown only on request, never recommended.
+    assert executed == [] and "cannot open" in captured.err and "--print" in captured.err
+    assert "ProxyCommand" not in captured.out + captured.err
+
+
+def test_the_ssh_missing_fallback_prints_no_terminal_controls(monkeypatch, capsys):
+    ssh_cli(monkeypatch, {**SSH, "user": "nodus"}, installed=())
+    monkeypatch.setattr("nodus._ssh._host", lambda value: "203.0.113.7\x1b]0;owned\x07")
+    assert cli.main(["ssh", "ws_inst"]) == 1
+    assert "\x1b" not in capsys.readouterr().out
+
+
+def test_launch_suggests_the_id_when_the_name_looks_like_a_flag(monkeypatch, capsys, tmp_path):
+    key = tmp_path / "id.pub"
+    key.write_text(KEY)
+    ready = {**INSTANCE_READY, "name": "--print"}
+    cli_client(monkeypatch, launch_handler([], itertools.chain([INSTANCE_CREATING], itertools.repeat(ready))))
+    assert cli.main(["launch", "--gpu", "H100", "--ssh-key", str(key), "--poll-seconds", "0.1"]) == 0
+    assert "Connect: nodus ssh ws_inst" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("field,value", [
+    ("host", "203.0.113.7 -oProxyCommand=touch /tmp/x"), ("host", "-oProxyCommand=id"), ("host", "a;id"),
+    ("host", "host\nProxyCommand id"), ("host", "'quoted'"), ("host", "a..b"), ("host", ""), ("host", None),
+    ("host", "fe80::1%a@evil.example"), ("host", "::1%`id`"), ("host", "fe80::1%eth0"),
+    ("host", "evil\x1b]0;owned\x07.example"),
+    ("port", "22 -o"), ("port", "0"), ("port", "65536"), ("port", "-1"), ("port", "22\n"), ("port", 22.5),
+    ("user", "nodus -oProxyCommand=id"), ("user", "-l"), ("user", "root;id"), ("user", "a\nb"), ("user", '"x"'),
+    ("transport", "tcp;id"),
+])
+def test_nodus_ssh_refuses_hostile_server_values(monkeypatch, capsys, field, value):
+    executed = ssh_cli(monkeypatch, {**SSH, field: value})
+    assert cli.main(["ssh", "ws_inst"]) == 1
+    assert executed == []
+    assert "\x1b" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("host", ["2001:db8::7", "ws-abc-2222.nodus.run", "203.0.113.7"])
+def test_nodus_ssh_accepts_ipv6_names_and_ipv4(monkeypatch, host):
+    executed = ssh_cli(monkeypatch, {**SSH, "host": host})
+    assert cli.main(["ssh", "ws_inst"]) == 0
+    assert executed[0][1][-1] == host
+
+
+def test_nodus_ssh_accepts_an_integer_port(monkeypatch):
+    executed = ssh_cli(monkeypatch, {**SSH, "port": 22022})
+    assert cli.main(["ssh", "ws_inst"]) == 0
+    assert executed[0][1][2] == "22022"

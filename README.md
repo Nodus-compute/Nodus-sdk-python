@@ -189,6 +189,8 @@ nodus ssh NAME_OR_ID
 nodus stop NAME_OR_ID
 ```
 
+`nodus ssh` opens the session with your OpenSSH client. Add `--print` to see
+the command and config entry instead.
 If the wait times out, the machine keeps running and the error names its ID.
 `nodus ps` shows running instances, workspaces and training, including
 machines launched with `keep_files=True`. In Python, call
