@@ -71,7 +71,8 @@ def test_an_example_supplies_everything_run_needs_and_never_a_budget() -> None:
     assert arguments["image"] == example.image
     assert arguments["outputs"] == {"results.json": "outputs/results.json"}
     assert arguments["rl"] == nodus.RLSetup(
-        environment_id="gsm8k", mode="train", model="Qwen/Qwen3-1.7B", planned_tasks=64
+        environment_id="gsm8k", mode="train", model="Qwen/Qwen3-1.7B", planned_tasks=64,
+        example_id="gsm8k-trained",
     )
 
 
@@ -87,6 +88,7 @@ def test_running_an_example_sends_what_the_console_would() -> None:
         "mode": "train",
         "model": "Qwen/Qwen3-1.7B",
         "planned_tasks": 64,
+        "example_id": "gsm8k-trained",
     }
     source = sent["stages"][0]["source"]
     assert source["image"] == example.image

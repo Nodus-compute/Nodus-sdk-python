@@ -149,3 +149,19 @@ def test_a_mapping_with_fields_rl_cannot_carry_is_refused(mapping: dict) -> None
     with pytest.raises(ValueError):
         client(captured).run(command="python train.py", image="python:3.12", rl=mapping)
     assert captured == []
+
+
+def test_an_example_id_is_carried_and_checked_like_the_server_does() -> None:
+    setup = nodus.RLSetup(environment_id="gsm8k", mode="train", model="Qwen/Qwen3-1.7B",
+                          planned_tasks=64, example_id="gsm8k-trained")
+    assert setup.to_payload()["example_id"] == "gsm8k-trained"
+    assert "example_id" not in nodus.RLSetup(environment_id="custom", mode="train", model="m", planned_tasks=1).to_payload()
+    with pytest.raises(ValueError):
+        nodus.RLSetup(environment_id="gsm8k", mode="train", model="m", planned_tasks=1, example_id="Bad ID").to_payload()
+
+
+def test_an_example_run_records_which_example_it_came_from() -> None:
+    from nodus._rl_setup import rl_payload
+
+    assert rl_payload({"environment_id": "gsm8k", "mode": "train", "model": "m", "planned_tasks": 1,
+                       "example_id": "gsm8k-trained"})["example_id"] == "gsm8k-trained"

@@ -6889,6 +6889,11 @@
             "maximum": 10000,
             "description": "Planned logical task count. The customer command must apply this selection and limit. Recorded attempts may include retries."
           },
+          "example_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "description": "Catalog example the run was started from. Set by the example run endpoint and the console's Run button."
+          },
           "recipe": {
             "anyOf": [
               {
@@ -20123,7 +20128,7 @@
             }
           }
         },
-        "description": "Submits the same run the console's Run button prepares: the example's command through a shell, its runtime image, a GPU with at least peak_memory_gb, its result files and its RL details. It is an ordinary workload. Follow it with GET /v1/workloads/{id}, its RL events and its outputs. 404 means no runnable example has these ids. Admission, spending checks and errors are those of POST /v1/workloads."
+        "description": "Submits the run the example describes: its command through a shell, its runtime image, a GPU with at least peak_memory_gb, resumption after an interruption, its result files and its RL details with example_id. A retry is matched by environment, example and name under the Idempotency-Key, so it returns the original run even if the catalog changed in between. The same key with a different example or name returns 409. It is an ordinary workload. Follow it with GET /v1/workloads/{id}, its RL events and its outputs. 404 means no runnable example has these ids. Admission, spending checks and errors are those of POST /v1/workloads."
       }
     },
     "/v1/rl-environments": {

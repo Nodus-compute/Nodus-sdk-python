@@ -397,7 +397,8 @@ class RLExample:
             "outputs": outputs,
             **({"peak_memory_gb": self.peak_memory_gb} if self.peak_memory_gb else {}),
             "rl": RLSetup(environment_id=self.environment_id, mode=self.mode,
-                          model=self.model, planned_tasks=self.planned_tasks),
+                          model=self.model, planned_tasks=self.planned_tasks,
+                          example_id=self.id),
         }
 
 
@@ -527,8 +528,8 @@ class RL:
     ) -> "Workload":
         """Start a catalog example in one request and return its workload.
 
-        The server builds the run the console's Run button prepares. Retrying
-        with the same ``idempotency_key`` returns the original run.
+        The server builds the run the example describes. Retrying with the
+        same ``idempotency_key``, example and name returns the original run.
         """
         from . import Workload
 

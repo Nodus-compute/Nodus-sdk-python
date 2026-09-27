@@ -15,7 +15,7 @@ from typing import Any, Mapping
 # rlEnvironmentID and ValidateRLMetadata in internal/models/rl.go, exactly.
 # fullmatch, because Python's $ also matches before a trailing newline.
 _ENVIRONMENT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
-_FIELDS = {"schema_version", "environment_id", "mode", "model", "planned_tasks"}
+_FIELDS = {"schema_version", "environment_id", "mode", "model", "planned_tasks", "example_id"}
 _MODES = ("train", "evaluate")
 _MAX_PLANNED_TASKS = 10000
 _SCHEMA_VERSION = 1
@@ -34,6 +34,7 @@ class RLSetup:
     mode: str
     model: str
     planned_tasks: int
+    example_id: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         """The ``rl`` field of a workload body, validated."""
@@ -55,13 +56,18 @@ class RLSetup:
             raise ValueError(
                 f"rl.planned_tasks must be between 1 and {_MAX_PLANNED_TASKS}, not {self.planned_tasks}"
             )
-        return {
+        if self.example_id and (not isinstance(self.example_id, str) or not _ENVIRONMENT_ID.fullmatch(self.example_id)):
+            raise ValueError(f"rl.example_id must be lowercase letters, digits or hyphens, not {self.example_id!r}")
+        payload = {
             "schema_version": _SCHEMA_VERSION,
             "environment_id": self.environment_id,
             "mode": self.mode,
             "model": self.model,
             "planned_tasks": self.planned_tasks,
         }
+        if self.example_id:
+            payload["example_id"] = self.example_id
+        return payload
 
 
 def _model_text(value: Any) -> bool:
@@ -95,5 +101,6 @@ def rl_payload(value: "RLSetup | Mapping[str, Any] | None") -> dict[str, Any] | 
             mode=value.get("mode", ""),
             model=value.get("model", ""),
             planned_tasks=value.get("planned_tasks", 0),
+            example_id=value.get("example_id", ""),
         ).to_payload()
     raise TypeError("rl= must be an RLSetup or a mapping of its fields")

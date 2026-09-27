@@ -28,10 +28,11 @@ curl --fail --silent --show-error --request POST \
   "${NODUS_BASE_URL}/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs"
 ```
 
-It answers `202` with a `workload_id`. The server builds the run the console's
-Run button prepares. That is the example's command, its runtime image, a GPU
-with at least the memory it was measured on, its result file and its RL
-details. The body is optional and may set only `name`.
+It answers `202` with a `workload_id`. The server builds the run the example
+describes. That is its command, its runtime image, a GPU with at least the
+memory it was measured on, its result file and its RL details. The console's
+Run button fills in the same settings. The body is optional and may set only
+`name`.
 
 The run rents a GPU and is billed while it runs. Retrying with the same
 `Idempotency-Key` returns the original run instead of starting another, so
