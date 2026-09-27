@@ -3240,11 +3240,10 @@
           },
           "environment": {
             "type": "string",
-            "enum": [
-              "pytorch-cuda"
-            ],
-            "description": "Operator-qualified PyTorch and CUDA image with the selected development tool. Customers cannot override its image digest."
+            "enum": ["pytorch-cuda", "pytorch-rocm", "pytorch-cpu", "custom-cuda", "custom-rocm", "custom-cpu"],
+            "description": "Qualified software environment for NVIDIA, AMD or CPU compute. Custom environments require a team-visible runtime_id."
           },
+          "runtime_id": {"type": "string", "pattern": "^nodus:runtime:[a-f0-9]{64}$", "description": "Optional immutable image identity from capabilities.runtimes. Selects the workspace Linux distribution and software. Must match environment and remain qualified and visible to the team. Omission preserves the existing managed environment. The selected runtime cannot be changed when editing a saved project."},
           "editor": {
             "type": "string",
             "enum": [
@@ -3265,26 +3264,26 @@
           },
           "gpu": {
             "type": "string",
-            "minLength": 1,
+            "minLength": 0,
             "maxLength": 64,
-            "description": "Required GPU model, not a supplier SKU. Launch requires an exact qualified configuration and eligible capacity."
+            "description": "GPU model, not a supplier SKU. Use an empty string for CPU instances. Launch requires an exact qualified configuration and eligible capacity."
           },
           "gpu_count": {
             "type": "integer",
-            "enum": [
-              1,
-              2,
-              4,
-              8
-            ],
-            "description": "Exact GPU count on one machine. These accepted request values do not establish hardware qualification or current availability."
+            "enum": [0, 1, 2, 4, 8],
+            "description": "Exact GPU count on one machine. Use zero for CPU instances. These accepted request values do not establish hardware qualification or current availability."
           },
           "gpu_memory_gb": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "maximum": 1024,
-            "description": "Minimum required memory per GPU in GB, not the sum across devices."
+            "description": "Minimum required memory per GPU in GB, not the sum across devices. Positive for GPU instances and zero for CPU instances."
           },
+          "compute_class": {"type": "string", "enum": ["accelerator", "vm"], "description": "Omission retains GPU execution. vm requests a CPU-only workspace and requires capabilities.cpu_instances, a CPU environment, empty gpu, zero gpu_count and zero gpu_memory_gb."},
+          "gpu_form_factor": {"type": "string", "enum": ["", "pcie", "sxm", "nvl"], "description": "Optional required GPU form factor. Omission permits any form factor. Requires direct workspace compute and cannot be set for CPU instances. A selected form factor is enforced during quoting and placement."},
+          "vcpus": {"type": "integer", "minimum": 0, "maximum": 256, "description": "Minimum vCPUs on a GPU machine. Omission or zero keeps its included resources. CPU instances require exactly 2, 4, 8, 16 or 32 vCPUs."},
+          "host_memory_gb": {"type": "number", "minimum": 0, "maximum": 4096, "description": "Minimum system RAM in GB, separate from GPU memory. Omission or zero keeps included RAM on GPU machines. CPU instances require a positive value. Custom RAM requires direct workspace compute."},
+          "disk_gb": {"type": "integer", "anyOf": [{"const": 0}, {"minimum": 80, "maximum": 2048}], "description": "Runtime storage in decimal GB. Omission or zero preserves the existing 80 GB floor. Explicit sizes from 80 through 2048 are accepted. This is separate from the saved project capacity in size_gb. Restoring saved files can require additional allocation."},
           "budget_usd": {
             "type": "number",
             "description": "Deprecated compatibility field. Customer spending limits are not enforced.",
@@ -3307,6 +3306,26 @@
             "maxLength": 8192,
             "description": "Optional plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Account SSH keys can also provide access to direct sessions."
           }
+        },
+        "if": {"required": ["compute_class"], "properties": {"compute_class": {"const": "vm"}}},
+        "then": {
+          "required": ["vcpus", "host_memory_gb"],
+          "properties": {
+            "environment": {"enum": ["pytorch-cpu", "custom-cpu"]},
+            "gpu": {"const": ""},
+            "gpu_count": {"const": 0},
+            "gpu_memory_gb": {"const": 0},
+            "gpu_form_factor": {"const": ""},
+            "vcpus": {"enum": [2, 4, 8, 16, 32]},
+            "host_memory_gb": {"exclusiveMinimum": 0}
+          }
+        },
+        "else": {
+          "properties": {
+            "gpu": {"minLength": 1},
+            "gpu_count": {"enum": [1, 2, 4, 8]},
+            "gpu_memory_gb": {"exclusiveMinimum": 0}
+          }
         }
       },
       "ResearchWorkspaceCapabilities": {
@@ -3322,6 +3341,21 @@
           "workload_source_limit_bytes"
         ],
         "properties": {
+          "runtimes": {
+            "type": "array",
+            "description": "Qualified workspace images visible to the authenticated team. These select container userspace, not the host kernel. Registry references and other teams' custom images are not exposed.",
+            "items": {
+              "type": "object", "required": ["id", "name", "os", "os_name", "environment", "custom"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^nodus:runtime:[a-f0-9]{64}$"},
+                "name": {"type": "string"},
+                "os": {"type": "string", "enum": ["ubuntu-22.04", "ubuntu-24.04", "debian-12", "debian-13"]},
+                "os_name": {"type": "string"},
+                "environment": {"type": "string", "enum": ["pytorch-cuda", "pytorch-rocm", "pytorch-cpu", "custom-cuda", "custom-rocm", "custom-cpu"]},
+                "custom": {"type": "boolean"}
+              }
+            }
+          },
           "available": {
             "type": "boolean",
             "description": "Whether workspace configuration and browser access are enabled on this deployment. Not a guarantee of qualified hardware, live capacity or successful admission."
@@ -3349,7 +3383,7 @@
                 "id": {
                   "type": "string",
                   "enum": [
-                    "pytorch-cuda"
+                    "pytorch-cuda", "pytorch-rocm", "pytorch-cpu"
                   ]
                 },
                 "name": {
@@ -3374,6 +3408,8 @@
             },
             "description": "Accepted single-machine request counts. This is not a per-model qualification or availability inventory."
           },
+          "cpu_instances": {"type": "boolean", "description": "A qualified CPU image and direct CPU lifecycle are enabled. Availability is checked for each requested vCPU count."},
+          "host_resource_configuration": {"type": "boolean", "description": "Direct workspace compute can enforce custom vCPU and system RAM requirements."},
           "qualified_gpu_configurations": {
             "type": "array",
             "description": "Canonical GPU model and count pairs qualified for the deployment's exact active image and runtime artifacts. An empty array means no configuration is currently qualified. This is not live capacity or a price quote. Older servers may omit this field. Existing saved configurations remain readable even when absent from this list.",
@@ -3507,7 +3543,7 @@
         "properties": {
           "hourly_usd": {"type": "number", "exclusiveMinimum": 0, "description": "Estimated USD per hour for the entire machine. Do not multiply by gpu_count."},
           "currency": {"type": "string", "const": "USD"},
-          "gpu_count": {"type": "integer", "enum": [1, 2, 4, 8]},
+          "gpu_count": {"type": "integer", "enum": [0, 1, 2, 4, 8]},
           "observed_at": {"type": "string", "format": "date-time"},
           "expires_at": {"type": "string", "format": "date-time", "description": "Refresh the estimate after this timestamp."},
           "estimate_only": {"type": "boolean", "const": true}
@@ -3979,6 +4015,11 @@
             "type": "array",
             "maxItems": 100,
             "items": {"$ref": "#/components/schemas/ResearchWorkspace"}
+          },
+          "next_cursor": {
+            "type": "string",
+            "maxLength": 1024,
+            "description": "Opaque continuation for this account and list. Empty when this page has no further records."
           }
         }
       },
@@ -4103,6 +4144,17 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "expired_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "default": null,
+            "description": "Time the tenant retention policy expired saved workspace state. The namespace remains listed."
+          },
+          "cleanup_pending": {
+            "type": "boolean",
+            "default": false,
+            "description": "Expired workspace objects still require cleanup. An empty namespace can be reused after cleanup settles."
           },
           "stored_bytes": {
             "type": [
@@ -7881,8 +7933,7 @@
         "required": [
           "kind",
           "url"
-        ],
-        "x-go-package": "internal/models"
+        ]
       },
       "OutputDeclaration": {
         "type": "object",
@@ -8171,6 +8222,442 @@
         ],
         "type": "object"
       },
+      "OperationWorkspacesCapabilitiesArguments": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "OperationWorkspacesListArguments": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "OperationWorkspacesGetArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesCreateArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace": {
+            "additionalProperties": false,
+            "description": "Workspace configuration. Read get_workspace_capabilities first for valid GPU models, counts and environments.",
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "editor": {
+                "description": "Which tool the workspace opens with. Both stay available.",
+                "enum": [
+                  "vscode",
+                  "jupyter"
+                ],
+                "type": "string"
+              },
+              "environment": {
+                "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model from get_workspace_capabilities, such as A100 or RTX 4090.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "description": "Memory per GPU in GB, matching the chosen model.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "max_hours": {
+                "description": "A session stops itself after this many hours.",
+                "maximum": 168,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "description": "Workspace name shown in the console.",
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ref": {
+                "description": "Optional git ref for the repository.",
+                "type": "string"
+              },
+              "repository": {
+                "description": "Optional git repository cloned into /workspace on first start.",
+                "type": "string"
+              },
+              "size_gb": {
+                "description": "Saved project storage in GB for /workspace.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "gpu",
+              "gpu_count",
+              "gpu_memory_gb",
+              "max_hours",
+              "size_gb"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "workspace",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesConfigureArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "additionalProperties": false,
+            "description": "The complete new configuration.",
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "editor": {
+                "description": "Which tool the workspace opens with. Both stay available.",
+                "enum": [
+                  "vscode",
+                  "jupyter"
+                ],
+                "type": "string"
+              },
+              "environment": {
+                "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model from get_workspace_capabilities, such as A100 or RTX 4090.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "description": "Memory per GPU in GB, matching the chosen model.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "max_hours": {
+                "description": "A session stops itself after this many hours.",
+                "maximum": 168,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "name": {
+                "description": "Workspace name shown in the console.",
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "ref": {
+                "description": "Optional git ref for the repository.",
+                "type": "string"
+              },
+              "repository": {
+                "description": "Optional git repository cloned into /workspace on first start.",
+                "type": "string"
+              },
+              "size_gb": {
+                "description": "Saved project storage in GB for /workspace.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "gpu",
+              "gpu_count",
+              "gpu_memory_gb",
+              "max_hours",
+              "size_gb"
+            ],
+            "type": "object"
+          },
+          "configuration_revision": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "configuration_revision",
+          "configuration",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesStartArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesStopArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "session_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesConnectArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "tool": {
+            "enum": [
+              "editor",
+              "notebook",
+              "ssh"
+            ],
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesRunArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "job": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_usd": {
+                "description": "Spending cap for this job.",
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "command": {
+                "description": "Shell command run in /workspace.",
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": "string"
+              },
+              "gpu": {
+                "description": "GPU model, defaulting to the workspace's.",
+                "type": "string"
+              },
+              "gpu_count": {
+                "maximum": 8,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "gpu_memory_gb": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "command",
+              "budget_usd"
+            ],
+            "type": "object"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "job",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesWorkloadsArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesSessionsArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesScheduleArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "schedule": {
+            "additionalProperties": false,
+            "properties": {
+              "ready_by": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "stop_at": {
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "required": [
+              "ready_by"
+            ],
+            "type": "object"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "schedule",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "OperationWorkspacesUnscheduleArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
       "OperationWorkloadsSubmitArguments": {
         "additionalProperties": false,
         "properties": {
@@ -8331,6 +8818,45 @@
           },
           {
             "$ref": "#/components/schemas/OperationAgentsRunCancelArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesCapabilitiesArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesListArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesGetArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesCreateArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesConfigureArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesStartArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesStopArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesConnectArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesRunArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesWorkloadsArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesSessionsArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesScheduleArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesUnscheduleArguments"
           }
         ]
       },
@@ -8657,6 +9183,13 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "attempt_budget_usd": {
+            "type": ["number", "null"],
+            "minimum": 0.000001,
+            "maximum": 1000000,
+            "multipleOf": 0.000001,
+            "description": "Optional fixed reservation for each new attempt in USD, in whole microdollars. Omission preserves the legacy allocation policy. Increasing worker concurrency does not reduce this amount."
+          },
           "name": {
             "type": "string",
             "description": "Deployment name. An omitted built-in assistant name is generated from the idempotency key."
@@ -9570,6 +10103,13 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "attempt_budget_usd": {
+            "type": ["number", "null"],
+            "minimum": 0.000001,
+            "maximum": 1000000,
+            "multipleOf": 0.000001,
+            "description": "Fixed attempt reservation from the current accepted revision. Absent for the legacy allocation policy."
+          },
           "id": {
             "type": "string"
           },
@@ -9687,9 +10227,18 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "attempt_budget_usd": {
+            "type": ["number", "null"],
+            "minimum": 0.000001,
+            "maximum": 1000000,
+            "multipleOf": 0.000001,
+            "description": "Immutable attempt reservation accepted for this logical run. Absent for the legacy allocation policy."
+          },
           "recovery_policy": {
             "type": "string",
-            "enum": ["checkpoint-v1"],
+            "enum": [
+              "checkpoint-v1"
+            ],
             "description": "Accepted application-state recovery policy. Omitted for revisions with explicit file recovery."
           },
           "checkpoint_id": {
@@ -9698,7 +10247,12 @@
           },
           "checkpoint_status": {
             "type": "string",
-            "enum": ["pending", "ready", "committed", "failed"],
+            "enum": [
+              "pending",
+              "ready",
+              "committed",
+              "failed"
+            ],
             "description": "Latest capture status. Ready means uploaded files are verified but not yet committed with the journal boundary."
           },
           "checkpoint_error": {
@@ -9710,7 +10264,9 @@
             "format": "date-time",
             "description": "Commit time of the current useful application-state checkpoint. Omitted for empty baselines and runs without saved state."
           },
-          "payload_expired": {"type": "boolean"},
+          "payload_expired": {
+            "type": "boolean"
+          },
           "id": {
             "type": "string"
           },
@@ -9771,6 +10327,23 @@
           },
           "startup": {
             "$ref": "#/components/schemas/SandboxStartup"
+          },
+          "group_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+            "description": "Present for a task belonging to a static agent group."
+          },
+          "task_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+            },
+            "description": "Immutable prerequisite task keys within the group."
           }
         },
         "required": [
@@ -9778,6 +10351,314 @@
           "agent_id",
           "revision",
           "status"
+        ]
+      },
+      "ManagedAgentObservations": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "enum": [
+              "managed-agent-observations-v1"
+            ],
+            "description": "Version of these lifecycle observation semantics."
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Database observation time for this response. Subsequent pages can observe newer state."
+          },
+          "logical_runs": {
+            "$ref": "#/components/schemas/ManagedAgentLogicalRunCounts",
+            "description": "Counts of logical run statuses across all revisions of this definition. Running does not establish productive activity."
+          },
+          "allocations": {
+            "$ref": "#/components/schemas/ManagedAgentAllocationObservations",
+            "description": "Retained attempt and resource evidence. Counts can overlap and do not establish current healthy capacity."
+          },
+          "productive_active_agents": {
+            "type": "null",
+            "description": "Null because retained lifecycle records do not independently measure productive agent activity."
+          },
+          "productive_active_agents_status": {
+            "type": "string",
+            "enum": [
+              "measurement_unavailable"
+            ],
+            "description": "Whether productive agent concurrency is independently measured."
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagedAgentRunObservation"
+            }
+          },
+          "next_after": {
+            "type": "string",
+            "description": "Cursor for the next page in ascending run ID order, or an empty string. Each page has its own database snapshot."
+          }
+        },
+        "required": [
+          "schema_version",
+          "agent_id",
+          "observed_at",
+          "logical_runs",
+          "allocations",
+          "productive_active_agents",
+          "productive_active_agents_status",
+          "runs",
+          "next_after"
+        ]
+      },
+      "ManagedAgentLogicalRunCounts": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "queued": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "starting": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "waiting": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recovering": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "blocked": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "completed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cancelled": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "total",
+          "queued",
+          "starting",
+          "running",
+          "waiting",
+          "recovering",
+          "blocked",
+          "completed",
+          "cancelled"
+        ]
+      },
+      "ManagedAgentAllocationObservations": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "total_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "open_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Attempts not recorded closed, including admitted, starting, running and draining allocations."
+          },
+          "starting_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "draining_attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "warm_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Open attempts not assigned to a logical run."
+          },
+          "unresolved_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Attempts with uncertain creation or retained candidate cleanup and accounting incidents."
+          },
+          "cleanup_pending_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Attempts still open or lacking settled cleanup, including retained resource, lease, allowance or storage liability. Includes active attempts and does not mean stop was requested."
+          },
+          "unreleased_instances": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Known instance records without removal evidence. This is not a healthy instance count."
+          }
+        },
+        "required": [
+          "total_attempts",
+          "open_attempts",
+          "starting_attempts",
+          "draining_attempts",
+          "warm_attempts",
+          "unresolved_attempts",
+          "cleanup_pending_attempts",
+          "unreleased_instances"
+        ]
+      },
+      "ManagedAgentRunObservation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "starting",
+              "running",
+              "waiting",
+              "recovering",
+              "blocked",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "first_allocation_created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Earliest retained attempt creation time. A warm allocation can predate submission."
+          },
+          "first_boot_observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Earliest retained sandbox boot binding. A warm boot can predate submission."
+          },
+          "first_driver_started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "First recorded driver process start. This is not proof of useful task work."
+          },
+          "first_session_started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "First durable driver session receipt."
+          },
+          "first_step_completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "First retained completed step receipt. A completed step does not establish accepted task output."
+          },
+          "first_useful_command_at": {
+            "type": "null",
+            "description": "Null because useful work requires independent workload evidence."
+          },
+          "first_useful_command_status": {
+            "type": "string",
+            "enum": [
+              "measurement_unavailable"
+            ],
+            "description": "Whether useful command activity is independently measured."
+          },
+          "result_committed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Logical result commit time for completed runs. Customer acceptance is checked separately."
+          },
+          "cleanup_completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Latest attempt closure when every associated attempt and retained resource liability is settled. Otherwise null."
+          },
+          "open_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Attempts not recorded closed, including admitted, starting, running and draining allocations."
+          },
+          "unresolved_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Attempts with uncertain creation or retained candidate cleanup and accounting incidents."
+          },
+          "cleanup_pending_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Attempts still open or lacking settled cleanup, including retained resource, lease, allowance or storage liability. Includes active attempts and does not mean stop was requested."
+          },
+          "unreleased_instances": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Known instance records without removal evidence. This is not a healthy instance count."
+          }
+        },
+        "required": [
+          "run_id",
+          "revision",
+          "status",
+          "attempt_count",
+          "submitted_at",
+          "first_allocation_created_at",
+          "first_boot_observed_at",
+          "first_driver_started_at",
+          "first_session_started_at",
+          "first_step_completed_at",
+          "first_useful_command_at",
+          "first_useful_command_status",
+          "result_committed_at",
+          "cleanup_completed_at",
+          "open_attempts",
+          "unresolved_attempts",
+          "cleanup_pending_attempts",
+          "unreleased_instances"
         ]
       },
       "ManagedAgentSubmit": {
@@ -10657,6 +11538,16 @@
               "assistant_template": {
                 "type": "string"
               },
+              "attempt_budget_usd": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "bootstrap": {
                 "anyOf": [
                   {
@@ -10892,6 +11783,16 @@
                 "properties": {
                   "assistant_template": {
                     "type": "string"
+                  },
+                  "attempt_budget_usd": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "bootstrap": {
                     "anyOf": [
@@ -12629,6 +13530,583 @@
         },
         "required": [
           "authorization"
+        ]
+      },
+      "ManagedBrokerLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Immutable lifetime request, token, read-byte and invocation-history ceilings. At least one operation kind must have a positive request allowance. Model requests require positive input and output allowances. Zero model or tool requests require their matching unit allowances to be zero. Limits must fit an independently configured account policy. Waiting and unknown outcomes retain their counted liabilities. These units do not represent model prices.",
+        "properties": {
+          "model_requests": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000
+          },
+          "tool_requests": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "read_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1099511627776
+          },
+          "max_concurrent": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1024
+          },
+          "max_retained_invocations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000
+          },
+          "max_retained_bytes": {
+            "type": "integer",
+            "minimum": 4096,
+            "maximum": 1073741824
+          }
+        },
+        "required": [
+          "model_requests",
+          "input_tokens",
+          "output_tokens",
+          "tool_requests",
+          "read_bytes",
+          "max_concurrent",
+          "max_retained_invocations",
+          "max_retained_bytes"
+        ]
+      },
+      "ManagedBrokerModelUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Active counts dispatched requests. Unresolved counts dispatched effects whose results remain unknown. Both retain concurrency and reserved units until authoritative settlement.",
+        "properties": {
+          "requests_used": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requests_reserved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "active": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unresolved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_tokens_used": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens_used": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "input_tokens_reserved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens_reserved": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "requests_used",
+          "requests_reserved",
+          "active",
+          "unresolved",
+          "input_tokens_used",
+          "output_tokens_used",
+          "input_tokens_reserved",
+          "output_tokens_reserved"
+        ]
+      },
+      "ManagedBrokerToolUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requests_used": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "requests_reserved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "active": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unresolved": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "read_bytes_used": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "read_bytes_reserved": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "requests_used",
+          "requests_reserved",
+          "active",
+          "unresolved",
+          "read_bytes_used",
+          "read_bytes_reserved"
+        ]
+      },
+      "ManagedBrokerWait": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "model_request_limit",
+              "model_token_limit",
+              "tool_request_limit",
+              "tool_byte_limit",
+              "broker_concurrency_limit",
+              "broker_outcome_unknown",
+              "broker_unavailable"
+            ]
+          },
+          "requests": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        "required": [
+          "reason",
+          "requests"
+        ]
+      },
+      "ManagedBrokerUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/ManagedBrokerModelUsage"
+          },
+          "tools": {
+            "$ref": "#/components/schemas/ManagedBrokerToolUsage"
+          },
+          "waits": {
+            "type": "array",
+            "maxItems": 7,
+            "items": {
+              "$ref": "#/components/schemas/ManagedBrokerWait"
+            }
+          }
+        },
+        "required": [
+          "model",
+          "tools",
+          "waits"
+        ]
+      },
+      "ManagedPeerUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Lifetime accepted message counts and payload bytes. Received means committed to the recipient journal. It does not prove the application acted on a message. Uncertain publication ownership remains visible until independently reconciled.",
+        "properties": {
+          "messages": {"type": "integer", "minimum": 0},
+          "bytes": {"type": "integer", "minimum": 0},
+          "pending": {"type": "integer", "minimum": 0},
+          "received": {"type": "integer", "minimum": 0},
+          "undelivered": {"type": "integer", "minimum": 0},
+          "cleanup_pending": {"type": "integer", "minimum": 0},
+          "cleanup_unresolved": {"type": "integer", "minimum": 0},
+          "max_messages": {"type": "integer", "minimum": 1, "maximum": 10000},
+          "max_bytes": {"type": "integer", "minimum": 1, "maximum": 33554432}
+        },
+        "required": ["messages", "bytes", "pending", "received", "undelivered", "cleanup_pending", "cleanup_unresolved", "max_messages", "max_bytes"]
+      },
+      "ManagedAgentGroupCreate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "attempt_budget_usd": {
+            "type": ["number", "null"],
+            "minimum": 0.000001,
+            "maximum": 1000000,
+            "multipleOf": 0.000001,
+            "description": "Optional fixed attempt reservation in whole microdollars. It can narrow the selected revision cap. Omission inherits that revision cap."
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "agent_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Omit or use zero to pin the current definition revision when the group is created."
+          },
+          "budget_usd": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000000,
+            "multipleOf": 1e-06,
+            "description": "A sublimit of the existing deployment budget. This does not create a second funded balance."
+          },
+          "max_active": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Authorized attempts in admitting, starting or running state, including retained waiting workers. This is not measured productive concurrency."
+          },
+          "max_held": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "All unsettled assigned attempts, including draining and uncertain allocations. Must be at least max_active and at most the deployment worker limit."
+          },
+          "max_pending": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "description": "All nonterminal tasks, including active, waiting and blocked work. Omit or use zero for the smaller of 1000 and the account entitlement."
+          },
+          "broker_limits": {
+            "$ref": "#/components/schemas/ManagedBrokerLimits",
+            "description": "Optional independently enabled broker enrollment. Omission preserves existing direct model and tool workflows. Accepted limits are immutable."
+          }
+        },
+        "required": [
+          "name",
+          "agent_id",
+          "budget_usd",
+          "max_active",
+          "max_held"
+        ]
+      },
+      "ManagedAgentGroupTask": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$",
+            "description": "Immutable identity within this group. Reuse with identical content to recover the same run."
+          },
+          "input": {
+            "description": "Valid JSON without duplicate object keys, bounded to 256 KiB. The complete batch is also limited to 1 MiB."
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+            },
+            "maxItems": 100,
+            "uniqueItems": true,
+            "description": "Prerequisite task keys from this group or the same batch. All prerequisites must commit success before dispatch. Results are not automatically copied into this input."
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date-time",
+            "description": "A new task deadline must be in the future. Accepted task retries preserve the original deadline."
+          }
+        },
+        "required": [
+          "task_key",
+          "input"
+        ]
+      },
+      "ManagedAgentGroupBatchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/ManagedAgentGroupTask"
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ]
+      },
+      "ManagedAgentGroupTaskReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "task_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          }
+        },
+        "required": [
+          "task_key",
+          "run_id"
+        ]
+      },
+      "ManagedAgentGroupBatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "group_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "runs": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/ManagedAgentGroupTaskReceipt"
+            },
+            "description": "Stable task and run identities in request order."
+          }
+        },
+        "required": [
+          "group_id",
+          "runs"
+        ]
+      },
+      "ManagedAgentGroup": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "attempt_budget_usd": {
+            "type": ["number", "null"],
+            "minimum": 0.000001,
+            "maximum": 1000000,
+            "multipleOf": 0.000001,
+            "description": "Immutable fixed attempt reservation accepted for this group and its child runs. Absent for the legacy allocation policy."
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "agent_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:_.-]{1,128}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "cancelled"
+            ],
+            "description": "Admission lifecycle. Use logical_runs for task progress and allocations for remaining cleanup."
+          },
+          "budget_usd": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000000,
+            "multipleOf": 1e-06,
+            "description": "A sublimit of the existing deployment budget. This does not create a second funded balance."
+          },
+          "max_active": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Authorized attempts in admitting, starting or running state, including retained waiting workers. This is not measured productive concurrency."
+          },
+          "max_held": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "All unsettled assigned attempts, including draining and uncertain allocations. Must be at least max_active and at most the deployment worker limit."
+          },
+          "max_pending": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "max_retained_runs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
+            "description": "Persisted admission cap for runs whose payloads have not expired. Completion alone does not release this count."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "logical_runs": {
+            "$ref": "#/components/schemas/ManagedAgentLogicalRunCounts",
+            "description": "Counts only tasks belonging to this group, excluding other groups and standalone runs. Running does not establish productive activity."
+          },
+          "allocations": {
+            "$ref": "#/components/schemas/ManagedAgentAllocationObservations",
+            "description": "Retained attempts and resources assigned to this group. Unassigned warm attempts belong to the deployment account and are excluded. Counts can overlap and do not establish current healthy capacity."
+          },
+          "retained_runs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Settled attempt costs within the deployment account."
+          },
+          "reserved_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Full budget liability of every unsettled assigned attempt. A closed marker alone cannot release this reservation."
+          },
+          "active_authorized_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Attempts in admitting, starting or running state. Includes retained waiting or recovering workers and does not establish productive activity."
+          },
+          "work_status": {
+            "type": "string",
+            "enum": [
+              "empty",
+              "pending",
+              "running",
+              "waiting",
+              "blocked",
+              "completed",
+              "cancelled",
+              "cancelling"
+            ],
+            "description": "Read-only summary of the current logical runs, independent of group admission and remaining cleanup."
+          },
+          "blocked_reasons": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/ManagedAgentGroupBlockedReason"
+            },
+            "description": "Sorted public categories counting each waiting or blocked logical run once. Active running work is excluded unless group cancellation fences it. Empty groups return an empty array."
+          },
+          "cleanup_status": {
+            "type": "string",
+            "enum": [
+              "complete",
+              "pending",
+              "unresolved"
+            ],
+            "description": "Separate from useful task completion. Unresolved resource, accounting or message publication evidence takes precedence, followed by pending allocation or inbox cleanup."
+          },
+          "broker_limits": {
+            "$ref": "#/components/schemas/ManagedBrokerLimits",
+            "description": "Optional independently enabled broker enrollment. Omission preserves existing direct model and tool workflows. Accepted limits are immutable."
+          },
+          "broker_usage": {
+            "$ref": "#/components/schemas/ManagedBrokerUsage",
+            "description": "Present only for broker-enrolled groups. Separate integer model and tool accounting from compute costs and logical-run wait counts."
+          },
+          "peer_messaging": {
+            "type": "boolean",
+            "description": "Read-only availability of direct task messaging, assigned automatically when this group is admitted on a supported deployment. Existing groups retain their original availability."
+          },
+          "peer_usage": {
+            "$ref": "#/components/schemas/ManagedPeerUsage"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "agent_id",
+          "revision",
+          "status",
+          "budget_usd",
+          "max_active",
+          "max_held",
+          "max_pending",
+          "max_retained_runs",
+          "created_at",
+          "cancelled_at",
+          "logical_runs",
+          "allocations",
+          "retained_runs",
+          "cost_usd",
+          "reserved_usd",
+          "active_authorized_attempts",
+          "work_status",
+          "blocked_reasons",
+          "cleanup_status"
+        ]
+      },
+      "ManagedAgentGroupBlockedReason": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "admission_rejected",
+              "admission_retry",
+              "allocation_cleanup",
+              "attention_required",
+              "budget",
+              "cancelling",
+              "children",
+              "dependencies",
+              "dependency_blocked",
+              "execution_capacity",
+              "external_outcome_unknown",
+              "messages",
+              "queued",
+              "recovering",
+              "session",
+              "signal",
+              "starting",
+              "timer",
+              "waiting",
+              "workspace_capacity"
+            ]
+          },
+          "runs": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "reason",
+          "runs"
         ]
       }
     },
@@ -16008,7 +17486,7 @@
     "/v1/research-workspaces": {
       "post": {
         "operationId": "createResearchWorkspace",
-        "summary": "Create a saved GPU research workspace",
+        "summary": "Create a saved research workspace",
         "tags": ["Research workspaces"],
         "description": "Saves a unique named project and its environment configuration without starting compute. Requires a Bearer API key or console session. Duplicate names are rejected. This operation does not require an Idempotency-Key and is not an idempotent create. Use start to admit a compute session.",
         "requestBody": {
@@ -16036,7 +17514,11 @@
         "operationId": "listResearchWorkspaces",
         "summary": "List saved research workspaces",
         "tags": ["Research workspaces"],
-        "description": "Returns the latest 100 workspaces owned by the authenticated account, newest first. Includes compute-session costs, separate retained-storage costs and tool readiness. No pagination cursor is currently exposed.",
+        "description": "Returns a page of workspaces owned by the authenticated account, newest first. The default and maximum page size are 100. Includes compute-session costs, separate retained-storage costs and tool readiness. Continue with next_cursor until it is empty. Pages reflect current records and do not form a snapshot across concurrent changes.",
+        "parameters": [
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100}, "description": "Maximum workspaces on this page."},
+          {"name": "cursor", "in": "query", "schema": {"type": "string", "maxLength": 1024}, "description": "Opaque next_cursor from this account's previous research workspace page."}
+        ],
         "responses": {
           "200": {
             "description": "Workspace list",
@@ -16058,7 +17540,8 @@
         "operationId": "quoteWorkspacePrice",
         "summary": "Preview the whole-machine hourly price",
         "tags": ["Research workspaces"],
-        "description": "Read-only estimate for the supplied configuration, including exact GPU count and per-device memory. Send the same configuration used for workspace creation. A successful estimate does not reserve capacity, lock the price or start compute. Refresh expired estimates before starting. Launch checks price and capacity again against session and account spending controls.",
+        "description": "Read-only estimate for the supplied configuration, including CPU or GPU requirements and runtime storage. Send the same configuration used for workspace creation. For a saved workspace, include workspace_id to account for the additional disk needed to restore its files. A successful estimate does not reserve capacity, lock the price or start compute. Refresh expired estimates before starting. Launch checks price, capacity and account funding again.",
+        "parameters": [{"name": "workspace_id", "in": "query", "schema": {"type": "string"}, "description": "Optional saved workspace owned by this account. The supplied configuration must match its current saved revision. Includes restore disk in direct-compute estimates. Returns 404 for an unavailable workspace or 409 for a changed configuration."}],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResearchWorkspaceConfiguration"}}}},
         "responses": {
           "200": {"description": "Current exact-configuration estimate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/WorkspacePricePreview"}}}},
@@ -16684,8 +18167,13 @@
       "get": {
         "operationId": "listWorkspaces",
         "summary": "List owned workspace metadata",
+        "description": "Returns a page ordered by workspace name and identifier. The default and maximum page size are 1000. Continue with next_cursor until it is empty. Saved workspaces remain visible after compute stops. Pages reflect current records and do not form a snapshot across concurrent changes.",
         "tags": [
           "Workspaces"
+        ],
+        "parameters": [
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 1000}, "description": "Maximum workspaces on this page."},
+          {"name": "cursor", "in": "query", "schema": {"type": "string", "maxLength": 1024}, "description": "Opaque next_cursor from this account's previous workspace page."}
         ],
         "responses": {
           "200": {
@@ -16700,9 +18188,15 @@
                   "properties": {
                     "workspaces": {
                       "type": "array",
+                      "maxItems": 1000,
                       "items": {
                         "$ref": "#/components/schemas/WorkspaceRecord"
                       }
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "maxLength": 1024,
+                      "description": "Opaque continuation for this account and list. Empty when this page has no further records."
                     }
                   }
                 }
@@ -20373,6 +21867,75 @@
         }
       }
     },
+    "/v1/agents/{id}/observations": {
+      "get": {
+        "operationId": "getManagedAgentObservations",
+        "summary": "Observe retained lifecycle evidence and resource liability",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedAgentObservations"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The agent definition does not exist or is not owned by the authenticated tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires authentication and an agent definition owned by the authenticated tenant. Returns 404 when the definition does not exist or belongs to another tenant. Returns one read-only database snapshot with a paginated run projection. Counts cover all runs of the definition. Missing timestamps and productive activity remain explicitly unmeasured. Available for retained work when new admission is disabled."
+      }
+    },
     "/v1/agents/{id}/runs": {
       "post": {
         "operationId": "submitManagedRun",
@@ -21972,6 +23535,423 @@
             "description": "Usage-continuation forecast horizon in days."
           }
         ]
+      }
+    },
+    "/v1/agents/{id}/groups": {
+      "get": {
+        "operationId": "listManagedAgentGroups",
+        "summary": "Discover retained groups for an agent definition",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Group ID from next_after. Must belong to the same tenant and agent definition."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retained groups in descending creation order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "groups": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ManagedAgentGroup"
+                      }
+                    },
+                    "next_after": {
+                      "type": "string",
+                      "description": "Use as after for the next page. Empty when no older groups remain."
+                    }
+                  },
+                  "required": [
+                    "groups",
+                    "next_after"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Definition or cursor is missing or not owned by this tenant and definition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Accepts API-key and console-session authentication. Returns retained active and cancelled groups for the owned definition, including while new admission is disabled. Groups are ordered by creation time descending, then group ID descending. Each page is a consistent read-only snapshot. Newer groups are discovered by restarting from the first page. Listing does not grant admission entitlement, increase execution limits or reserve spending."
+      }
+    },
+    "/v1/agent-groups": {
+      "post": {
+        "operationId": "createManagedAgentGroup",
+        "summary": "Create a bounded group on one agent definition",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stable key for this logical operation. Reuse the same key and body after an uncertain response."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedAgentGroup"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group or definition is missing or belongs to another tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedAgentGroupCreate"
+              }
+            }
+          }
+        },
+        "description": "Requires explicit group admission entitlement and an owned agent definition. Pins one definition revision. The same submission key and body recover the same group after an uncertain response, including when new admission is disabled. Group limits cannot raise the deployment worker or spending limit."
+      }
+    },
+    "/v1/agent-groups/{id}": {
+      "get": {
+        "operationId": "getManagedAgentGroup",
+        "summary": "Observe group progress and outstanding allocation liability",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedAgentGroup"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group or definition is missing or belongs to another tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. Returns one database snapshot of task counts, retained payload counts, settled spending and unsettled allocations. Available when new admission is disabled."
+      }
+    },
+    "/v1/agent-groups/{id}/runs": {
+      "post": {
+        "operationId": "submitManagedAgentGroupBatch",
+        "summary": "Atomically submit up to 100 independent or dependent tasks",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stable key for this logical operation. Reuse the same key and body after an uncertain response."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedAgentGroupBatch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group or definition is missing or belongs to another tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedAgentGroupBatchRequest"
+              }
+            }
+          }
+        },
+        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. The whole request is limited to 1 MiB. Duplicate task keys, missing dependencies and cycles are rejected atomically. A task key with changed input, dependencies or deadline conflicts. Retrying the same batch key returns its original ordered receipt even after cancellation or admission disablement. Separate tasks have independent sessions and writable state."
+      },
+      "get": {
+        "operationId": "listManagedAgentGroupRuns",
+        "summary": "List retained tasks with stable pagination",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ManagedAgentRun"
+                      }
+                    },
+                    "next_after": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "runs",
+                    "next_after"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group or definition is missing or belongs to another tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. Returns existing managed-run projections ordered by run ID. Pass next_after as after and stop at an empty cursor. Cursor ownership is checked. Each page is a separate database snapshot."
+      }
+    },
+    "/v1/agent-groups/{id}/cancel": {
+      "post": {
+        "operationId": "cancelManagedAgentGroup",
+        "summary": "Fence new group work and continue member cleanup",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stable key for this logical operation. Reuse the same key and body after an uncertain response."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedAgentGroup"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group or definition is missing or belongs to another tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. Commits a durable cancellation fence. Existing executors asynchronously cancel nonterminal members and reconcile their allocations, including when new admission is disabled. The 202 response does not claim completed physical cleanup. Previously completed results are retained."
       }
     }
   },

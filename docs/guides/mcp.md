@@ -32,7 +32,7 @@ It manages the Python runtime and package dependencies for you.
 **1. Sign in once.** Run this in your terminal and complete browser sign-in:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.7.2' nodus login
+uvx --from 'nodus-compute[mcp]==0.8.0' nodus login
 ```
 
 **2. Add Nodus to your MCP client.** In Claude Desktop or Cursor, add this to
@@ -43,7 +43,7 @@ your MCP server configuration and reload the connection:
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.7.2", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.8.0", "nodus-mcp"]
     }
   }
 }
@@ -52,7 +52,7 @@ your MCP server configuration and reload the connection:
 For Codex, run this instead of editing JSON:
 
 ```sh
-codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.7.2' nodus-mcp
+codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.8.0' nodus-mcp
 ```
 
 The server uses your saved sign-in. There is no API key to paste into the
@@ -66,7 +66,7 @@ without starting paid compute. Your local client should discover nine tools.
 Install the MCP extra and reuse your existing Nodus sign-in:
 
 ```sh
-pip install --upgrade 'nodus-compute[mcp]==0.7.2'
+pip install --upgrade 'nodus-compute[mcp]==0.8.0'
 nodus login
 ```
 
@@ -265,6 +265,29 @@ require sandbox write permission. Metadata and recorded-output tools do not
 wake workers. Customer sandbox tools cannot access managed-agent worker
 sandboxes. Terminating compute does not delete saved projects.
 
+## GPU workspaces
+
+Workspace tools let an agent manage a researcher's GPU machine end to end.
+Hosted connections request the `workspaces:read` and `workspaces:write`
+permissions. Local connections use your saved SDK credential.
+
+| Tools | Purpose |
+| --- | --- |
+| `get_workspace_capabilities`, `list_workspaces`, `get_workspace` | Discover environments and GPU counts, and read state, connections and spending |
+| `create_workspace`, `configure_workspace` | Save a configuration without renting compute, and change it for the next session |
+| `start_workspace`, `stop_workspace` | Rent compute and restore saved files, then save files and release compute |
+| `get_workspace_connection` | A browser URL for the editor or notebook, or SSH details including a VS Code Remote link |
+| `run_in_workspace`, `list_workspace_workloads` | Run a command against the saved project as a workload with its own budget |
+| `list_workspace_sessions`, `schedule_workspace`, `cancel_workspace_schedule` | Read session history and have compute ready by a chosen time |
+
+`create_workspace` takes a `workspace` object with `name`, `gpu`, `gpu_count`,
+`gpu_memory_gb`, `max_hours` and `size_gb`, plus optional `environment`,
+`editor`, `budget_usd`, `repository` and `ref`. `stop_workspace` needs the
+`session_id` shown by `get_workspace`. `run_in_workspace` takes a `job` with
+`command` and a required `budget_usd`. Starting returns before the tools are
+ready, so poll `get_workspace` until the wanted connection is true before
+asking for a connection.
+
 ### Local project and file transfers
 
 The local MCP server adds these tools:
@@ -274,6 +297,8 @@ The local MCP server adds these tools:
 | `upload_project` | `project`, `idempotency_key` | Verified immutable `asset_id`, stored `sha256` and original `upload_sha256` |
 | `upload_sandbox_file` | `sandbox_id`, `source`, `path`, `idempotency_key` | Verified remote file or directory upload |
 | `download_sandbox_file` | `sandbox_id`, `path`, `destination`, `idempotency_key` | Verified local file or directory download |
+| `upload_workspace_files` | `workspace_id`, `directory`, `idempotency_key` | Replace a stopped workspace's saved project with a local folder and wait for verification |
+| `download_workspace_files` | `workspace_id`, `destination` | Verified tar archive of the saved project, existing files refused |
 | `get_operation_manifest` | None | Versioned schemas and annotations for explicitly supported local operations |
 
 `upload_project` packages a local folder with the managed-project exclusions,

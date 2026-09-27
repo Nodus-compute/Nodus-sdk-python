@@ -43,7 +43,8 @@ from ._rl import (
 )
 from ._secrets import Secrets, AsyncSecrets
 from ._connections import Connections, AsyncConnections
-from ._workspaces import Workspaces, AsyncWorkspaces
+from ._workspaces import Workspaces, AsyncWorkspaces, Workspace, AsyncWorkspace
+from ._volumes import Volumes, AsyncVolumes
 from ._operations import Operations, AsyncOperations, OperationDefinition, OperationCatalog, WorkloadPage, WorkloadValidation, RunDraft, RunDraftValues, RunDraftPatch
 
 from ._pool_predict import PredictSubscription, ForecastPoint, ForecastQueue, ForecastSeries, ForecastCalibration, PoolForecastSnapshot, PoolForecast, PoolRecommendation, PoolRecommendations, RecommendationOutcome
@@ -88,6 +89,7 @@ from .errors import (
     SignatureError,
     SpendCheckUnavailableError,
     ValidationError,
+    WorkspaceNotReadyError,
     error_from_response,
     asset_id_from_error,
 )
@@ -171,6 +173,13 @@ __all__ = [
     "Secrets",
     "AsyncSecrets",
     "Sandbox",
+    "Workspace",
+    "AsyncWorkspace",
+    "Workspaces",
+    "AsyncWorkspaces",
+    "Volumes",
+    "AsyncVolumes",
+    "WorkspaceNotReadyError",
     "SandboxExec",
     "AsyncSandboxes",
     "AsyncSandbox",
@@ -983,8 +992,13 @@ class Client(_Transport):
 
     @property
     def workspaces(self) -> Workspaces:
-        """Manage named persistent workspace metadata."""
+        """GPU workspaces: create, start, connect, run jobs, move files, stop."""
         return Workspaces(self)
+
+    @property
+    def volumes(self) -> Volumes:
+        """Named storage volumes that sandboxes mount between sessions."""
+        return Volumes(self)
 
     @property
     def agents(self):
@@ -1447,8 +1461,13 @@ class AsyncClient(_Transport):
 
     @property
     def workspaces(self) -> AsyncWorkspaces:
-        """Manage named persistent workspace metadata."""
+        """GPU workspaces: create, start, connect, run jobs, move files, stop."""
         return AsyncWorkspaces(self)
+
+    @property
+    def volumes(self) -> AsyncVolumes:
+        """Named storage volumes that sandboxes mount between sessions."""
+        return AsyncVolumes(self)
 
     @property
     def agents(self):
@@ -2049,6 +2068,16 @@ class AsyncWorkload(_WorkloadState):
 from . import _agent as agent
 from ._steps import step, step_context
 from .errors import StepOutcomeUnknown, StepDefinitionConflict, StepResultExpired, StepFailed
+from .errors import AgentChildrenUnavailable
+from ._agent_children import ChildReference, ChildOutcome, ChildCompletions, ChildCancellation
+__all__.extend(['AgentChildrenUnavailable', 'ChildReference', 'ChildOutcome', 'ChildCompletions', 'ChildCancellation'])
+
+from .errors import AgentMessagesUnavailable
+from ._agent_messages import MessageReceipt, PeerMessage
+__all__.extend(['AgentMessagesUnavailable', 'MessageReceipt', 'PeerMessage'])
 
 from ._agent_runs import AgentRun
 __all__.append("AgentRun")
+
+from .errors import AgentBrokerUnavailable, BrokerRefused
+__all__.extend(['AgentBrokerUnavailable', 'BrokerRefused'])

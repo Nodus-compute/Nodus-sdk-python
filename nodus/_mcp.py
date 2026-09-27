@@ -166,6 +166,8 @@ def create_server(base_url: str | None = None) -> FastMCP:
     register_execution_tools(server, base_url, _request)
     from ._mcp_transfers import register_transfer_tools
     register_transfer_tools(server, base_url, _check_origin)
+    from ._mcp_workspaces import register_workspace_tools
+    register_workspace_tools(server, base_url, _request, _check_origin)
     from ._mcp_manifest import register_manifest
     register_manifest(server)
     return server

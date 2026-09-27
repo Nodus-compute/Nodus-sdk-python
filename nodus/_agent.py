@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 import httpx
-from .errors import NodusError, ValidationError, StepOutcomeUnknown, StepDefinitionConflict, StepResultExpired, StepFailed
+from .errors import NodusError, ValidationError, StepOutcomeUnknown, StepDefinitionConflict, StepResultExpired, StepFailed, AgentChildrenUnavailable, AgentBrokerUnavailable, AgentMessagesUnavailable
 
 _ID = re.compile(r'^[A-Za-z0-9:_.-]{1,128}$')
 _MAX = 256 << 10
@@ -73,6 +73,10 @@ def decode(value: Any) -> Any:
         raise StepOutcomeUnknown('The durable result could not be verified') from exc
 
 
+class _BrokerMissing(Exception):
+    pass
+
+
 class _RPC:
     def __init__(self):
         path = os.environ.get('NODUS_AGENT_SOCKET', '')
@@ -98,6 +102,36 @@ class _RPC:
                 if attempt == 2:
                     raise StepOutcomeUnknown('Journal acknowledgement unavailable') from None
                 continue
+            if action in ('broker_invoke', 'broker_status'):
+                try:
+                    refusal = response.json()
+                except ValueError:
+                    refusal = None
+                code = (refusal.get('code') or refusal.get('error')) if isinstance(refusal, dict) else None
+                if action == 'broker_status' and response.status_code == 404 and code == 'not_found':
+                    raise _BrokerMissing()
+                if (response.status_code == 400 and code == 'agent_bridge_unavailable'
+                        or response.status_code in (409, 503) and code in (
+                            'managed_broker_unavailable', 'managed_broker_runtime_unqualified', 'managed_broker_profile_unqualified')):
+                    raise AgentBrokerUnavailable('The requested broker is unavailable for this managed runtime or account')
+            if action in ('child_spawn', 'children_wait', 'child_cancel', 'child_result', 'child_blob_get'):
+                try:
+                    refusal = response.json()
+                except ValueError:
+                    refusal = None
+                code = (refusal.get('code') or refusal.get('error')) if isinstance(refusal, dict) else None
+                if (response.status_code == 503 and code == 'managed_agent_children_unavailable'
+                        or response.status_code == 400 and code == 'agent_bridge_unavailable'):
+                    raise AgentChildrenUnavailable('Durable child operations are unavailable for this managed runtime')
+            if action in ('peer_send', 'peer_receive'):
+                try:
+                    refusal = response.json()
+                except ValueError:
+                    refusal = None
+                code = (refusal.get('code') or refusal.get('error')) if isinstance(refusal, dict) else None
+                if (response.status_code == 503 and code == 'managed_agent_peer_messages_unavailable'
+                        or response.status_code == 400 and code == 'agent_bridge_unavailable'):
+                    raise AgentMessagesUnavailable('Peer messages are unavailable for this managed group or runtime')
             if response.status_code >= 500:
                 if attempt == 2:
                     raise StepOutcomeUnknown('Journal acknowledgement unavailable')
@@ -113,7 +147,11 @@ class _RPC:
                 if not isinstance(code, str):
                     code = 'unavailable'
                 error = {'step_definition_conflict': StepDefinitionConflict,
+                         'idempotency_conflict': StepDefinitionConflict,
                          'step_result_expired': StepResultExpired,
+                         'managed_agent_child_result_expired': StepResultExpired,
+                         'managed_agent_child_blob_expired': StepResultExpired,
+                         'managed_artifact_expired': StepResultExpired,
                          'step_failed': StepFailed}.get(code, StepOutcomeUnknown)
                 raise error('Agent journal refused operation: ' + (code if isinstance(code, str) and _ID.fullmatch(code) else 'unavailable'))
             return value
@@ -133,6 +171,9 @@ class _Session:
             raise StepOutcomeUnknown('Invalid checkpoint identity')
         self.rpc = rpc
         self.scope = {'run_id': run_id, 'session_token': token, 'epoch': epoch}
+        self.peer_messages_version = receipt.get('peer_messages_version')
+        self.peer_group_id = receipt.get('peer_group_id')
+        self.peer_task_key = receipt.get('peer_task_key')
         self.guard = threading.Lock()
         self.stopped = threading.Event()
         self.failed = threading.Event()
@@ -176,6 +217,10 @@ class _Session:
         receipt = self.rpc.call('checkpoint_begin', {**self.scope, 'request_id': uuid.uuid4().hex,
                                 'operation': operation, 'operation_id': operation_id, **values})
         checkpoint_id = receipt.get('checkpoint_id')
+        if operation == 'child_cancel' and receipt.get('status') == 'legacy_replay' and checkpoint_id == '':
+            # Only an existing cancellation may predate checkpoint capture.
+            # The effect endpoint still verifies its original key and target.
+            return {}
         if not isinstance(checkpoint_id, str) or not _ID.fullmatch(checkpoint_id):
             raise StepOutcomeUnknown('Invalid checkpoint identity')
         deadline = time.monotonic() + 45 * 60
@@ -193,8 +238,23 @@ class _Session:
                 raise StepOutcomeUnknown('State checkpoint failed: ' + code)
             if status not in ('pending', 'ready') or time.monotonic() >= deadline:
                 raise StepOutcomeUnknown('State checkpoint was not durably acknowledged')
-            self.stopped.wait(.25)
-            receipt = self.rpc.call('checkpoint_status', {**self.scope, 'checkpoint_id': checkpoint_id})
+            # Keep a pause when an older or saturated server returns immediately.
+            if self.stopped.wait(.25):
+                raise StepOutcomeUnknown('Checkpoint observation stopped')
+            request = {**self.scope, 'checkpoint_id': checkpoint_id}
+            wait_max = receipt.get('status_wait_max_ms')
+            if type(wait_max) is int and 0 < wait_max <= 4000:
+                try:
+                    expiry = datetime.fromisoformat(self.expiry.replace('Z', '+00:00'))
+                    remaining = (expiry - datetime.now(timezone.utc)).total_seconds()
+                except (AttributeError, TypeError, ValueError):
+                    remaining = 0
+                # The private transport serializes renewal and up to three
+                # ten-second attempts. Leave renewal headroom after all of them.
+                wait_ms = min(wait_max, max(0, int((deadline - time.monotonic()) * 1000)))
+                if remaining >= 40 and wait_ms > 0:
+                    request.update(wait_ms=wait_ms, known_status=status)
+            receipt = self.rpc.call('checkpoint_status', request)
 
     def close(self):
         self.stopped.set()
@@ -212,7 +272,7 @@ def resume(entrypoint, *, run_id: str, version: str, name: str | None = None):
     session = None
     context_token = None
     try:
-        receipt = rpc.call('session', {'run_id': run_id, 'request_id': uuid.uuid4().hex})
+        receipt = rpc.call('session', {'run_id': run_id, 'request_id': uuid.uuid4().hex, 'peer_messages_version': 1})
         run = receipt.get('run')
         if not isinstance(run, dict) or run.get('run_id') != run_id or run.get('name') != name or run.get('version') != version:
             raise StepDefinitionConflict('Entrypoint identity differs from the registered run')
@@ -297,10 +357,10 @@ def continue_as_new(input: Any, *, continuation_id: str):
     raise _YieldExecution()
 
 
-def put_blob(data: bytes) -> dict:
+def put_blob(data: bytes, *, storage: str = 'database') -> dict:
     """Commit large bytes and return an immutable reference suitable for a step result."""
     from .agent_runtime import put_blob as put
-    return put(data)
+    return put(data, storage=storage)
 
 
 def get_blob(reference: dict) -> bytes:
@@ -309,6 +369,14 @@ def get_blob(reference: dict) -> bytes:
     return get(reference)
 
 
+from ._agent_children import (
+    ChildReference, ChildOutcome, ChildCompletions, ChildCancellation,
+    spawn_child, await_children, next_child_completions, cancel_child, child_result, get_child_blob,
+)
+
+from ._agent_messages import MessageReceipt, PeerMessage, send_message, receive_messages
+
+from ._agent_broker import complete_model, read_blob_chunk
 def model(messages: list[dict[str, str]], *, call_id: str, max_output_tokens: int,
           model: str | None = None, system: str | None = None) -> dict:
     """Read a durable hosted model response under a stable call ID inside a managed step."""

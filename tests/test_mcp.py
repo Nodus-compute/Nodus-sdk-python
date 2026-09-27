@@ -569,3 +569,113 @@ async def test_case_aliased_budgets_cannot_raise_authorized_spending(api, tool, 
         result = await session.call_tool(tool, {**arguments, "idempotency_key": "authorized-one-dollar"})
         assert result.isError
         assert requests == []
+
+
+WORKSPACE_VIEW = {"id": "ws_lab", "name": "lab", "state": "stopped", "storage_revision": 0,
+                  "configuration": {"name": "lab", "gpu": "H100", "editor": "vscode"},
+                  "configuration_revision": "a" * 64, "session": None, "meter": None,
+                  "connections": {"editor": False, "notebook": False, "ssh": False}, "pending_upload": None}
+
+
+@pytest.mark.asyncio
+async def test_workspace_tools_follow_the_published_contract_and_routes(api):
+    server, requests, responses = api
+    workspace = {"name": "lab", "environment": "pytorch-cuda", "editor": "vscode", "gpu": "H100", "gpu_count": 1,
+                 "gpu_memory_gb": 80, "max_hours": 4, "size_gb": 10}
+    job = {"command": "python train.py", "budget_usd": 5}
+    async with create_connected_server_and_client_session(server) as session:
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+        assert tools["stop_workspace"].annotations.destructiveHint is True
+        assert tools["get_workspace"].annotations.readOnlyHint is True
+        assert tools["create_workspace"].inputSchema["required"] == ["workspace", "idempotency_key"]
+        writes = [
+            ("create_workspace", {"workspace": workspace}, "POST", "/v1/research-workspaces", workspace, WORKSPACE_VIEW),
+            ("start_workspace", {"workspace_id": "ws_lab"}, "POST", "/v1/research-workspaces/ws_lab/start", {}, {**WORKSPACE_VIEW, "state": "creating"}),
+            ("run_in_workspace", {"workspace_id": "ws_lab", "job": job}, "POST", "/v1/research-workspaces/ws_lab/workloads", job, {"id": "wl_1", "status": "queued"}),
+            ("stop_workspace", {"workspace_id": "ws_lab", "session_id": "sb_1"}, "POST", "/v1/research-workspaces/ws_lab/stop", {"session_id": "sb_1"}, {**WORKSPACE_VIEW, "state": "stopping"}),
+            ("configure_workspace", {"workspace_id": "ws_lab", "configuration_revision": "a" * 64, "configuration": workspace}, "PATCH", "/v1/research-workspaces/ws_lab", {"configuration_revision": "a" * 64, "configuration": workspace}, WORKSPACE_VIEW),
+            ("schedule_workspace", {"workspace_id": "ws_lab", "schedule": {"ready_by": "2026-09-28T09:00:00Z"}}, "POST", "/v1/research-workspaces/ws_lab/schedule", {"ready_by": "2026-09-28T09:00:00Z"}, {"id": "plan_1"}),
+            ("cancel_workspace_schedule", {"workspace_id": "ws_lab"}, "DELETE", "/v1/research-workspaces/ws_lab/schedule", None, WORKSPACE_VIEW),
+        ]
+        for tool, arguments, method, path, body, receipt in writes:
+            key = tool + "-same-intent"
+            responses.append(httpx.Response(202, json=receipt))
+            before = len(requests)
+            result = await session.call_tool(tool, {**arguments, "idempotency_key": key})
+            assert not result.isError, result
+            assert json.loads(result.content[0].text) == receipt
+            assert len(requests) == before + 1 and requests[-1].method == method and requests[-1].url.path == path
+            assert requests[-1].headers["Idempotency-Key"] == key
+            assert (json.loads(requests[-1].content) if requests[-1].content else None) == body
+        reads = [
+            ("get_workspace_capabilities", {}, "GET", "/v1/research-workspaces/capabilities"),
+            ("list_workspaces", {}, "GET", "/v1/research-workspaces"),
+            ("get_workspace", {"workspace_id": "ws_lab"}, "GET", "/v1/research-workspaces/ws_lab"),
+            ("get_workspace_connection", {"workspace_id": "ws_lab", "tool": "ssh"}, "POST", "/v1/research-workspaces/ws_lab/connections"),
+            ("list_workspace_workloads", {"workspace_id": "ws_lab"}, "GET", "/v1/research-workspaces/ws_lab/workloads"),
+            ("list_workspace_sessions", {"workspace_id": "ws_lab"}, "GET", "/v1/research-workspaces/ws_lab/sessions"),
+        ]
+        for tool, arguments, method, path in reads:
+            before = len(requests)
+            result = await session.call_tool(tool, arguments)
+            assert not result.isError, result
+            assert len(requests) == before + 1 and requests[-1].method == method and requests[-1].url.path == path
+            assert "Idempotency-Key" not in requests[-1].headers
+        assert json.loads(requests[-1 - 2].content) == {"tool": "ssh"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool,arguments", [
+    ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "python x.py", "budget_usd": 0}, "idempotency_key": "k"}),
+    ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "python x.py"}, "idempotency_key": "k"}),
+    ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "", "budget_usd": 1}, "idempotency_key": "k"}),
+    ("create_workspace", {"workspace": {"name": "lab", "gpu": "H100", "colour": "blue"}, "idempotency_key": "k"}),
+    ("get_workspace_connection", {"workspace_id": "ws_lab", "tool": "terminal"}),
+    ("stop_workspace", {"workspace_id": "ws_lab", "idempotency_key": "k"}),
+    ("start_workspace", {"workspace_id": "../other", "idempotency_key": "k"}),
+])
+async def test_workspace_tool_arguments_are_refused_before_network(api, tool, arguments):
+    server, requests, _ = api
+    async with create_connected_server_and_client_session(server) as session:
+        result = await session.call_tool(tool, arguments)
+        assert result.isError
+        assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_local_workspace_upload_and_download_use_verified_transfers(api, tmp_path, monkeypatch):
+    server, requests, responses = api
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "train.py").write_text("print('hi')\n")
+    seen = {}
+
+    async def upload(self, directory, *, idempotency_key=None, poll_seconds=2.0, timeout_seconds=600.0):
+        seen["upload"] = (self.id, str(directory), idempotency_key)
+        return {"id": "tr_1", "state": "verifying"}
+
+    async def download(self, destination, *, overwrite=False):
+        seen["download"] = (self.id, str(destination), overwrite)
+        return destination
+
+    from nodus import _workspaces
+    monkeypatch.setattr(_workspaces.AsyncWorkspace, "upload", upload)
+    monkeypatch.setattr(_workspaces.AsyncWorkspace, "download", download)
+    async with create_connected_server_and_client_session(server) as session:
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+        assert tools["upload_workspace_files"].inputSchema["additionalProperties"] is False
+        assert "idempotency_key" in tools["upload_workspace_files"].inputSchema["required"]
+        result = await session.call_tool("upload_workspace_files", {"workspace_id": "ws_lab", "directory": str(project), "idempotency_key": "upload-one"})
+        assert not result.isError, result
+        assert json.loads(result.content[0].text) == {"workspace_id": "ws_lab", "upload": {"id": "tr_1", "state": "verifying"}}
+        result = await session.call_tool("download_workspace_files", {"workspace_id": "ws_lab", "destination": str(tmp_path / "saved.tar")})
+        assert not result.isError, result
+        assert json.loads(result.content[0].text) == {"workspace_id": "ws_lab", "path": str(tmp_path / "saved.tar"), "verified": True}
+        catalog = json.loads((await session.call_tool("get_operation_manifest", {})).content[0].text)
+        names = {row["name"]: row for row in catalog["operations"]}
+        assert names["upload_workspace_files"]["required_scope"] == "workspaces:write"
+        assert names["download_workspace_files"]["required_scope"] == "workspaces:read"
+        assert "local_mcp" in names["create_workspace"]["transports"]
+    assert seen == {"upload": ("ws_lab", str(project), "upload-one"),
+                    "download": ("ws_lab", str(tmp_path / "saved.tar"), False)}
+    assert requests == []

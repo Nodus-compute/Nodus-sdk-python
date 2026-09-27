@@ -66,6 +66,8 @@ def journal_socket(tmp_path,monkeypatch):
                         result['status'] = 'committed'
                     if result['status'] == 'failed':
                         result['failure_code'] = 'agent_checkpoint_state_empty'
+                if 'status_wait_max_ms' in state:
+                    result['status_wait_max_ms'] = state['status_wait_max_ms']
             elif action in ('model_begin', 'model_status'):
                 owner = db.execute('SELECT token FROM journal WHERE step=?', (request['step_id'],)).fetchone()
                 assert owner and owner[0] == request['claim_token']
@@ -539,7 +541,7 @@ def test_checkpoint_failure_never_commits_step_result(journal_socket):
 def test_checkpoint_polling_allows_session_renewal(journal_socket):
     from nodus.agent_runtime import run
     _, state = journal_socket
-    state.update(recovery_policy='checkpoint-v1', checkpoint_id='cp_initial', session_seconds=.9, pending_polls=5)
+    state.update(recovery_policy='checkpoint-v1', checkpoint_id='cp_initial', session_seconds=.9, pending_polls=5, status_wait_max_ms=4000)
     def main(event):
         return {'offset': 7}
     assert run(main, run_id='cycle-42', version='1') == {'offset': 7}
@@ -547,6 +549,27 @@ def test_checkpoint_polling_allows_session_renewal(journal_socket):
     polls = [body for action, body in state['requests'] if action == 'checkpoint_status']
     assert len(polls) == 6
     assert len({body['checkpoint_id'] for body in polls}) == 1
+    assert all('wait_ms' not in body and 'known_status' not in body for body in polls)
+
+
+@pytest.mark.parametrize('capability', [None, 4000, 2000, True, '4000', 4001, -1])
+def test_checkpoint_wait_negotiates_without_changing_legacy_requests(journal_socket, capability):
+    from nodus.agent_runtime import run
+    _, state = journal_socket
+    state.update(recovery_policy='checkpoint-v1', checkpoint_id='cp_initial', pending_polls=1)
+    if capability is not None:
+        state['status_wait_max_ms'] = capability
+    def main(event):
+        return {'offset': 7}
+    assert run(main, run_id='cycle-42', version='1') == {'offset': 7}
+    polls = [body for action, body in state['requests'] if action == 'checkpoint_status']
+    assert len(polls) == 2
+    for body in polls:
+        if type(capability) is int and 0 < capability <= 4000:
+            assert body['wait_ms'] == capability
+            assert body['known_status'] == 'pending'
+        else:
+            assert set(body) == {'run_id', 'session_token', 'epoch', 'checkpoint_id'}
 
 
 def test_caught_checkpoint_failure_cannot_commit_dirty_later_state(journal_socket):

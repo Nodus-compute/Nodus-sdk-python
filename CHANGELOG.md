@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- `client.workspaces` manages GPU workspaces. `create` returns a `Workspace` handle with `start`, `wait_until_ready`, `connect`, `ssh`, `run`, `upload`, `download`, `configure`, `schedule` and `stop`, with an asynchronous counterpart.
+- Named sandbox storage volumes move to `client.volumes`, including `list`, `list_page` and `iter`. `client.workspaces.list()` now returns GPU workspaces, and `client.workspaces.create(name, size_gb=...)` without a GPU still creates a volume and raises a `FutureWarning`.
+- The local MCP server gains every workspace operation plus `upload_workspace_files` and `download_workspace_files`.
+- `nodus workspace` commands create, start, connect, run, upload, download and stop workspaces from the terminal.
+- `nodus.WorkspaceNotReadyError` names a workspace that is still starting, saving, stopped or missing an SSH key.
+
 ## 0.7.2
 
 - Advertise hosted assistant template, model and output limits in MCP creation and update tools.

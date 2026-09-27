@@ -339,8 +339,8 @@ def _resolve_sandbox(client, reference):
 
 
 @contextmanager
-def _sandbox_mutation(request_key, *, sandbox_id=None):
-    key = request_key or f"sandbox-cli-{uuid.uuid4()}"
+def _sandbox_mutation(request_key, *, sandbox_id=None, noun="sandbox"):
+    key = request_key or f"{noun}-cli-{uuid.uuid4()}"
     try:
         yield key
     except (KeyboardInterrupt, NodusError) as error:
@@ -349,7 +349,7 @@ def _sandbox_mutation(request_key, *, sandbox_id=None):
             uncertain = uncertain or bool(error.status_code and error.status_code >= 500)
             uncertain = uncertain or (isinstance(error, APIError) and error.status_code is None)
         if uncertain:
-            identity = f" Use sandbox ID {_safe_line(sandbox_id)} instead of its name." if sandbox_id else ""
+            identity = f" Use {noun} ID {_safe_line(sandbox_id)} instead of its name." if sandbox_id else ""
             print(
                 "Request outcome unknown. The operation may have been accepted."
                 + identity + " Retry the unchanged operation with --idempotency-key="
@@ -614,6 +614,72 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
         with _sandbox_mutation(args.idempotency_key, sandbox_id=sandbox.id) as key:
             sandbox.terminate(idempotency_key=key)
         print(_safe_line(sandbox.id))
+        return 0
+
+
+def _workspace_line(workspace) -> str:
+    cost = format_cost(workspace.cost_usd) if workspace.cost_usd is not None else "-"
+    tool = workspace.tool if workspace.ready else "-"
+    return _safe_line(f"{workspace.id}  {workspace.name}  {workspace.state}  {tool}  {cost}")
+
+
+def _cmd_workspace(args: argparse.Namespace) -> int:
+    with Client(base_url=args.base_url) as client:
+        if args.workspace_cmd == "new":
+            workspace = client.workspaces.create(
+                args.name, gpu=args.gpu, gpu_count=args.gpu_count, gpu_memory_gb=args.gpu_memory_gb,
+                environment=args.environment, editor=args.editor, max_hours=args.max_hours, size_gb=args.size_gb,
+                budget_usd=args.budget, ssh_key=Path(args.ssh_key).read_text().strip() if args.ssh_key else None,
+                cpus=args.cpus, memory_gb=args.memory_gb, disk_gb=args.disk_gb)
+            print(_safe_line(workspace.id))
+            return 0
+        if args.workspace_cmd == "ls":
+            for workspace in client.workspaces.list():
+                print(_workspace_line(workspace))
+            return 0
+        workspace = client.workspaces.get(args.workspace_id)
+        if args.workspace_cmd == "get":
+            print(json.dumps(workspace.raw, indent=2, default=str))
+            return 0
+        if args.workspace_cmd == "start":
+            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id, noun="workspace") as key:
+                workspace.start(idempotency_key=key)
+            if args.wait:
+                workspace.wait_until_ready(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
+            print(_workspace_line(workspace))
+            return 0
+        if args.workspace_cmd == "stop":
+            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id, noun="workspace") as key:
+                workspace.stop(idempotency_key=key)
+            if args.wait:
+                workspace.wait_until_stopped(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
+            print(_safe_line(f"{workspace.id} {workspace.state}"))
+            return 0
+        if args.workspace_cmd == "connect":
+            connection = workspace.connect(args.tool)
+            print(_safe_line(connection.get("url") or json.dumps(connection)))
+            return 0
+        if args.workspace_cmd == "ssh":
+            connection = workspace.ssh()
+            print(_safe_line(connection.get("command", "")))
+            print(_safe(connection.get("ssh_config", "")))
+            print(_safe_line(connection.get("vscode_url", "")))
+            return 0
+        if args.workspace_cmd == "run":
+            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id, noun="workspace") as key:
+                workload = workspace.run(args.command, budget_usd=args.budget, gpu=args.gpu, gpu_count=args.gpu_count,
+                                         gpu_memory_gb=args.gpu_memory_gb, idempotency_key=key)
+            print(_safe_line(workload.id))
+            return 0
+        if args.workspace_cmd == "jobs":
+            print(json.dumps(workspace.workloads(), indent=2, default=str))
+            return 0
+        if args.workspace_cmd == "upload":
+            upload = workspace.upload(args.directory, idempotency_key=args.idempotency_key)
+            print(_safe_line(f"{workspace.id} {upload.get('state', '')}"))
+            return 0
+        saved = workspace.download(args.destination, overwrite=args.overwrite)
+        print(_safe_line(str(saved)))
         return 0
 
 
@@ -1186,6 +1252,55 @@ Use nodus COMMAND --help for command options.""",
     from ._agent_cli import add_parser as agent_parser
     agent_parser(sub, _positive_cost, _page_limit)
 
+    workspace = sub.add_parser("workspace", help="GPU workspaces with VS Code, JupyterLab and SSH")
+    workspace_sub = workspace.add_subparsers(dest="workspace_cmd", required=True, metavar="COMMAND")
+    workspace_new = workspace_sub.add_parser("new", help="save a workspace configuration without renting compute")
+    workspace_new.add_argument("name")
+    workspace_new.add_argument("--gpu", help="GPU model, such as H100 or RTX 4090")
+    workspace_new.add_argument("--gpu-count", type=int, default=1, help="1, 2, 4 or 8 GPUs on one machine")
+    workspace_new.add_argument("--gpu-memory-gb", type=float, help="memory per GPU when the model is not known to the SDK")
+    workspace_new.add_argument("--cpus", type=int, help="CPU-only workspace with this many vCPUs")
+    workspace_new.add_argument("--memory-gb", type=float, help="system RAM for a CPU-only workspace")
+    workspace_new.add_argument("--environment", help="software environment, such as pytorch-cuda")
+    workspace_new.add_argument("--editor", choices=["vscode", "jupyter", "ssh"], default="vscode")
+    workspace_new.add_argument("--ssh-key", help="path to an SSH public key to admit")
+    workspace_new.add_argument("--max-hours", type=_positive_integer, required=True, help="the session stops itself after this many hours")
+    workspace_new.add_argument("--size-gb", type=float, help="project storage, defaulting to the deployment limit")
+    workspace_new.add_argument("--disk-gb", type=int, help="runtime disk from 80 to 2048 GB")
+    workspace_new.add_argument("--budget", type=_positive_cost, default=None, help="optional spending limit per session")
+    workspace_sub.add_parser("ls", help="list workspaces with state, ready tool and session cost")
+    for action, help_text in (("get", "print the full workspace view"), ("start", "rent compute and restore saved files"),
+                              ("stop", "save files and release compute"), ("connect", "print a browser URL for the editor or notebook"),
+                              ("ssh", "print the SSH command, config entry and VS Code link"),
+                              ("run", "run a command against the saved project as a workload"),
+                              ("jobs", "list workloads submitted from the workspace"),
+                              ("upload", "replace the saved project with a local folder while stopped"),
+                              ("download", "save the project files to a local tar archive")):
+        operation = workspace_sub.add_parser(action, help=help_text)
+        if action in ("start", "stop", "run"):
+            operation.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
+        if action == "upload":
+            operation.add_argument("--idempotency-key", help="name this upload attempt. A changed folder or revision needs a new key")
+        if action in ("start", "stop"):
+            operation.add_argument("--wait", action="store_true", help="poll until the change has completed")
+            operation.add_argument("--poll-seconds", type=float, default=5.0)
+            operation.add_argument("--timeout", type=float, default=900.0)
+        if action == "connect":
+            operation.add_argument("--tool", choices=["editor", "notebook"], default="editor")
+        if action == "run":
+            operation.add_argument("--budget", type=_positive_cost, required=True, help="spending limit for this run in USD")
+            operation.add_argument("--gpu")
+            operation.add_argument("--gpu-count", type=int)
+            operation.add_argument("--gpu-memory-gb", type=float)
+        if action == "download":
+            operation.add_argument("--overwrite", action="store_true")
+        operation.add_argument("workspace_id", metavar="NAME_OR_ID")
+        if action == "run":
+            operation.add_argument("command")
+        if action == "upload":
+            operation.add_argument("directory")
+        if action == "download":
+            operation.add_argument("destination")
     sandbox = sub.add_parser("sandbox", help="create and use agent sandboxes")
     sandbox_sub = sandbox.add_subparsers(dest="sandbox_cmd", required=True, metavar="COMMAND")
     sandbox_new = sandbox_sub.add_parser("new", help="create or reattach to a sandbox")
@@ -1308,6 +1423,7 @@ def main(argv: list[str] | None = None) -> int:
         "connection": lambda: _cmd_connection(args),
         "pools": lambda: _cmd_pools(args),
         "sandbox": lambda: _cmd_sandbox(args),
+        "workspace": lambda: _cmd_workspace(args),
         "agent": lambda: _cmd_agent(args),
         "benchmark": lambda: _cmd_benchmark(args),
         "list": lambda: _cmd_list(args),

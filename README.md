@@ -36,7 +36,7 @@ nodus login
 
 Get [nodus-compute on PyPI](https://pypi.org/project/nodus-compute/).
 Requires Python 3.10 or newer. Upgrading an existing installation? Use
-`pip install --upgrade nodus-compute`. These docs cover SDK 0.7.2.
+`pip install --upgrade nodus-compute`. These docs cover SDK 0.8.0.
 
 Your browser opens Nodus sign-in. Sign in and approve the code matching your
 terminal. You can then close the tab. The terminal finishes automatically and
@@ -143,6 +143,24 @@ nodus sandbox exec NAME_OR_ID "python -c 'print(2 + 2)'"
 nodus sandbox cost NAME_OR_ID
 nodus sandbox rm NAME_OR_ID
 ```
+
+## Open a GPU workspace
+
+A workspace is a saved project plus a GPU machine with VS Code, JupyterLab and
+SSH. Create it once, start compute when you need it, and stop when done:
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    ws = client.workspaces.create("kernel-lab", gpu="H100", max_hours=4)
+    ws.start().wait_until_ready()
+    print(ws.connect("editor")["url"])
+    ws.stop()
+```
+
+See [GPU workspaces](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/workspaces.md) for uploads, SSH, background jobs
+and the `nodus workspace` commands.
 
 ## Prefer the terminal?
 
@@ -287,7 +305,7 @@ to add the MCP tools and setup guidance together.
 Sign in once, then connect Claude, Cursor, Codex or another MCP client:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.7.2' nodus login
+uvx --from 'nodus-compute[mcp]==0.8.0' nodus login
 ```
 
 ```json
@@ -295,7 +313,7 @@ uvx --from 'nodus-compute[mcp]==0.7.2' nodus login
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.7.2", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.8.0", "nodus-mcp"]
     }
   }
 }

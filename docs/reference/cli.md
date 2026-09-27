@@ -60,6 +60,26 @@ If submission ends with an uncertain outcome, the CLI prints a recovery key.
 Add that `idempotency_key` to the same workload file before retrying. Keep its
 other settings unchanged to avoid submitting duplicate work.
 
+## GPU workspaces
+
+| Command | What it does |
+|---|---|
+| `nodus workspace new NAME --gpu H100 --max-hours 4` | Save a workspace configuration and print its ID without renting compute |
+| `nodus workspace new NAME --cpus 4 --memory-gb 16 --max-hours 2` | Save a CPU-only workspace |
+| `nodus workspace ls` | Show workspace IDs, names, states, the ready tool and session cost |
+| `nodus workspace get NAME_OR_ID` | Print the full workspace view as JSON |
+| `nodus workspace start NAME_OR_ID --wait` | Rent compute, restore saved files and wait until the tool is ready |
+| `nodus workspace connect NAME_OR_ID --tool notebook` | Print a browser URL for the editor or notebook |
+| `nodus workspace ssh NAME_OR_ID` | Print the SSH command, an ssh_config entry and a VS Code Remote link |
+| `nodus workspace run NAME_OR_ID "python train.py" --budget 5` | Run a command against the saved project as a workload and print its ID |
+| `nodus workspace jobs NAME_OR_ID` | List workloads submitted from the workspace |
+| `nodus workspace upload NAME_OR_ID ./project` | Replace the saved project while stopped and wait for verification |
+| `nodus workspace download NAME_OR_ID ./saved.tar` | Save the project files to a verified tar archive |
+| `nodus workspace stop NAME_OR_ID --wait` | Save files, release compute and wait until stopped |
+
+`--max-hours` and `--budget` for `run` are required. Mutations accept
+`--idempotency-key` for retrying an uncertain response with the same identity.
+
 ## Agent sandboxes
 
 SDK 0.5.1 accepts active names or exact sandbox IDs for the commands below.

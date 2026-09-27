@@ -15,6 +15,9 @@ _BLOB_MAX = 32 << 20
 
 
 def _blob_reference(value):
+    if isinstance(value, dict) and 'version' in value:
+        from ._agent_artifacts import reference
+        return reference(value)
     if not isinstance(value, dict) or set(value) != {'id', 'sha256', 'bytes'}:
         raise ValidationError('Blob references require id, sha256 and bytes')
     digest, size = value['sha256'], value['bytes']
@@ -37,8 +40,13 @@ def _blob_call(action, reference, **values):
     return response
 
 
-def put_blob(data: bytes) -> dict:
+def put_blob(data: bytes, *, storage: str = 'database') -> dict:
     """Commit bounded bytes and return their verified immutable journal reference."""
+    if storage == 'object':
+        from ._agent_artifacts import put
+        return put(data)
+    if storage != 'database':
+        raise ValidationError('Blob storage must be database or object')
     if not isinstance(data, bytes) or len(data) > _BLOB_MAX:
         raise ValidationError('put_blob requires bytes of at most 32 MiB')
     digest = hashlib.sha256(data).hexdigest()
@@ -62,6 +70,9 @@ def put_blob(data: bytes) -> dict:
 def get_blob(reference: dict) -> bytes:
     """Read a committed blob after verifying its full length and content hash."""
     reference = _blob_reference(reference)
+    if 'version' in reference:
+        from ._agent_artifacts import get
+        return get(reference)
     output = bytearray()
     while True:
         offset = len(output)
