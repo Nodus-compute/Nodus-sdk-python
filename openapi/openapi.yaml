@@ -1024,6 +1024,7 @@
           },
           "final_charge_usd": {
             "type": "number",
+            "minimum": 0,
             "description": "Immutable aggregate lifetime compute charge for a terminal workload. Present only after every customer usage clock is settled and complete initial compute cost coverage is available across the workload scope. This total is independent of the current billing month. Retaining files can continue to incur separate usage charges, which are excluded from this fixed compute total."
           },
           "charge_state": {

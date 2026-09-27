@@ -53,9 +53,12 @@ Use the returned `id` as `NODUS_GROUP_ID`. The group pins the definition's curre
 revision unless you explicitly select an existing revision. Updating the
 definition afterward does not change accepted group work.
 
-The budget is a sublimit of the deployment's existing budget. Creating another
-group does not create additional spending authority. `max_active` and `max_held`
-cannot exceed the deployment's worker limit.
+Omit `budget_usd` or set it to zero to use account funding without a group
+spending limit. Payment, available credits, positive deployment budgets and
+accepted attempt limits still apply. The explicit positive budget in this
+example is a compute sublimit of any positive deployment budget. It does not
+create another funded balance. `max_active` and `max_held` cannot exceed the
+deployment's worker limit.
 
 ## Submit tasks
 
@@ -211,8 +214,11 @@ A run waiting for workspace capacity remains accepted and reports
 
 Other waiting reasons distinguish dependencies, group execution capacity,
 allocation cleanup and budget exhaustion. `reserved_usd` includes full unsettled
-attempt budgets, even when a closed marker lacks cleanup evidence. `cost_usd`
-contains settled costs. Both remain within the existing deployment account.
+attempt budgets, even when a closed marker lacks cleanup evidence. Attempts
+without a spending cap report their outstanding account funding reservations.
+`cost_usd` contains settled attempt costs and recorded compute charges for
+unsettled attempts without a spending cap. Both remain within the existing
+deployment account.
 
 ## Cancel and recover a receipt
 
