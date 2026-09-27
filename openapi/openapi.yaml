@@ -1024,6 +1024,7 @@
           },
           "final_charge_usd": {
             "type": "number",
+            "minimum": 0,
             "description": "Immutable aggregate lifetime compute charge for a terminal workload. Present only after every customer usage clock is settled and complete initial compute cost coverage is available across the workload scope. This total is independent of the current billing month. Retaining files can continue to incur separate usage charges, which are excluded from this fixed compute total."
           },
           "charge_state": {
@@ -13793,10 +13794,10 @@
           },
           "budget_usd": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "maximum": 1000000,
             "multipleOf": 1e-06,
-            "description": "A sublimit of the existing deployment budget. This does not create a second funded balance."
+            "description": "Omit or use zero for account funding without a group spending limit. An explicit positive value is a compute sublimit of any positive deployment budget. Payment, available credits, deployment limits and accepted attempt limits still apply. This does not create a second funded balance."
           },
           "max_active": {
             "type": "integer",
@@ -13824,7 +13825,6 @@
         "required": [
           "name",
           "agent_id",
-          "budget_usd",
           "max_active",
           "max_held"
         ]
@@ -13956,10 +13956,10 @@
           },
           "budget_usd": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "minimum": 0,
             "maximum": 1000000,
             "multipleOf": 1e-06,
-            "description": "A sublimit of the existing deployment budget. This does not create a second funded balance."
+            "description": "Zero means account funding without a group spending limit. A positive value is the group's accepted compute sublimit of any positive deployment budget. Payment, available credits, deployment limits and accepted attempt limits still apply."
           },
           "max_active": {
             "type": "integer",
@@ -14010,12 +14010,12 @@
           "cost_usd": {
             "type": "number",
             "minimum": 0,
-            "description": "Settled attempt costs within the deployment account."
+            "description": "Settled attempt costs and recorded compute charges for unsettled attempts without a spending cap, within the deployment account."
           },
           "reserved_usd": {
             "type": "number",
             "minimum": 0,
-            "description": "Full budget liability of every unsettled assigned attempt. A closed marker alone cannot release this reservation."
+            "description": "Full accepted budget liability of unsettled assigned attempts with a spending cap, plus outstanding account funding reservations for attempts without a cap. A closed marker alone cannot release these reservations."
           },
           "active_authorized_attempts": {
             "type": "integer",
@@ -23771,7 +23771,7 @@
             }
           }
         },
-        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. Returns one database snapshot of task counts, retained payload counts, settled spending and unsettled allocations. Available when new admission is disabled."
+        "description": "Requires authentication and a group owned by the authenticated tenant. A missing or foreign-owned group returns 404. Returns one database snapshot of task counts, retained payload counts, recorded spending and unsettled allocations. Available when new admission is disabled."
       }
     },
     "/v1/agent-groups/{id}/runs": {
