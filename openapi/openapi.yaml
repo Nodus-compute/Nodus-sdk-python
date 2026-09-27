@@ -3559,16 +3559,17 @@
       },
       "WorkspacePricePreview": {
         "type": "object",
-        "required": ["hourly_usd", "currency", "gpu_count", "observed_at", "expires_at", "estimate_only"],
+        "required": ["public_price_available", "currency", "gpu_count", "observed_at", "expires_at", "estimate_only"],
         "properties": {
-          "hourly_usd": {"type": "number", "exclusiveMinimum": 0, "description": "Estimated USD per hour for the entire machine. Do not multiply by gpu_count."},
+          "hourly_usd": {"type": "number", "exclusiveMinimum": 0, "description": "Public price-sheet reference in USD per hour for the entire machine. Omitted when that configuration has no published rate. This is not the final compute charge. Do not multiply by gpu_count."},
+          "public_price_available": {"type": "boolean", "description": "Whether the public sheet lists an hourly rate for this configuration. A missing public rate does not block starting available compute."},
           "currency": {"type": "string", "const": "USD"},
           "gpu_count": {"type": "integer", "enum": [0, 1, 2, 4, 8]},
           "observed_at": {"type": "string", "format": "date-time"},
           "expires_at": {"type": "string", "format": "date-time", "description": "Refresh the estimate after this timestamp."},
           "estimate_only": {"type": "boolean", "const": true}
         },
-        "description": "Read-only current price estimate for an exact workspace configuration. Does not allocate compute, reserve capacity or lock a price. Admission refreshes price and availability within the customer's spending controls."
+        "description": "Read-only availability check with the public price-sheet reference when listed. Does not allocate compute, reserve capacity or lock a price. Actual compute expenditure is published as one final aggregate charge after the session."
       },
       "WorkspaceTransfer": {
         "type": "object",
