@@ -5,6 +5,7 @@
 - Add `RLEventEmitter` for reporting scored RL attempts from inside a workload. Events the server would reject raise `EventValidationError` before they are written, instead of after a machine is rented.
 - Add `rl=RLSetup(...)` to `run()`. Mode, environment and task-count rules are checked before submission. `extra={"rl": ...}` still works.
 - Add `client.rl.list_environments()`, returning the RL catalog with the examples you can run today and what was measured by running them. `RLExample.run_arguments()` supplies everything `run()` needs.
+- `run()` refuses output names the server cannot store. Names must be 1 to 64 lowercase letters, digits, dots, underscores or hyphens, not starting with a dot, a hyphen or `nodus.`. Such names were accepted before and the run's results were refused at upload, after the work had run.
 
 ## 0.8.0
 

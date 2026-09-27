@@ -497,8 +497,13 @@ def _validate_outputs(outputs: dict[str, str | OutputSpec] | None) -> None:
                     raise ValueError("Outputs in one stage must use distinct sink tables.")
                 targets.add(target)
             path = path["path"]
-        if not portable_output_name(name):
-            raise ValueError("Output names must be portable file names using letters, digits, dots, underscores or hyphens.")
+        # The server stores results after the work has run, under this rule,
+        # and refuses other names at submission. Portability is for downloads.
+        if (not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_][a-z0-9._-]{0,63}", name)
+                or name.startswith("nodus.") or not portable_output_name(name)):
+            raise ValueError(
+                "Output names must be 1 to 64 lowercase letters, digits, dots, underscores or hyphens, "
+                "not starting with a dot or hyphen or with nodus.")
         if (not isinstance(path, str) or not path or "\\" in path or ":" in path
                 or any(ord(c) < 32 for c in path) or PurePosixPath(path).is_absolute()
                 or any(part in ("", ".", "..") for part in path.split("/"))):
