@@ -90,9 +90,11 @@ termination, subject to available credits. Storage billing stays disabled
 until a storage rate is configured. An unavailable cache falls back to the
 ordinary input. This flag does not stream external bucket data.
 
-Output names use only letters, digits, dots, underscores, or hyphens. They must
-be distinct without regard to case, cannot be `.` or `..`, and cannot end in a
-dot. Reserved file names `CON`, `PRN`, `AUX`, `NUL`, `COM1` through `COM9`, and
+Output names are 1 to 64 lowercase letters, digits, dots, underscores, or
+hyphens. They cannot begin with a dot, a hyphen, or `nodus.`, which Nodus
+reserves for its own files. The server refuses other names at submission,
+because results are stored under their output name after the work has run.
+Names cannot end in a dot. Reserved file names `CON`, `PRN`, `AUX`, `NUL`, `COM1` through `COM9`, and
 `LPT1` through `LPT9` are rejected without regard to case, including names with
 extensions such as `CON.txt`. Stage IDs with declared outputs follow these
 same portability rules in addition to the [stage ID rules](stages.md).

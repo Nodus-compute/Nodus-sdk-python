@@ -19,13 +19,15 @@ with nodus.Client() as client:
         print(path)
 ```
 
-The same request over HTTP, from any language:
+The same request over HTTP, from any language. `NODUS_BASE_URL` is the API
+origin without `/v1`. The command falls back to the hosted API the SDK uses by
+default, so set it only for a private deployment:
 
 ```bash
 curl --fail --silent --show-error --request POST \
   --header "Authorization: Bearer ${NODUS_API_KEY}" \
   --header "Idempotency-Key: gsm8k-first-run" \
-  "${NODUS_BASE_URL}/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs"
+  "${NODUS_BASE_URL:-https://d1a0b732w6344o.cloudfront.net}/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs"
 ```
 
 It answers `202` with a `workload_id`. The server builds the run the example

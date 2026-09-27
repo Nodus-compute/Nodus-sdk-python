@@ -56,7 +56,9 @@ class RLSetup:
             raise ValueError(
                 f"rl.planned_tasks must be between 1 and {_MAX_PLANNED_TASKS}, not {self.planned_tasks}"
             )
-        if self.example_id and (not isinstance(self.example_id, str) or not _ENVIRONMENT_ID.fullmatch(self.example_id)):
+        # Only the empty default means "no example". Anything else has to be
+        # an id, so a wrong value is refused instead of silently dropped.
+        if self.example_id != "" and (not isinstance(self.example_id, str) or not _ENVIRONMENT_ID.fullmatch(self.example_id)):
             raise ValueError(f"rl.example_id must be lowercase letters, digits or hyphens, not {self.example_id!r}")
         payload = {
             "schema_version": _SCHEMA_VERSION,

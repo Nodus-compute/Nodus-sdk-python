@@ -165,3 +165,10 @@ def test_an_example_run_records_which_example_it_came_from() -> None:
 
     assert rl_payload({"environment_id": "gsm8k", "mode": "train", "model": "m", "planned_tasks": 1,
                        "example_id": "gsm8k-trained"})["example_id"] == "gsm8k-trained"
+
+
+@pytest.mark.parametrize("bad", [0, False, None, 1.5, "Bad ID"])
+def test_an_example_id_that_is_not_an_id_is_refused_rather_than_dropped(bad) -> None:
+    setup = nodus.RLSetup(environment_id="gsm8k", mode="train", model="m", planned_tasks=1, example_id=bad)
+    with pytest.raises(ValueError):
+        setup.to_payload()

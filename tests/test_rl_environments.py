@@ -234,3 +234,8 @@ def test_the_async_client_starts_an_example_the_same_way() -> None:
     assert requests[0].url.path == "/v1/rl-environments/reasoning-gym/examples/chain-sum/runs"
     assert workload.id == "wl_example"
     assert workload.replayed is True
+
+
+def test_the_guide_http_example_falls_back_to_the_sdk_hosted_api() -> None:
+    guide = (Path(__file__).parents[1] / "docs" / "guides" / "rl-runs.md").read_text()
+    assert "${NODUS_BASE_URL:-" + nodus.DEFAULT_BASE_URL + "}" in guide

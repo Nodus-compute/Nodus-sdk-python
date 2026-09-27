@@ -2741,7 +2741,7 @@
               "null"
             ],
             "propertyNames": {
-              "pattern": "^[a-z0-9_][a-z0-9._-]{0,63}$"
+              "pattern": "^(?!nodus\\.)[a-z0-9_][a-z0-9._-]{0,63}$"
             },
             "additionalProperties": {
               "oneOf": [
@@ -20128,7 +20128,7 @@
             }
           }
         },
-        "description": "Submits the run the example describes: its command through a shell, its runtime image, a GPU with at least peak_memory_gb, resumption after an interruption, its result files and its RL details with example_id. A retry is matched by environment, example and name under the Idempotency-Key, so it returns the original run even if the catalog changed in between. The same key with a different example or name returns 409. It is an ordinary workload. Follow it with GET /v1/workloads/{id}, its RL events and its outputs. 404 means no runnable example has these ids. Admission, spending checks and errors are those of POST /v1/workloads."
+        "description": "Submits the run the example describes: its command through a shell, its runtime image, a GPU with at least peak_memory_gb, its result files and its RL details with example_id. A retry is matched by environment, example and name under the Idempotency-Key, so it returns the original run even if the catalog changed in between. Omitting name means the example's default name. The same key with a different example or name returns 409. It is an ordinary workload. Follow it with GET /v1/workloads/{id}, its RL events and its outputs. 404 means no runnable example has these ids. Admission, spending checks and errors are those of POST /v1/workloads."
       }
     },
     "/v1/rl-environments": {
