@@ -1260,11 +1260,12 @@ class _CommandHelpFormatter(argparse.RawDescriptionHelpFormatter):
         if isinstance(action, argparse._SubParsersAction):
             descriptions = {choice.dest: choice.help for choice in action._choices_actions}
             groups = (
-                ("Setup", ("login", "logout", "init")),
-                ("Run", ("run", "submit", "sandbox", "agent")),
-                ("Monitor", ("list", "status", "wait", "logs", "cancel")),
+                ("Setup", ("login", "logout", "init", "mcp")),
+                ("Machines", ("launch", "ps", "ssh", "stop", "ssh-key", "workspace")),
+                ("Run", ("run", "submit", "sandbox", "agent", "freeze", "freeze-status", "resume")),
+                ("Monitor", ("list", "status", "workload", "wait", "logs", "cancel")),
                 ("Results", ("download",)),
-                ("Advanced", ("upload", "assets", "asset", "pools", "events", "artifacts", "ledger", "explain")),
+                ("Advanced", ("upload", "assets", "asset", "secret", "connection", "benchmark", "pools", "events", "artifacts", "ledger", "explain")),
             )
             return "\n".join(
                 f"  {title}:\n" + "".join(
