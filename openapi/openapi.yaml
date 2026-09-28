@@ -1,6 +1,11 @@
 {
   "components": {
     "schemas": {
+      "SSHKey": {
+        "type": "object",
+        "required": ["fingerprint", "public_key", "name", "added_at"],
+        "properties": {"fingerprint": {"type": "string"}, "public_key": {"type": "string"}, "name": {"type": "string"}, "added_at": {"type": "string", "format": "date-time"}}
+      },
       "ComputeGroup": {
         "type": "object",
         "required": ["id", "sweep_id", "kind", "size", "running", "succeeded", "failed"],
@@ -3376,14 +3381,14 @@
           "ssh_authorized_key": {
             "type": "string",
             "maxLength": 8192,
-            "description": "Optional plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Account SSH keys can also provide access to direct sessions."
+            "description": "Plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Machines also admit every SSH key saved by a team member. Instances and SSH-only workspaces may omit this field when the team has at least one saved key; otherwise it is required and a missing key returns 400 invalid_ssh_authorized_key."
           }
         },
         "allOf": [{
           "if": {"required": ["kind"], "properties": {"kind": {"const": "instance"}}},
           "then": {
-            "required": ["editor", "ssh_authorized_key"],
-            "properties": {"editor": {"const": "ssh"}, "ssh_authorized_key": {"minLength": 1}, "size_gb": {"const": 0}, "repository": {"maxLength": 0}, "ref": {"maxLength": 0}}
+            "required": ["editor"],
+            "properties": {"editor": {"const": "ssh"}, "size_gb": {"const": 0}, "repository": {"maxLength": 0}, "ref": {"maxLength": 0}}
           },
           "else": {"properties": {"size_gb": {"minimum": 9.5367431640625e-07}}}
         }],
@@ -17773,6 +17778,42 @@
         "responses": {
           "200": {"description": "Sweep group", "content": {"application/json": {"schema": {"type": "object", "required": ["group", "items", "next_cursor"], "properties": {"group": {"$ref": "#/components/schemas/ComputeGroup"}, "items": {"type": "array", "items": {"$ref": "#/components/schemas/ComputeItem"}}, "next_cursor": {"type": ["string", "null"]}}}}}},
           "default": {"description": "Authentication, rate limits and transient failures apply.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/v1/ssh-keys": {
+      "get": {
+        "operationId": "listSSHKeys",
+        "summary": "List the caller's saved SSH public keys",
+        "tags": ["SSH keys"],
+        "description": "Requires a console session or an API key created by a team member. Returns that member's saved keys, the same list as the console Settings page. Every machine run by each of the member's teams admits these keys, including machines already running.",
+        "responses": {
+          "200": {"description": "Saved keys", "content": {"application/json": {"schema": {"type": "object", "required": ["keys"], "properties": {"keys": {"type": "array", "items": {"$ref": "#/components/schemas/SSHKey"}}}}}}},
+          "default": {"description": "400 invalid_ssh_key, 403 attribution_required for an API key without a creating team member, 409 ssh_key_limit. Authentication, rate limits and transient failures also apply.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      },
+      "post": {
+        "operationId": "addSSHKey",
+        "summary": "Save an SSH public key to the caller's account",
+        "tags": ["SSH keys"],
+        "description": "Requires a console session or an API key created by a team member. Accepts one plain Ed25519, RSA, ECDSA or OpenSSH security-key public key. An account holds up to 20 keys. Saving an existing key updates its name.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["public_key"], "properties": {"public_key": {"type": "string", "maxLength": 8192}, "name": {"type": "string", "maxLength": 100}}}}}},
+        "responses": {
+          "201": {"description": "Key saved", "content": {"application/json": {"schema": {"type": "object", "required": ["fingerprint"], "properties": {"fingerprint": {"type": "string"}}}}}},
+          "default": {"description": "400 invalid_ssh_key, 403 attribution_required for an API key without a creating team member, 409 ssh_key_limit. Authentication, rate limits and transient failures also apply.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/v1/ssh-keys/{fingerprint}": {
+      "delete": {
+        "operationId": "removeSSHKey",
+        "summary": "Remove a saved SSH public key",
+        "tags": ["SSH keys"],
+        "description": "Requires a console session or an API key created by a team member. Running machines stop admitting the key within seconds. Returns 404 when the caller's account has no such key.",
+        "parameters": [{"name": "fingerprint", "in": "path", "required": true, "schema": {"type": "string"}, "description": "SHA256 fingerprint as returned when the key was saved."}],
+        "responses": {
+          "204": {"description": "Key removed"},
+          "default": {"description": "400 invalid_ssh_key, 403 attribution_required for an API key without a creating team member, 409 ssh_key_limit. Authentication, rate limits and transient failures also apply.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
