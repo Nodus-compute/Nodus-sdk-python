@@ -21844,30 +21844,6 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Model response received and its verified usage charge committed.",
-            "headers": {
-              "X-Nodus-Request-ID": {
-                "description": "Durable request receipt ID, returned after reservation is accepted.",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Nodus-Price-Version": {
-                "description": "Immutable customer price version used for this request.",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManagedModelCompletionResponse"
-                }
-              }
-            }
-          },
           "400": {
             "description": "Missing or invalid stable idempotency key, unsupported request format, or request outside the bounded nonstreaming text/function-tool contract.",
             "content": {
