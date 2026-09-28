@@ -138,6 +138,9 @@ assess findings before the coordinator returns one combined answer. Greetings
 and simple questions can answer directly. It accepts one nonempty `task` string
 in at most 32 KiB of JSON. The result includes the contributing `children` run
 IDs. Worker capacity, account funding and accepted explicit limits still apply.
+If the coordinator exhausts recovery while starting its team, Nodus requests
+cancellation of admitted specialists. Uncertain results remain available for
+inspection instead of being reported as a completed answer.
 The version 1 template keeps its single-assistant behavior.
 
 Hosted model methods require SDK 0.7.1 or later. Accounts admitted to hosted
