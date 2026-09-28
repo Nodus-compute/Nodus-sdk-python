@@ -3502,7 +3502,8 @@
             "format": "int64",
             "description": "Maximum saved-project payload bytes supported by workspace source preparation. The full-capacity path supports 10,000,000,000 bytes with separate bounded archive metadata. Ordinary asset import limits are unchanged."
           },
-          "account_funded_sessions": {"type": "boolean", "description": "Whether sessions use account funding without a per-session spending cap. Account credit and spending controls apply, and a session runs until it is stopped. Older servers may omit this capability, which clients must treat as false."}
+          "account_funded_sessions": {"type": "boolean", "description": "Whether sessions use account funding without a per-session spending cap. Account credit and spending controls apply, and a session runs until it is stopped. Older servers may omit this capability, which clients must treat as false."},
+          "deletion_available": {"type": "boolean", "description": "Whether stopped workspace and instance deletion is supported. Clients treat an omitted capability as false. Deletion can be available while new compute launches are disabled."}
         }
       },
       "WorkspaceWorkloadRequest": {
