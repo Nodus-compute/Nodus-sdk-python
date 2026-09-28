@@ -21969,32 +21969,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Model response received and its verified usage charge committed.",
-            "headers": {
-              "X-Nodus-Request-ID": {
-                "description": "Durable request receipt ID, returned after reservation is accepted.",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Nodus-Price-Version": {
-                "description": "Immutable customer price version used for this request.",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManagedModelCompletionResponse"
-                }
-              }
-            }
-          },
           "400": {
-            "description": "Missing or invalid stable idempotency key, unsupported request format, or request outside the bounded nonstreaming text/function-tool contract.",
+            "description": "Missing or invalid stable idempotency key, unsupported request format, or an invalid JSON object.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22005,16 +21981,6 @@
           },
           "401": {
             "description": "A valid Nodus API key or console session is required.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "402": {
-            "description": "Insufficient unreserved prepaid credits or account spending allowance. No new model request is dispatched.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22034,7 +22000,7 @@
             }
           },
           "404": {
-            "description": "Model is not in this account’s qualified catalog or uses a different protocol.",
+            "description": "No matching historical receipt was found and this route does not accept new model calls. Use a catalog-qualified Messages model through /v1/managed-models/messages for new work.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22044,7 +22010,7 @@
             }
           },
           "409": {
-            "description": "Previously accepted request returns its durable receipt without another model call or answer replay. A conflicting key, request or price version returns an ordinary error.",
+            "description": "The original key and body recover the previously accepted receipt without another model call or answer replay. Reusing the key with a different body or protocol returns an idempotency conflict.",
             "headers": {
               "X-Nodus-Request-ID": {
                 "description": "Durable request receipt ID, returned after reservation is accepted.",
@@ -22094,18 +22060,8 @@
               }
             }
           },
-          "502": {
-            "description": "Definitive rejection posts no model charge and releases the reservation. A missing response or uncertain usage returns model_outcome_unknown and keeps its reservation. Inspect the receipt and preserve the request identity.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
           "503": {
-            "description": "Model access or accounting admission is unavailable, or model_accounting_pending means a received response could not be durably settled. Inspect an accepted request receipt before retrying.",
+            "description": "Receipt lookup is temporarily unavailable, or no matching historical receipt exists and managed model access is not enabled for this account. Preserve the original request identity when retrying receipt recovery.",
             "content": {
               "application/json": {
                 "schema": {
