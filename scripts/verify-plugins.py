@@ -30,7 +30,7 @@ TOOLS = {
     "pause_agent", "resume_agent", "retry_agent_run", "cancel_agent_run",
     "upload_project", "upload_sandbox_file", "download_sandbox_file",
     "get_workspace_capabilities", "list_workspaces", "get_workspace", "create_workspace", "configure_workspace",
-    "start_workspace", "stop_workspace", "get_workspace_connection", "run_in_workspace",
+    "start_workspace", "stop_workspace", "delete_workspace", "get_workspace_connection", "run_in_workspace",
     "list_workspace_workloads", "list_workspace_sessions", "schedule_workspace", "cancel_workspace_schedule",
     "upload_workspace_files", "download_workspace_files",
     "launch_gpu", "list_compute", "stop_compute", "add_ssh_key",
