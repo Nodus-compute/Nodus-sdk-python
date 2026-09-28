@@ -367,6 +367,7 @@ def error_from_response(
         cls = APIError
     elif status_code == 409 and isinstance(code, str) and code in {
         "workspace_not_ready", "workspace_starting", "workspace_saving", "workspace_ssh_key_required",
+        "workspace_active", "workspace_transfer_pending",
     }:
         cls = WorkspaceNotReadyError
     elif status_code == 409 and code == "asset_in_use":

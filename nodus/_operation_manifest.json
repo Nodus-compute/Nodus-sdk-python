@@ -2920,6 +2920,46 @@
       ]
     },
     {
+      "id": "workspaces.delete",
+      "version": "v1",
+      "name": "delete_workspace",
+      "description": "Permanently delete a stopped workspace and its saved files, cancelling its schedule. Ask the user to confirm the exact workspace and file deletion first. Past sessions and charges remain in Billing. Active compute or an unfinished upload blocks deletion.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "required_scope": "workspaces:write",
+      "transports": [
+        "api",
+        "hosted_mcp",
+        "local_mcp"
+      ]
+    },
+    {
       "id": "workspaces.stop",
       "version": "v1",
       "name": "stop_workspace",

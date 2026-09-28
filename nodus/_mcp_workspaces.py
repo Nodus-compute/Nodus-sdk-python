@@ -85,6 +85,11 @@ def register_workspace_tools(server, base_url, request, check_origin):
         return await call(ctx, "POST", path(workspace_id, "/stop"), {"session_id": _session(session_id)},
                           idempotency_key)
 
+    @server.tool(structured_output=False, annotations=destructive)
+    async def delete_workspace(ctx: Context, workspace_id: str, idempotency_key: str) -> str:
+        """Permanently delete a stopped workspace and its saved files. Ask the user to confirm first."""
+        return await call(ctx, "DELETE", path(workspace_id), None, idempotency_key)
+
     @server.tool(structured_output=False, annotations=read)
     async def get_workspace_connection(ctx: Context, workspace_id: str, tool: str) -> str:
         """Open a connection: a browser url for editor or notebook, SSH details for ssh."""

@@ -634,6 +634,9 @@ def _workspace_line(workspace) -> str:
 
 
 def _cmd_workspace(args: argparse.Namespace) -> int:
+    if args.workspace_cmd == "delete" and args.idempotency_key is not None:
+        from . import _valid_idempotency_key
+        _valid_idempotency_key(args.idempotency_key)
     with Client(base_url=args.base_url) as client:
         if args.workspace_cmd == "new":
             workspace = client.workspaces.create(
@@ -647,7 +650,35 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
             for workspace in client.workspaces.list():
                 print(_workspace_line(workspace))
             return 0
-        workspace = client.workspaces.get(args.workspace_id)
+        try:
+            workspace = client.workspaces.get(args.workspace_id)
+        except NotFoundError:
+            if args.workspace_cmd != "delete" or not args.idempotency_key:
+                raise
+            if re.fullmatch(r"ws_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", args.workspace_id) is None:
+                raise ValidationError(
+                    "Retry deletion with the original workspace ID printed by the failed attempt "
+                    "and the same --idempotency-key. A missing name cannot identify a deleted workspace.") from None
+            from ._workspaces import Workspace
+            workspace = Workspace(client, args.workspace_id)
+        if args.workspace_cmd == "delete":
+            if not args.yes:
+                expected = workspace.name or workspace.id
+                prompt = _safe_line(
+                    f"Delete workspace {workspace.name or workspace.id!r} ({workspace.id}) and its saved files? "
+                    "This cannot be undone. Past sessions and charges stay in Billing. "
+                    f"Type {expected!r} to confirm: ")
+                try:
+                    confirmed = input(prompt) == expected
+                except EOFError:
+                    raise ValidationError("Deletion needs confirmation. Use --yes to confirm without a prompt.") from None
+                if not confirmed:
+                    print("Cancelled. Workspace was not deleted.")
+                    return 0
+            with _sandbox_mutation(args.idempotency_key, sandbox_id=workspace.id, noun="workspace") as key:
+                workspace.delete(idempotency_key=key)
+            print(_safe_line(f"{workspace.id} deleted"))
+            return 0
         if args.workspace_cmd == "get":
             print(json.dumps(workspace.raw, indent=2, default=str))
             return 0
@@ -1542,11 +1573,14 @@ Use nodus COMMAND --help for command options.""",
                               ("ssh", "print the SSH command, config entry and VS Code link"),
                               ("run", "run a command against the saved project as a workload"),
                               ("jobs", "list workloads submitted from the workspace"),
+                              ("delete", "permanently delete a stopped workspace and its saved files"),
                               ("upload", "replace the saved project with a local folder while stopped"),
                               ("download", "save the project files to a local tar archive")):
         operation = workspace_sub.add_parser(action, help=help_text)
-        if action in ("start", "stop", "run"):
+        if action in ("start", "stop", "run", "delete"):
             operation.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
+        if action == "delete":
+            operation.add_argument("--yes", action="store_true", help="confirm permanent deletion without a prompt")
         if action == "upload":
             operation.add_argument("--idempotency-key", help="name this upload attempt. A changed folder or revision needs a new key")
         if action in ("start", "stop"):
