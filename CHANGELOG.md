@@ -4,6 +4,12 @@
 
 Breaking: workspaces and instances run until you stop them or account credit runs out.
 
+- Add `client.launch(gpu)`, which rents one GPU machine and waits until SSH accepts connections. The machine needs no SSH key at launch. A local public key, when present, is admitted to that machine only, and team keys reach running machines within seconds. Retries with the same `idempotency_key` return the same machine.
+- Add `client.compute.list()`, `iterate()`, `group()` and `iterate_group()`, reading the Compute list the console shows: instances and training with who launched each, and a training sweep as one item whose runs `group()` lists. The Compute list carries no cost fields.
+- Add `client.ssh_keys` with `list`, `add` and `remove` for the team SSH keys every machine admits.
+- Add the CLI commands `nodus launch`, `nodus ps`, `nodus ssh`, `nodus stop` and `nodus ssh-key add|ls|rm`. `nodus ssh-key add --generate` creates `~/.ssh/id_ed25519` when there is no key. `nodus ssh --print` prints the command instead of connecting.
+- Add the MCP tools `launch_gpu`, `list_compute`, `stop_compute` and `add_ssh_key`.
+- Requests carry a `Nodus-Client` header naming the SDK, CLI or MCP server, so the console can say what launched each machine or run.
 - `client.workspaces.create`, `Workspace.configure`, `client.launch` and their asynchronous counterparts no longer take `max_hours`, `budget_usd`, `editor`, `repository` or `ref`, because the server no longer has those fields. `create` and `launch` raise `TypeError` for them, and `configure` and the MCP `create_workspace` and `configure_workspace` tools refuse them as unknown fields. There is no per-session time or spending limit. `Workspace.run(budget_usd=...)` is unchanged.
 - `size_gb` is optional for `client.workspaces.create`. When it is omitted, the SDK sends no size and the server gives the project its deployment's capacity. The SDK no longer reads `capabilities()` to choose a size, and `client.launch` sends no size.
 - `Workspace.ready` and `wait_until_ready` wait for both the editor and the notebook on a workspace, and for SSH on an instance. `Workspace.tool` is `ssh` for an instance and `editor` for a workspace.
