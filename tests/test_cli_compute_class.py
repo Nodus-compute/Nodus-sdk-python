@@ -67,7 +67,7 @@ def test_removed_cli_surface_rejected(argv):
 
 def test_grouped_help_has_no_get_alias():
     output = cli.build_parser().format_help()
-    for title in ['Setup:', 'Run:', 'Monitor:', 'Results:', 'Advanced:']:
+    for title in ['Setup:', 'Machines:', 'Run:', 'Monitor:', 'Results:', 'Advanced:']:
         assert title in output
     assert 'get,' not in output
 
@@ -115,3 +115,11 @@ def test_missing_upload_fails_before_client(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, "Client", forbidden)
     assert cli.main(["upload", str(tmp_path / "absent")]) == 2
     assert "exists on this computer" in capsys.readouterr().err
+
+
+def test_grouped_help_lists_every_command():
+    parser = cli.build_parser()
+    output = parser.format_help()
+    commands = next(action for action in parser._actions if isinstance(action, __import__('argparse')._SubParsersAction)).choices
+    missing = [name for name in commands if f"    {name} " not in output]
+    assert missing == []

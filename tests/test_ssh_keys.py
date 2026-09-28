@@ -130,7 +130,7 @@ def test_launch_without_a_local_key_requests_compute_without_one(asynchronous):
     # Direct compute accepts an instance without a key. SSH works once a team key is saved.
     machine, calls = launch_calls(asynchronous=asynchronous)
     create = next(call for call in calls if call[:2] == ("POST", BASE))
-    assert "ssh_authorized_key" not in create[2] and create[2]["editor"] == "ssh" and create[2]["kind"] == "instance"
+    assert "ssh_authorized_key" not in create[2] and "editor" not in create[2] and create[2]["kind"] == "instance"
     assert ("POST", BASE + "/ws_inst/start", {}, "launch-k") in calls
     assert machine.id == "ws_inst"
 
@@ -140,7 +140,7 @@ def test_launch_keep_files_without_a_local_key_omits_it_too():
     client = sync_client(launch_handler(calls, itertools.repeat(INSTANCE_READY)))
     client.launch("H100", keep_files=True, wait=False)
     create = next(call for call in calls if call[:2] == ("POST", BASE))
-    assert "ssh_authorized_key" not in create[2] and create[2]["editor"] == "ssh"
+    assert "ssh_authorized_key" not in create[2] and "editor" not in create[2]
 
 
 def test_cli_launch_without_a_local_key_says_how_to_add_one(monkeypatch, capsys):

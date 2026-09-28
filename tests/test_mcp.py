@@ -572,7 +572,7 @@ async def test_case_aliased_budgets_cannot_raise_authorized_spending(api, tool, 
 
 
 WORKSPACE_VIEW = {"id": "ws_lab", "name": "lab", "state": "stopped", "storage_revision": 0,
-                  "configuration": {"name": "lab", "gpu": "H100", "editor": "vscode"},
+                  "configuration": {"name": "lab", "gpu": "H100", "size_gb": 10},
                   "configuration_revision": "a" * 64, "session": None, "meter": None,
                   "connections": {"editor": False, "notebook": False, "ssh": False}, "pending_upload": None}
 
@@ -580,8 +580,7 @@ WORKSPACE_VIEW = {"id": "ws_lab", "name": "lab", "state": "stopped", "storage_re
 @pytest.mark.asyncio
 async def test_workspace_tools_follow_the_published_contract_and_routes(api):
     server, requests, responses = api
-    workspace = {"name": "lab", "environment": "pytorch-cuda", "editor": "vscode", "gpu": "H100", "gpu_count": 1,
-                 "gpu_memory_gb": 80, "max_hours": 4, "size_gb": 10}
+    workspace = {"name": "lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}
     job = {"command": "python train.py", "budget_usd": 5}
     async with create_connected_server_and_client_session(server) as session:
         tools = {tool.name: tool for tool in (await session.list_tools()).tools}
@@ -679,3 +678,26 @@ async def test_local_workspace_upload_and_download_use_verified_transfers(api, t
     assert seen == {"upload": ("ws_lab", str(project), "upload-one"),
                     "download": ("ws_lab", str(tmp_path / "saved.tar"), False)}
     assert requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("max_hours", 4), ("budget_usd", 5), ("editor", "vscode"),
+                                         ("repository", "org/repo"), ("ref", "main")])
+async def test_workspace_tools_refuse_lifetime_budget_editor_and_repository_fields(api, field, value):
+    server, requests, _ = api
+    workspace = {"name": "lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
+                 "gpu_memory_gb": 80, "size_gb": 10, field: value}
+    async with create_connected_server_and_client_session(server) as session:
+        for tool, arguments in (("create_workspace", {"workspace": workspace}),
+                                ("configure_workspace", {"workspace_id": "ws_lab", "configuration_revision": "a" * 64,
+                                                         "configuration": workspace})):
+            result = await session.call_tool(tool, {**arguments, "idempotency_key": "k"})
+            assert result.isError, (tool, result)
+    assert requests == []
+
+
+@pytest.mark.parametrize("field", ["max_hours", "budget_usd", "editor", "repository", "ref"])
+def test_workspace_configuration_allowlist_excludes_lifetime_budget_editor_and_repository(field):
+    from nodus._mcp_workspaces import _configuration
+    with pytest.raises(ValueError, match="Unknown workspace configuration field: " + field):
+        _configuration({"name": "lab", "gpu": "H100", field: 1})

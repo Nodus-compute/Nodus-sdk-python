@@ -16,8 +16,8 @@ from nodus.errors import ValidationError, WorkspaceNotReadyError
 BASE = "/v1/research-workspaces"
 KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyOnlyForTests agent@laptop"
 INSTANCE_CONFIGURATION = {"kind": "instance", "name": "instance-1a2b3c4d", "environment": "pytorch-cuda",
-                          "editor": "ssh", "gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80, "disk_gb": 100,
-                          "budget_usd": 0, "max_hours": 4, "size_gb": 0, "ssh_authorized_key": KEY}
+                          "gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80, "disk_gb": 100, "size_gb": 0,
+                          "ssh_authorized_key": KEY}
 # createResearchWorkspace answers 201 with researchWorkspaceCurrentView of a new instance record.
 INSTANCE_STOPPED = {
     "id": "ws_inst", "expired_at": None, "cleanup_pending": False, "name": "instance-1a2b3c4d", "size_gb": 0,
@@ -38,9 +38,6 @@ SSH = {"transport": "tcp", "host": "203.0.113.7", "port": "22022", "user": "nodu
        "command": "ssh -p 22022 nodus@203.0.113.7",
        "vscode_url": "vscode://vscode-remote/ssh-remote+nodus@203.0.113.7:22022/workspace",
        "ssh_config": "Host nodus-instance-1a2b3c4d\n  HostName 203.0.113.7\n  Port 22022\n  User nodus\n"}
-CAPABILITIES = {"available": True, "storage_limit_bytes": 10_000_000_000, "environments": ["pytorch-cuda"],
-                "gpu_counts": [1, 2, 4, 8], "editors": ["vscode", "jupyter", "ssh"],
-                "storage_policy_version": "r2-standard-10gb-account-v1"}
 
 LAUNCHED_BY = {"client": "claude-code", "user_id": "usr_1", "user_name": "ada@example.com", "api_key_id": "key_1",
                "api_key_name": "laptop"}
@@ -83,8 +80,6 @@ def launch_handler(calls, views, *, create_view=INSTANCE_STOPPED):
             return httpx.Response(404, text="404 page not found\n")
         body = json.loads(request.content) if request.content else None
         calls.append((request.method, request.url.path, body, request.headers.get("Idempotency-Key")))
-        if request.url.path == BASE + "/capabilities":
-            return httpx.Response(200, json=CAPABILITIES)
         if request.url.path == BASE and request.method == "POST":
             return httpx.Response(201, json=create_view)
         if request.url.path == BASE + "/ws_inst/start":
@@ -157,9 +152,9 @@ def test_launch_creates_an_ssh_instance_starts_it_with_the_same_key_and_waits_fo
     assert machine.id == "ws_inst" and machine.ready
     create, start = calls[0], calls[1]
     assert create[:2] == ("POST", BASE)
-    assert create[2] == {"kind": "instance", "name": "instance-1a2b3c4d", "editor": "ssh",
-                         "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80,
-                         "max_hours": 4, "size_gb": 0, "ssh_authorized_key": KEY, "disk_gb": 100}
+    assert create[2] == {"kind": "instance", "name": "instance-1a2b3c4d", "environment": "pytorch-cuda",
+                         "gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80, "ssh_authorized_key": KEY,
+                         "disk_gb": 100}
     assert create[3] == "launch-1"
     assert start == ("POST", BASE + "/ws_inst/start", {}, "launch-1")
     assert not any(call[1] == BASE + "/capabilities" for call in calls)
@@ -211,14 +206,14 @@ def test_launch_keep_files_creates_a_saved_workspace_and_starts_it():
                       "status_message": "Saved project files are ready for the next session."}
     workspace_view["configuration"].pop("kind")
     ready = {**workspace_view, "state": "running", "session": INSTANCE_SESSION,
-             "connections": {"editor": False, "notebook": False, "ssh": True}}
+             "connections": {"editor": True, "notebook": True, "ssh": True}}
     client = sync_client(launch_handler(calls, itertools.repeat(ready), create_view=workspace_view))
     machine = client.launch("H100", ssh_key=KEY, name="lab", keep_files=True, idempotency_key="launch-2",
                             poll_seconds=0.1)
     assert machine.ready
     create = next(call for call in calls if call[:2] == ("POST", BASE))
     assert "kind" not in create[2]
-    assert create[2]["editor"] == "ssh" and create[2]["size_gb"] == 10 and create[2]["max_hours"] == 4
+    assert not {"editor", "size_gb", "max_hours"}.intersection(create[2])
     assert create[2]["disk_gb"] == 100 and create[2]["ssh_authorized_key"] == KEY
     assert ("POST", BASE + "/ws_inst/start", {}, "launch-2") in calls
 
@@ -230,6 +225,7 @@ def test_a_launch_timeout_leaves_the_machine_running_and_names_it():
         client.launch("H100", ssh_key=KEY, timeout_seconds=0, poll_seconds=0.1)
     message = str(raised.value)
     assert "ws_inst" in message and "still running" in message
+    assert "until you stop it" in message and "nodus ssh ws_inst" in message and "wait_until_ready" not in message
     assert not any(call[1].endswith("/stop") for call in calls)
 
 
@@ -360,13 +356,12 @@ def test_cli_launch_prints_the_ssh_command_when_ready(monkeypatch, capsys, tmp_p
     views = itertools.chain([INSTANCE_CREATING], itertools.repeat(INSTANCE_READY))
     cli_client(monkeypatch, launch_handler(calls, views))
     assert cli.main(["launch", "--gpu", "H100", "--gpus", "2", "--disk", "200", "--env", "pytorch-cuda",
-                     "--ssh-key", str(key), "--name", "instance-1a2b3c4d", "--hours", "6",
-                     "--poll-seconds", "0.1"]) == 0
+                     "--ssh-key", str(key), "--name", "instance-1a2b3c4d", "--poll-seconds", "0.1"]) == 0
     out = capsys.readouterr().out
     assert "ssh -p 22022 nodus@203.0.113.7" in out and "ws_inst" in out
     assert "nodus ssh instance-1a2b3c4d" in out
     body = calls[0][2]
-    assert body["gpu_count"] == 2 and body["disk_gb"] == 200 and body["max_hours"] == 6
+    assert body["gpu_count"] == 2 and body["disk_gb"] == 200
     assert body["environment"] == "pytorch-cuda" and body["kind"] == "instance"
 
 
@@ -525,10 +520,9 @@ async def _compute_tool_calls(server, requests, responses, create_connected_serv
         assert not result.isError, result
         create, start = requests[-2], requests[-1]
         assert (create.method, create.url.path) == ("POST", BASE)
-        assert json.loads(create.content) == {"kind": "instance", "name": "instance-1a2b3c4d", "editor": "ssh",
+        assert json.loads(create.content) == {"kind": "instance", "name": "instance-1a2b3c4d",
                                               "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
-                                              "gpu_memory_gb": 80, "max_hours": 4, "size_gb": 0,
-                                              "ssh_authorized_key": KEY, "disk_gb": 100}
+                                              "gpu_memory_gb": 80, "ssh_authorized_key": KEY, "disk_gb": 100}
         assert (start.method, start.url.path, json.loads(start.content)) == ("POST", BASE + "/ws_inst/start", {})
         assert create.headers["Idempotency-Key"] == start.headers["Idempotency-Key"] == "agent-launch-1"
         assert json.loads(result.content[0].text)["id"] == "ws_inst"
@@ -751,7 +745,7 @@ def test_keep_files_create_sends_the_launch_key():
     client = sync_client(launch_handler(calls, itertools.repeat(INSTANCE_READY), create_view=workspace_view))
     client.launch("H100", ssh_key=KEY, keep_files=True, idempotency_key="keep-1", wait=False)
     create = next(call for call in calls if call[:2] == ("POST", BASE))
-    assert create[3] == "keep-1" and create[2]["size_gb"] == 10 and "kind" not in create[2]
+    assert create[3] == "keep-1" and "size_gb" not in create[2] and "kind" not in create[2]
 
 
 @pytest.mark.parametrize("keep_files", [False, True])
@@ -763,8 +757,6 @@ def test_a_replayed_create_of_a_running_machine_is_not_started_again(keep_files)
         if request.url.path == "/v1/ssh-keys":
             return httpx.Response(404, text="404 page not found\n")
         calls.append((request.method, request.url.path, request.headers.get("Idempotency-Key")))
-        if request.url.path == BASE + "/capabilities":
-            return httpx.Response(200, json=CAPABILITIES)
         if request.url.path == BASE and request.method == "POST":
             return httpx.Response(201, json=INSTANCE_READY, headers={"Idempotent-Replayed": "true"})
         if request.url.path == BASE + "/ws_inst":
@@ -854,8 +846,6 @@ RECEIPT = {"id": "rcpt_1", "gpu": "H100", "gpu_count": 1, "cloud": "secure", "ra
 def replayed_workspace_handler(calls, sessions):
     def handler(request):
         calls.append((request.method, request.url.path, request.headers.get("Idempotency-Key")))
-        if request.url.path == BASE + "/capabilities":
-            return httpx.Response(200, json=CAPABILITIES)
         if request.url.path == BASE and request.method == "POST":
             return httpx.Response(201, json=INSTANCE_STOPPED, headers={"Idempotent-Replayed": "true"})
         if request.url.path == BASE + "/ws_inst/sessions":
@@ -897,3 +887,110 @@ def test_a_replayed_workspace_that_ran_or_cannot_be_checked_is_not_started(async
         launch_replayed(asynchronous, replayed_workspace_handler(calls, (status, body)))
     assert "ws_inst" in str(raised.value) and "nodus workspace start ws_inst" in str(raised.value)
     assert not any(path.endswith("/start") for _, path, _ in calls)
+
+
+# -- no lifetime, editor or client-chosen project size --------------------------------------------------------
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_launch_sends_no_lifetime_editor_or_project_size(async_mode):
+    calls = []
+    workspace_view = {**INSTANCE_STOPPED, "size_gb": 10,
+                      "configuration": {k: v for k, v in {**INSTANCE_CONFIGURATION, "size_gb": 10}.items()
+                                        if k != "kind"}}
+    handler = launch_handler(calls, itertools.repeat(INSTANCE_READY), create_view=workspace_view)
+
+    async def scenario():
+        client = async_client(handler) if async_mode else sync_client(handler)
+        for keep_files in (False, True):
+            launched = client.launch("H100", ssh_key=KEY, name="instance-1a2b3c4d", keep_files=keep_files,
+                                     idempotency_key=f"launch-{keep_files}", wait=False)
+            if async_mode:
+                await launched
+
+    asyncio.run(scenario())
+    creates = [call[2] for call in calls if call[:2] == ("POST", BASE)]
+    machine = {"name": "instance-1a2b3c4d", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
+               "gpu_memory_gb": 80, "ssh_authorized_key": KEY, "disk_gb": 100}
+    assert creates == [{"kind": "instance", **machine}, machine]
+    assert not any(call[1] == BASE + "/capabilities" for call in calls)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_launch_refuses_a_lifetime(async_mode):
+    handler = lambda request: pytest.fail("a refused argument must not reach the API")
+
+    async def scenario():
+        client = async_client(handler) if async_mode else sync_client(handler)
+        with pytest.raises(TypeError, match="max_hours"):
+            launched = client.launch("H100", ssh_key=KEY, max_hours=4)
+            if async_mode:
+                await launched
+
+    asyncio.run(scenario())
+
+
+def test_cli_launch_has_no_hours_and_does_not_promise_a_stop(monkeypatch, capsys, tmp_path):
+    key = tmp_path / "id.pub"
+    key.write_text(KEY + "\n")
+    with pytest.raises(SystemExit) as error:
+        cli.build_parser().parse_args(["launch", "--gpu", "H100", "--hours", "6"])
+    assert error.value.code == 2
+    calls = []
+    cli_client(monkeypatch, launch_handler(calls, itertools.repeat(INSTANCE_READY)))
+    assert cli.main(["launch", "--gpu", "H100", "--ssh-key", str(key), "--poll-seconds", "0.1"]) == 0
+    out = capsys.readouterr().out
+    assert "stops itself" not in out and "hours" not in out
+    assert "nodus stop" in out
+    assert "max_hours" not in calls[0][2]
+
+
+@pytest.mark.asyncio
+async def test_mcp_launch_refuses_a_lifetime_before_network(api):
+    from mcp.shared.memory import create_connected_server_and_client_session
+    server, requests, _ = api
+    async with create_connected_server_and_client_session(server) as session:
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+        assert "max_hours" not in tools["launch_gpu"].inputSchema["properties"]
+        assert "max_hours" not in tools["launch_gpu"].description
+        result = await session.call_tool("launch_gpu", {"idempotency_key": "k", "gpu": "H100", "ssh_key": KEY,
+                                                        "max_hours": 4})
+        assert result.isError
+    assert requests == []
+
+
+def _workspace_views():
+    """A keep-files workspace whose editor and notebook come up before its SSH port is mapped."""
+    configuration = {k: v for k, v in {**INSTANCE_CONFIGURATION, "size_gb": 10}.items() if k != "kind"}
+    stopped = {**INSTANCE_STOPPED, "size_gb": 10, "configuration": configuration}
+    tools = {**stopped, "state": "running", "session": {**INSTANCE_SESSION, "state": "ready"},
+             "connections": {"editor": True, "notebook": True, "ssh": False}}
+    return stopped, [tools, {**tools, "connections": {"editor": True, "notebook": True, "ssh": True}}]
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_launch_with_files_waits_for_ssh_not_only_the_browser_tools(async_mode):
+    calls = []
+    stopped, views = _workspace_views()
+    handler = launch_handler(calls, iter(views), create_view=stopped)
+
+    async def scenario():
+        client = async_client(handler) if async_mode else sync_client(handler)
+        launched = client.launch("H100", ssh_key=KEY, keep_files=True, idempotency_key="keep-ssh", poll_seconds=0.1)
+        return (await launched) if async_mode else launched
+
+    machine = asyncio.run(scenario())
+    assert machine.connections["ssh"] is True
+    assert [call[1] for call in calls].count(BASE + "/ws_inst") == 2
+
+
+def test_cli_launch_with_files_waits_for_ssh_before_asking_for_it(monkeypatch, capsys, tmp_path):
+    key = tmp_path / "id.pub"
+    key.write_text(KEY + "\n")
+    calls = []
+    stopped, views = _workspace_views()
+    cli_client(monkeypatch, launch_handler(calls, iter(views), create_view=stopped))
+    assert cli.main(["launch", "--gpu", "H100", "--keep-files", "--ssh-key", str(key), "--poll-seconds", "0.1"]) == 0
+    paths = [call[1] for call in calls]
+    assert paths.count(BASE + "/ws_inst") == 2 and paths.index(BASE + "/ws_inst/connections") > paths.index(BASE + "/ws_inst")
+    assert "ssh -p 22022" in capsys.readouterr().out

@@ -1040,20 +1040,20 @@ class Client(_Transport):
 
     def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
-               name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
+               name: str | None = None, keep_files: bool = False, wait: bool = True,
                timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
                idempotency_key: str | None = None) -> Workspace:
         """Rent one GPU machine and wait until SSH accepts connections. Returns its handle.
 
         Local disk only unless ``keep_files=True``, which saves project files as a workspace. The machine
-        stops itself after ``max_hours`` (4 unless set). ``ssh_key`` defaults to ``~/.ssh/id_ed25519.pub``,
+        runs until you stop it. ``ssh_key`` defaults to ``~/.ssh/id_ed25519.pub``,
         ``id_ecdsa.pub`` or ``id_rsa.pub`` and admits that key to this machine only. With no local key it
         waits only when the team has saved keys, and SSH works after ``ssh_keys.add``. A timeout leaves it running.
         """
         from ._compute import launch
         return launch(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                      environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
-                      keep_files=keep_files, wait=wait, timeout_seconds=timeout_seconds,
+                      environment=environment, ssh_key=ssh_key, name=name, keep_files=keep_files,
+                      wait=wait, timeout_seconds=timeout_seconds,
                       poll_seconds=poll_seconds, idempotency_key=idempotency_key)
 
     @property
@@ -1537,14 +1537,14 @@ class AsyncClient(_Transport):
 
     async def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                      disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
-                     name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
+                     name: str | None = None, keep_files: bool = False, wait: bool = True,
                      timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
                      idempotency_key: str | None = None) -> AsyncWorkspace:
         """Asynchronous counterpart of :meth:`Client.launch`."""
         from ._compute import launch_async
         return await launch_async(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                                  environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
-                                  keep_files=keep_files, wait=wait, timeout_seconds=timeout_seconds,
+                                  environment=environment, ssh_key=ssh_key, name=name, keep_files=keep_files,
+                                  wait=wait, timeout_seconds=timeout_seconds,
                                   poll_seconds=poll_seconds, idempotency_key=idempotency_key)
 
     @property

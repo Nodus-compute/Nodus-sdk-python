@@ -36,7 +36,7 @@ nodus login
 
 Get [nodus-compute on PyPI](https://pypi.org/project/nodus-compute/).
 Requires Python 3.10 or newer. Upgrading an existing installation? Use
-`pip install --upgrade nodus-compute`. These docs cover SDK 0.8.0.
+`pip install --upgrade nodus-compute`. These docs cover SDK 0.9.0.
 
 Your browser opens Nodus sign-in. Sign in and approve the code matching your
 terminal. You can then close the tab. The terminal finishes automatically and
@@ -147,16 +147,19 @@ nodus sandbox rm NAME_OR_ID
 ## Open a GPU workspace
 
 A workspace is a saved project plus a GPU machine with VS Code, JupyterLab and
-SSH. Create it once, start compute when you need it, and stop when done:
+SSH. Create it once, start compute when you need it, and stop when done.
+Compute runs until you stop it or your account credit runs out:
 
 ```python
 import nodus
 
 with nodus.Client() as client:
-    ws = client.workspaces.create("kernel-lab", gpu="H100", max_hours=4)
-    ws.start().wait_until_ready()
-    print(ws.connect("editor")["url"])
-    ws.stop()
+    ws = client.workspaces.create("kernel-lab", gpu="H100")
+    try:
+        ws.start().wait_until_ready()
+        print(ws.connect("editor")["url"])
+    finally:
+        ws.stop()
 ```
 
 See [GPU workspaces](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/workspaces.md) for uploads, SSH, background jobs
@@ -169,7 +172,7 @@ its handle. It admits your `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or
 `id_rsa.pub` to that machine only, unless you pass `ssh_key`. With no local key
 it waits for SSH only when your team has saved keys. Otherwise it returns once
 compute is requested, and SSH works after you save a key.
-The machine stops itself after `max_hours`, which is 4 unless you set it.
+The machine runs until you stop it or your account credit runs out.
 Local disk is not kept after it stops. Pass `keep_files=True` to save project
 files as a workspace instead.
 
@@ -177,15 +180,18 @@ files as a workspace instead.
 import nodus
 
 with nodus.Client() as client:
-    gpu = client.launch("H100", max_hours=2)
-    print(gpu.ssh()["command"])
-    gpu.stop()
+    gpu = client.launch("H100", wait=False)
+    try:
+        gpu.wait_until_ready()
+        print(gpu.ssh()["command"])
+    finally:
+        gpu.stop()
 ```
 
 From the terminal:
 
 ```bash
-nodus launch --gpu H100 --hours 2
+nodus launch --gpu H100
 nodus ps
 nodus ssh NAME_OR_ID
 nodus stop NAME_OR_ID
@@ -359,7 +365,7 @@ to add the MCP tools and setup guidance together.
 Sign in once, then connect Claude, Cursor, Codex or another MCP client:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.8.0' nodus login
+uvx --from 'nodus-compute[mcp]==0.9.0' nodus login
 ```
 
 ```json
@@ -367,7 +373,7 @@ uvx --from 'nodus-compute[mcp]==0.8.0' nodus login
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.8.0", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.9.0", "nodus-mcp"]
     }
   }
 }

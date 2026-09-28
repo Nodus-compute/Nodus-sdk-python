@@ -17,14 +17,11 @@ from .errors import APIError, NodusError, NotFoundError, ValidationError, Worksp
 _RESEARCH_WORKSPACE_ID = re.compile(r"[A-Za-z0-9_-]{1,256}", re.ASCII)
 _BASE = "/v1/research-workspaces"
 _TOOLS = ("editor", "notebook", "ssh")
-_EDITOR_TOOL = {"": "editor", "vscode": "editor", "jupyter": "notebook", "ssh": "ssh"}
 _GPU_COUNTS = (1, 2, 4, 8)
 _CPU_COUNTS = (2, 4, 8, 16, 32)
-_TEN_GB_POLICIES = {"included-10gb-v1", "r2-standard-10gb-account-v1"}
 _CONFIGURATION_FIELDS = {
-    "name", "environment", "runtime_id", "editor", "repository", "ref", "gpu", "gpu_count", "gpu_memory_gb",
-    "gpu_form_factor", "compute_class", "vcpus", "host_memory_gb", "disk_gb", "budget_usd", "max_hours", "size_gb",
-    "ssh_authorized_key",
+    "name", "environment", "runtime_id", "gpu", "gpu_count", "gpu_memory_gb", "gpu_form_factor", "compute_class",
+    "vcpus", "host_memory_gb", "disk_gb", "size_gb", "ssh_authorized_key",
 }
 # The console's GPU catalog: memory per model as it publishes it, so the same name means the same request.
 _GPU_MEMORY_GB = {
@@ -33,7 +30,7 @@ _GPU_MEMORY_GB = {
 }
 _AMD = {"MI300X", "MI350X"}
 _PUBLIC_KEY_TYPES = ("ssh-ed25519 ", "ssh-rsa ", "ssh-dss ", "ecdsa-sha2-", "sk-ssh-ed25519@openssh.com ", "sk-ecdsa-sha2-")
-_OPTIONAL_CONFIGURATION_FIELDS = {"repository", "ref", "gpu_form_factor", "ssh_authorized_key", "runtime_id", "disk_gb"}
+_OPTIONAL_CONFIGURATION_FIELDS = {"gpu_form_factor", "ssh_authorized_key", "runtime_id", "disk_gb"}
 
 
 def _path(workspace_id: str) -> str:
@@ -154,21 +151,14 @@ def _validated_change(field: str, value: Any) -> Any:
         if field in _OPTIONAL_CONFIGURATION_FIELDS:
             return None
         raise ValidationError(f"{field} cannot be cleared. Set a value or leave the field unchanged")
-    if field == "budget_usd":
-        return _finite(value, field, minimum=0, allow_equal=True)
     if field in ("gpu_memory_gb", "size_gb", "host_memory_gb"):
         return _finite(value, field, minimum=0)
     if field == "gpu_count":
         return _count(value, field, _GPU_COUNTS)
     if field == "vcpus":
         return _count(value, field, _CPU_COUNTS)
-    if field in ("max_hours", "disk_gb"):
-        low, high = (1, 168) if field == "max_hours" else (80, 2048)
-        if isinstance(value, bool) or type(value) is not int or not low <= value <= high:
-            raise ValidationError(f"{field} must be a whole number from {low} to {high}")
-        return value
-    if field == "editor":
-        return _choice(value, field, ("vscode", "jupyter", "ssh"))
+    if field == "disk_gb":
+        return _disk_gb(value)
     if field == "compute_class":
         return _choice(value, field, ("accelerator", "vm"))
     if field == "gpu_form_factor":
@@ -190,23 +180,17 @@ def _text(value: Any, field: str, *, limit: int) -> str:
     return value
 
 
-def _default_size_gb(capabilities: Any) -> float:
-    """The project storage the deployment allows, in the unit its policy prices."""
-    if not isinstance(capabilities, dict):
-        raise APIError("Workspace capabilities response is invalid")
-    if capabilities.get("storage_policy_version") in _TEN_GB_POLICIES:
-        return 10
-    limit = capabilities.get("storage_limit_bytes")
-    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
-        raise ValidationError("Pass size_gb: the deployment did not report a storage limit")
-    return limit / 1024 ** 3
+def _disk_gb(value: Any) -> int:
+    if isinstance(value, bool) or type(value) is not int or not 80 <= value <= 2048:
+        raise ValidationError("disk_gb must be a whole number from 80 to 2048")
+    return value
 
 
 def _configuration(name: str, *, gpu: str | None, gpu_count: int | None, gpu_memory_gb: float | None,
-                   environment: str | None, editor: str, max_hours: int | None, size_gb: float | None,
-                   budget_usd: float | None, ssh_key: str | None, cpus: int | None, memory_gb: float | None,
-                   disk_gb: int | None, repository: str | None, ref: str | None, runtime_id: str | None,
-                   form_factor: str | None, require_ssh_key: bool = True) -> dict[str, Any]:
+                   environment: str | None, size_gb: float | None, ssh_key: str | None, cpus: int | None,
+                   memory_gb: float | None, disk_gb: int | None, runtime_id: str | None,
+                   form_factor: str | None) -> dict[str, Any]:
+    """A create body. An omitted size_gb leaves a workspace's project capacity to the server."""
     body: dict[str, Any] = {"name": _text(name, "name", limit=128)}
     if gpu_count is not None:
         _count(gpu_count, "gpu_count", _GPU_COUNTS)
@@ -218,7 +202,6 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int | None, gpu_mem
         if gpu is not None or gpu_count not in (None, 1) or gpu_memory_gb is not None or form_factor is not None:
             raise ValidationError("A CPU workspace takes cpus and memory_gb, not gpu, gpu_count, gpu_memory_gb or form_factor")
         body["environment"] = environment or "pytorch-cpu"
-        body["editor"] = editor
         body["compute_class"] = "vm"
         body["vcpus"] = _count(cpus, "cpus", _CPU_COUNTS)
         if memory_gb is None:
@@ -230,32 +213,15 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int | None, gpu_mem
         fields = _gpu_fields(gpu, gpu_count, gpu_memory_gb, require_memory=True)
         fields.setdefault("gpu_count", 1)
         body["environment"] = environment or ("pytorch-rocm" if _compact_gpu(fields["gpu"]) in _AMD else "pytorch-cuda")
-        body["editor"] = editor
         body.update(fields)
         if form_factor is not None:
             body["gpu_form_factor"] = form_factor
-    _choice(editor, "editor", ("vscode", "jupyter", "ssh"))
-    if editor == "ssh" and not ssh_key and require_ssh_key:
-        raise ValidationError("ssh_key is required for an SSH-only workspace")
     if ssh_key is not None:
         body["ssh_authorized_key"] = _ssh_key(ssh_key)
-    if max_hours is None:
-        raise ValidationError("max_hours is required: the session stops itself after this many hours")
-    if isinstance(max_hours, bool) or type(max_hours) is not int or not 1 <= max_hours <= 168:
-        raise ValidationError("max_hours must be a whole number from 1 to 168")
-    body["max_hours"] = max_hours
     if size_gb is not None:
         body["size_gb"] = _finite(size_gb, "size_gb", minimum=0)
-    if budget_usd is not None:
-        body["budget_usd"] = _finite(budget_usd, "budget_usd", minimum=0, allow_equal=True)
     if disk_gb is not None:
-        if isinstance(disk_gb, bool) or type(disk_gb) is not int or not 80 <= disk_gb <= 2048:
-            raise ValidationError("disk_gb must be a whole number from 80 to 2048")
-        body["disk_gb"] = disk_gb
-    if repository is not None:
-        body["repository"] = _text(repository, "repository", limit=512)
-    if ref is not None:
-        body["ref"] = _text(ref, "ref", limit=256)
+        body["disk_gb"] = _disk_gb(disk_gb)
     if runtime_id is not None:
         body["runtime_id"] = _text(runtime_id, "runtime_id", limit=256)
     return body
@@ -367,14 +333,19 @@ class _WorkspaceState:
 
     @property
     def tool(self) -> str:
-        """The connection this workspace was configured for: editor, notebook or ssh."""
-        editor = self.configuration.get("editor")
-        return _EDITOR_TOOL.get(editor if isinstance(editor, str) else "", "editor")
+        """The connection this machine opens with: ssh for an instance, editor for a workspace."""
+        return "ssh" if self.configuration.get("kind") == "instance" else "editor"
 
     @property
     def ready(self) -> bool:
-        """True once the configured tool accepts connections."""
-        return self.connections.get(self.tool, False)
+        """True once an instance accepts SSH, or a workspace's editor and notebook accept connections."""
+        if self.tool == "ssh":
+            return self.connections.get("ssh", False)
+        return self.connections.get("editor", False) and self.connections.get("notebook", False)
+
+    def _accepts(self, tool: str) -> bool:
+        """``ready``, or one named connection accepting."""
+        return self.ready if tool == "ready" else self.connections.get(tool, False)
 
     @property
     def charge_state(self) -> str:
@@ -477,12 +448,15 @@ class Workspace(_WorkspaceState):
         return self
 
     def wait_until_ready(self, *, poll_seconds: float = 5.0, timeout_seconds: float = 900.0) -> "Workspace":
-        """Poll until the configured tool accepts connections. A timeout leaves compute running."""
+        """Poll until ``ready`` is true. A timeout leaves compute running."""
+        return self._wait_until("ready", poll_seconds, timeout_seconds)
+
+    def _wait_until(self, tool: str, poll_seconds: float, timeout_seconds: float) -> "Workspace":
         _wait_bounds(poll_seconds, timeout_seconds)
         deadline = time.monotonic() + timeout_seconds
         while True:
             self.refresh()
-            if self.ready:
+            if self._accepts(tool):
                 return self
             reason = self._stopped_early()
             if reason:
@@ -625,11 +599,14 @@ class AsyncWorkspace(_WorkspaceState):
         return self
 
     async def wait_until_ready(self, *, poll_seconds: float = 5.0, timeout_seconds: float = 900.0) -> "AsyncWorkspace":
+        return await self._wait_until("ready", poll_seconds, timeout_seconds)
+
+    async def _wait_until(self, tool: str, poll_seconds: float, timeout_seconds: float) -> "AsyncWorkspace":
         _wait_bounds(poll_seconds, timeout_seconds)
         deadline = time.monotonic() + timeout_seconds
         while True:
             await self.refresh()
-            if self.ready:
+            if self._accepts(tool):
                 return self
             reason = self._stopped_early()
             if reason:
@@ -741,8 +718,8 @@ def _legacy_volume(kwargs: dict[str, Any]) -> bool:
     """A create with a size and no compute names a sandbox volume."""
     count = kwargs.get("gpu_count")
     return kwargs.get("gpu") is None and kwargs.get("cpus") is None and kwargs.get("size_gb") is not None \
-        and (count is None or type(count) is int and count == 1) and kwargs.get("editor") == "vscode" \
-        and all(value is None for field, value in kwargs.items() if field not in ("size_gb", "gpu_count", "editor"))
+        and (count is None or type(count) is int and count == 1) \
+        and all(value is None for field, value in kwargs.items() if field not in ("size_gb", "gpu_count"))
 
 
 def _by_name(rows: list[dict[str, Any]], name: str) -> dict[str, Any] | None:
@@ -757,7 +734,7 @@ class Workspaces:
         self._client = client
 
     def capabilities(self) -> dict[str, Any]:
-        """What this deployment offers: environments, GPU counts, editors and storage limits."""
+        """What this deployment offers: environments, GPU counts and storage limits."""
         return self._client._request("GET", _BASE + "/capabilities")
 
     def storage(self) -> dict[str, Any]:
@@ -765,15 +742,15 @@ class Workspaces:
         return self._client._request("GET", _BASE + "/storage")
 
     def create(self, name: str, *, gpu: str | None = None, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
-               environment: str | None = None, editor: str = "vscode", max_hours: int | None = None,
-               size_gb: float | None = None, budget_usd: float | None = None, ssh_key: str | None = None,
+               environment: str | None = None, size_gb: float | None = None, ssh_key: str | None = None,
                cpus: int | None = None, memory_gb: float | None = None, disk_gb: int | None = None,
-               repository: str | None = None, ref: str | None = None, runtime_id: str | None = None,
-               form_factor: str | None = None) -> Any:
-        """Save a workspace configuration. Nothing is rented until ``start()``."""
+               runtime_id: str | None = None, form_factor: str | None = None) -> Any:
+        """Save a workspace configuration. Nothing is rented until ``start()``.
+
+        Without ``size_gb`` the server gives the project its deployment's capacity.
+        """
         options = dict(gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, environment=environment,
-                       editor=editor, max_hours=max_hours, size_gb=size_gb, budget_usd=budget_usd, ssh_key=ssh_key,
-                       cpus=cpus, memory_gb=memory_gb, disk_gb=disk_gb, repository=repository, ref=ref,
+                       size_gb=size_gb, ssh_key=ssh_key, cpus=cpus, memory_gb=memory_gb, disk_gb=disk_gb,
                        runtime_id=runtime_id, form_factor=form_factor)
         if _legacy_volume(options):
             warnings.warn("client.workspaces.create(name, size_gb=...) creates a sandbox volume. "
@@ -781,8 +758,6 @@ class Workspaces:
                           FutureWarning, stacklevel=2)
             return self._client.volumes.create(name, size_gb=size_gb)
         body = _configuration(name, **options)
-        if "size_gb" not in body:
-            body["size_gb"] = _default_size_gb(self.capabilities())
         workspace = Workspace(self._client)
         workspace._absorb(self._client._request("POST", _BASE, json=body))
         return workspace
@@ -865,14 +840,11 @@ class AsyncWorkspaces:
         return await self._client._request("GET", _BASE + "/storage")
 
     async def create(self, name: str, *, gpu: str | None = None, gpu_count: int | None = None,
-                     gpu_memory_gb: float | None = None, environment: str | None = None, editor: str = "vscode",
-                     max_hours: int | None = None, size_gb: float | None = None, budget_usd: float | None = None,
+                     gpu_memory_gb: float | None = None, environment: str | None = None, size_gb: float | None = None,
                      ssh_key: str | None = None, cpus: int | None = None, memory_gb: float | None = None,
-                     disk_gb: int | None = None, repository: str | None = None, ref: str | None = None,
-                     runtime_id: str | None = None, form_factor: str | None = None) -> Any:
+                     disk_gb: int | None = None, runtime_id: str | None = None, form_factor: str | None = None) -> Any:
         options = dict(gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, environment=environment,
-                       editor=editor, max_hours=max_hours, size_gb=size_gb, budget_usd=budget_usd, ssh_key=ssh_key,
-                       cpus=cpus, memory_gb=memory_gb, disk_gb=disk_gb, repository=repository, ref=ref,
+                       size_gb=size_gb, ssh_key=ssh_key, cpus=cpus, memory_gb=memory_gb, disk_gb=disk_gb,
                        runtime_id=runtime_id, form_factor=form_factor)
         if _legacy_volume(options):
             warnings.warn("client.workspaces.create(name, size_gb=...) creates a sandbox volume. "
@@ -880,8 +852,6 @@ class AsyncWorkspaces:
                           FutureWarning, stacklevel=2)
             return await self._client.volumes.create(name, size_gb=size_gb)
         body = _configuration(name, **options)
-        if "size_gb" not in body:
-            body["size_gb"] = _default_size_gb(await self.capabilities())
         workspace = AsyncWorkspace(self._client)
         workspace._absorb(await self._client._request("POST", _BASE, json=body))
         return workspace

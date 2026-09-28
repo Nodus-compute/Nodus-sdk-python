@@ -40,7 +40,7 @@ runs:
         python-version: '3.12'
     - name: Install Nodus
       shell: bash
-      run: python -m pip --isolated install --disable-pip-version-check 'nodus-compute==0.8.0'
+      run: python -m pip --isolated install --disable-pip-version-check 'nodus-compute==0.9.0'
     - name: Run workload and collect results
       id: run
       shell: bash
