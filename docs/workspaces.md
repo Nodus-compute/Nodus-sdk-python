@@ -127,6 +127,56 @@ download service. Existing destination files are preserved unless
 observed revision. `client.workspaces.storage()` reports the account's saved
 file usage, allowance and charges.
 
+## Delete a workspace or instance
+
+`ws.delete()` permanently deletes an unused workspace or instance and its saved
+project files. Compute must be stopped or failed, with no machine still held,
+and saving or an unfinished upload blocks deletion. Pending schedules are
+cancelled. Deletion stops retained file charges, frees the name and removes
+the workspace from lists. Past sessions, workloads and charges remain in
+Billing and history. This cannot be undone.
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    ws = client.workspaces.get("kernel-lab")
+    receipt = ws.delete()
+    print(receipt["deleted"])
+```
+
+The receipt contains `id`, `name`, `deleted` and `deleted_at`.
+An incomplete or malformed receipt leaves the outcome uncertain and preserves
+the request key for a retry.
+`client.workspaces.delete(workspace_id)` deletes by ID without fetching a
+handle first. Both forms accept `idempotency_key`, and the asynchronous client
+offers the same methods with `await`. A deleted handle has `deleted=True` and
+rejects further API operations with `NotFoundError`.
+
+The CLI asks you to type the workspace name unless `--yes` is supplied:
+
+```bash
+nodus workspace delete kernel-lab
+nodus workspace delete YOUR_WORKSPACE_ID --yes --idempotency-key delete-project-1
+```
+
+An uncertain error includes the request key. Retry using the same workspace ID
+and key, even if the workspace has disappeared from lists. A successful replay
+returns the original receipt. Use a new handle or the collection method for a
+replay after an earlier call already confirmed deletion. Active compute or a
+pending upload raises `WorkspaceNotReadyError` without deleting anything.
+If lookup fails, the CLI accepts only an ID in Nodus's `ws_UUID` format for a
+replay. Use the original workspace ID printed in the uncertain-outcome message.
+A name that resembles an ID cannot recover the original target.
+
+The MCP tool `delete_workspace` requires `workspace_id` and `idempotency_key`.
+It is marked destructive and instructs the agent to confirm the exact workspace
+and permanent file deletion with the user before calling it.
+The MCP client owns that approval step and must ask before invoking the tool.
+Destructive annotations are advisory metadata, not an independent approval
+check in the Nodus MCP server. Keep deletion subject to your client's tool
+approval controls.
+
 ## Storage volumes for sandboxes
 
 A volume is a named store that a sandbox mounts to keep selected files between

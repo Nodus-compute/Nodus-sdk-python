@@ -162,8 +162,8 @@ with nodus.Client() as client:
         ws.stop()
 ```
 
-See [GPU workspaces](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/workspaces.md) for uploads, SSH, background jobs
-and the `nodus workspace` commands.
+See [GPU workspaces](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/workspaces.md) for uploads, SSH, background jobs,
+permanent deletion and the `nodus workspace` commands.
 
 ## Launch a GPU
 

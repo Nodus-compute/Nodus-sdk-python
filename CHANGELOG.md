@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add `Workspace.delete()` and `client.workspaces.delete(workspace_id)`, including asynchronous forms, to permanently delete an unused workspace or instance and its saved files while keeping Billing history. Delete requests preserve their idempotency key through retries and expose it after an uncertain response.
+- Add `nodus workspace delete NAME_OR_ID` with confirmation by typing its name and `--yes` for scripts. Add the destructive MCP tool `delete_workspace`, which requires confirmation before use.
+- Raise `WorkspaceNotReadyError` when active compute or a pending upload blocks workspace deletion.
+
 ## 0.9.0
 
 Breaking: workspaces and instances run until you stop them or account credit runs out.
