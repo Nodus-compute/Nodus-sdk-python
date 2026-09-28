@@ -91,65 +91,63 @@ def test_async_ssh_keys_match_sync():
     assert [call[:2] for call in calls] == [("GET", KEYS), ("POST", KEYS), ("DELETE", KEYS + "/" + FINGERPRINT)]
 
 
-# -- launch saves the key to the team --------------------------------------------------------------------------
+# -- launch sends the key to one instance only --------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def default_key(tmp_path):
     ssh_dir = tmp_path / "home" / ".ssh"
     ssh_dir.mkdir(parents=True, exist_ok=True)
     (ssh_dir / "id_ed25519.pub").write_text(KEY + "\n")
 
 
-def launch_with_keys(keys_answer, *, asynchronous=False, ssh_key=None):
+def launch_calls(*, asynchronous=False, ssh_key=None, wait=True):
     calls = []
-    views = itertools.repeat(INSTANCE_READY)
-    base = launch_handler(calls, views)
+    base = launch_handler(calls, itertools.repeat(INSTANCE_READY))
 
     def handler(request):
-        if request.url.path == KEYS:
-            body = json.loads(request.content) if request.content else None
-            calls.append((request.method, request.url.path, body, None))
-            return keys_answer(request)
+        if request.url.path.startswith(KEYS):
+            pytest.fail("launch must not read or change team SSH keys")
         return base(request)
 
     client = (async_client if asynchronous else sync_client)(handler)
-    result = client.launch("H100", ssh_key=ssh_key, idempotency_key="launch-k", poll_seconds=0.1)
-    if asynchronous:
-        asyncio.run(result)
-    return calls
+    result = client.launch("H100", ssh_key=ssh_key, idempotency_key="launch-k", poll_seconds=0.1, wait=wait)
+    machine = asyncio.run(result) if asynchronous else result
+    return machine, calls
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-def test_launch_adds_a_local_key_the_team_does_not_have(asynchronous):
-    def answer(request):
-        if request.method == "GET":
-            return httpx.Response(200, json={"keys": [OTHER]})
-        return httpx.Response(201, json={"fingerprint": FINGERPRINT})
-
-    calls = launch_with_keys(answer, asynchronous=asynchronous)
-    assert ("POST", KEYS, {"public_key": KEY + "\n"}, None) in calls
+def test_launch_sends_the_default_key_to_that_instance_only(default_key, asynchronous):
+    _, calls = launch_calls(asynchronous=asynchronous)
     create = next(call for call in calls if call[:2] == ("POST", BASE))
     assert create[2]["ssh_authorized_key"] == KEY + "\n"
 
 
-def test_launch_never_saves_a_key_the_caller_passed():
-    # A saved key is admitted by every machine the team runs, so only the caller's own default key is saved.
-    calls = launch_with_keys(lambda request: httpx.Response(200, json={"keys": []}), ssh_key=OTHER["public_key"])
-    assert not any(call[1] == KEYS for call in calls)
-
-
-def test_launch_does_not_re_add_a_key_the_team_already_has():
-    calls = launch_with_keys(lambda request: httpx.Response(200, json={"keys": [SAVED]}))
-    assert [call[0] for call in calls if call[1] == KEYS] == ["GET"]
-
-
-@pytest.mark.parametrize("status", [404, 500, 403])
-def test_launch_continues_with_the_instance_key_when_team_keys_are_unavailable(status):
-    calls = launch_with_keys(lambda request: httpx.Response(status, json={"error": {"code": "x", "message": "x"}}))
-    assert [call[0] for call in calls if call[1] == KEYS] == ["GET"]
-    assert next(call for call in calls if call[:2] == ("POST", BASE))[2]["ssh_authorized_key"] == KEY + "\n"
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_launch_without_a_local_key_requests_compute_without_one(asynchronous):
+    # Direct compute accepts an instance without a key. SSH works once a team key is saved.
+    machine, calls = launch_calls(asynchronous=asynchronous)
+    create = next(call for call in calls if call[:2] == ("POST", BASE))
+    assert "ssh_authorized_key" not in create[2] and create[2]["editor"] == "ssh" and create[2]["kind"] == "instance"
     assert ("POST", BASE + "/ws_inst/start", {}, "launch-k") in calls
+    assert machine.id == "ws_inst"
+
+
+def test_launch_keep_files_without_a_local_key_omits_it_too():
+    calls = []
+    client = sync_client(launch_handler(calls, itertools.repeat(INSTANCE_READY)))
+    client.launch("H100", keep_files=True, wait=False)
+    create = next(call for call in calls if call[:2] == ("POST", BASE))
+    assert "ssh_authorized_key" not in create[2] and create[2]["editor"] == "ssh"
+
+
+def test_cli_launch_without_a_local_key_says_how_to_add_one(monkeypatch, capsys):
+    calls = []
+    cli_client(monkeypatch, launch_handler(calls, itertools.repeat(INSTANCE_CREATING)))
+    assert cli.main(["launch", "--gpu", "H100", "--name", "debug-h100"]) == 0
+    out = capsys.readouterr().out
+    assert "No SSH key found. Add one with: nodus ssh-key add, then connect with: nodus ssh instance-1a2b3c4d" in out
+    assert not any(call[1].endswith("/connections") for call in calls)
 
 
 # -- CLI -------------------------------------------------------------------------------------------------------
@@ -203,38 +201,68 @@ def test_nodus_ssh_hints_when_the_server_requires_a_key(monkeypatch, capsys):
     assert "Add your key with: nodus ssh-key add" in capsys.readouterr().err
 
 
-def test_nodus_ssh_hints_after_a_publickey_denial(monkeypatch, capsys):
-    ran = ssh_cli(monkeypatch, SSH)
-    monkeypatch.setattr(cli, "_run_ssh", lambda argv: ran.append(("ssh", argv)) or (255, True))
-    assert cli.main(["ssh", "ws_inst"]) == 255
-    assert ran == [("ssh", ["ssh", "-p", "22022", "-l", "nodus", "--", "203.0.113.7"])]
-    assert capsys.readouterr().err.strip().splitlines()[-1] == "Add your key with: nodus ssh-key add"
+def ssh_with_keys(monkeypatch, team, *, instance_key=None):
+    executed = []
+    view = {**INSTANCE_READY, "configuration": {**INSTANCE_READY["configuration"]}}
+    if instance_key is None:
+        view["configuration"].pop("ssh_authorized_key")
+    else:
+        view["configuration"]["ssh_authorized_key"] = instance_key
+
+    def handler(request):
+        if request.url.path == BASE + "/ws_inst":
+            return httpx.Response(200, json=view)
+        if request.url.path == BASE + "/ws_inst/connections":
+            return httpx.Response(200, json=SSH)
+        if request.url.path == KEYS:
+            return team if isinstance(team, httpx.Response) else httpx.Response(200, json={"keys": team})
+        pytest.fail("unexpected " + request.url.path)
+
+    cli_client(monkeypatch, handler)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(cli, "_exec_ssh", lambda argv: executed.append(argv) or 0)
+    return executed
 
 
-def test_nodus_ssh_returns_the_session_exit_code_without_a_hint(monkeypatch, capsys):
-    ssh_cli(monkeypatch, SSH)
-    monkeypatch.setattr(cli, "_run_ssh", lambda argv: (0, False))
+HINT = "If the connection is refused, add your key with: nodus ssh-key add"
+
+
+@pytest.mark.parametrize("team,instance_key", [([SAVED], None), ([], KEY), ([OTHER], KEY + "\n")])
+def test_nodus_ssh_is_quiet_when_the_local_key_is_admitted(monkeypatch, capsys, default_key, team, instance_key):
+    executed = ssh_with_keys(monkeypatch, team, instance_key=instance_key)
     assert cli.main(["ssh", "ws_inst"]) == 0
-    assert "ssh-key" not in capsys.readouterr().err
+    assert executed == [["ssh", "-p", "22022", "-l", "nodus", "--", "203.0.113.7"]]
+    assert HINT not in capsys.readouterr().err
 
 
-def test_run_ssh_returns_when_ssh_exits_even_if_a_child_holds_stderr():
-    import time
-    started = time.monotonic()
-    script = "(sleep 5) & echo 'Permission denied (publickey).' >&2; exit 0"
-    assert cli._run_ssh(["sh", "-c", script]) == (0, True)
-    assert time.monotonic() - started < 3
+@pytest.mark.parametrize("team", [[OTHER], httpx.Response(404, text="404 page not found\n"), []])
+def test_nodus_ssh_warns_before_connecting_when_the_local_key_is_not_admitted(monkeypatch, capsys, default_key, team):
+    executed = ssh_with_keys(monkeypatch, team, instance_key=OTHER["public_key"])
+    assert cli.main(["ssh", "ws_inst"]) == 0
+    assert executed and capsys.readouterr().err.strip() == HINT
 
 
-def test_run_ssh_reports_a_signal_as_a_shell_exit_code():
-    assert cli._run_ssh(["sh", "-c", "kill -INT $$"])[0] == 130
+def test_nodus_ssh_warns_when_there_is_no_local_key(monkeypatch, capsys):
+    executed = ssh_with_keys(monkeypatch, [SAVED])
+    assert cli.main(["ssh", "ws_inst"]) == 0
+    assert executed and capsys.readouterr().err.strip() == HINT
 
 
-def test_run_ssh_forwards_stderr_and_spots_a_publickey_denial(capfd):
-    script = "import sys; sys.stderr.write('nodus@203.0.113.7: Permission denied (publickey).\\n'); sys.exit(255)"
-    assert cli._run_ssh([sys.executable, "-c", script]) == (255, True)
-    assert "Permission denied (publickey)." in capfd.readouterr().err
-    assert cli._run_ssh([sys.executable, "-c", "import sys; sys.stderr.write('bye\\n')"]) == (0, False)
+def test_nodus_ssh_returns_the_ssh_exit_code(monkeypatch, default_key):
+    ssh_with_keys(monkeypatch, [SAVED])
+    monkeypatch.setattr(cli, "_exec_ssh", lambda argv: 255)
+    assert cli.main(["ssh", "ws_inst"]) == 255
+
+
+def test_exec_ssh_replaces_the_process_on_posix_and_waits_on_windows(monkeypatch):
+    replaced, waited = [], []
+    monkeypatch.setattr(cli.os, "execvp", lambda file, argv: replaced.append((file, argv)))
+    monkeypatch.setattr(cli.subprocess, "call", lambda argv: waited.append(argv) or 7)
+    monkeypatch.setattr(cli.os, "name", "posix")
+    cli._exec_ssh(["ssh", "host"])
+    assert replaced == [("ssh", ["ssh", "host"])] and waited == []
+    monkeypatch.setattr(cli.os, "name", "nt")
+    assert cli._exec_ssh(["ssh", "host"]) == 7 and waited == [["ssh", "host"]]
 
 
 # -- MCP -------------------------------------------------------------------------------------------------------
@@ -282,3 +310,24 @@ async def test_mcp_add_ssh_key_refuses_before_network(api, arguments):
         result = await session.call_tool("add_ssh_key", arguments)
         assert result.isError
     assert requests == []
+
+
+def test_a_broken_default_key_file_is_refused_before_any_request(tmp_path):
+    ssh_dir = tmp_path / "home" / ".ssh"
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+    (ssh_dir / "id_ed25519.pub").write_text(PRIVATE)
+    (ssh_dir / "id_rsa.pub").write_text(KEY + "\n")
+    client = sync_client(lambda request: pytest.fail("no request expected"))
+    with pytest.raises(ValidationError, match="ssh_key"):
+        client.launch("H100")
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_launch_without_a_key_does_not_wait_for_ssh(asynchronous):
+    calls = []
+    client = (async_client if asynchronous else sync_client)(
+        launch_handler(calls, itertools.repeat(INSTANCE_CREATING)))
+    result = client.launch("H100", poll_seconds=0.1, timeout_seconds=5)
+    machine = asyncio.run(result) if asynchronous else result
+    assert machine.state == "creating"
+    assert [call[1] for call in calls] == [BASE, BASE + "/ws_inst/start"]

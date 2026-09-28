@@ -738,14 +738,24 @@ def _read_public_key(path: str | None) -> str | None:
     return Path(path).expanduser().read_text() if path else None
 
 
+def _reference(machine) -> str:
+    """The name to type after nodus ssh: the ID when the name would read as a flag."""
+    return shlex.quote(machine.name if machine.name and not machine.name.startswith("-") else machine.id)
+
+
 def _cmd_launch(args: argparse.Namespace) -> int:
-    from ._compute import _timed_out
+    from ._compute import _timed_out, local_public_key
     from .errors import WorkspaceNotReadyError
+    keyless = args.ssh_key is None and local_public_key() is None
     with Client(base_url=args.base_url) as client:
         with _sandbox_mutation(args.idempotency_key, noun="instance") as key:
             machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
                                     ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
                                     keep_files=args.keep_files, wait=False, idempotency_key=key)
+        if keyless:
+            print(_safe_line(f"{machine.id} {machine.state}. No SSH key found. Add one with: nodus ssh-key add, "
+                             f"then connect with: nodus ssh {_reference(machine)}"))
+            return 0
         if not args.wait:
             print(_safe_line(f"{machine.id} {machine.state}. Connect when ready with: nodus ssh {machine.id}"))
             return 0
@@ -761,44 +771,46 @@ def _cmd_launch(args: argparse.Namespace) -> int:
                   file=sys.stderr)
             raise
     print(_safe_line(f"{machine.name} ({machine.id}) is ready. It stops itself after {args.hours} hours."))
-    reference = machine.name if machine.name and not machine.name.startswith("-") else machine.id
-    print(_safe_line(f"Connect: nodus ssh {shlex.quote(reference)}"))
+    print(_safe_line(f"Connect: nodus ssh {_reference(machine)}"))
     print(_safe_line(f"Or run: {connection.get('command', '')}"))
     return 0
 
 
 _ADD_KEY_HINT = "Add your key with: nodus ssh-key add"
+_REFUSED_HINT = "If the connection is refused, add your key with: nodus ssh-key add"
 
 
-def _run_ssh(argv: list[str]) -> tuple[int, bool]:
-    """Run ssh with the terminal attached, relaying its stderr to spot a public key refusal."""
-    process = subprocess.Popen(argv, stderr=subprocess.PIPE)
-    denied = threading.Event()
+def _exec_ssh(argv: list[str]) -> int:
+    """Hand the terminal to ssh: replace this process on POSIX, wait for it on Windows."""
+    if os.name == "nt":
+        return subprocess.call(argv)
+    os.execvp("ssh", argv)
+    return 0
 
-    def relay() -> None:
-        for line in iter(process.stderr.readline, b""):
-            sys.stderr.buffer.write(line)
-            sys.stderr.flush()
-            if b"Permission denied (publickey" in line:
-                denied.set()
 
-    # A ProxyCommand child can keep the pipe open after ssh exits, so ssh's exit ends the wait, not EOF.
-    reader = threading.Thread(target=relay, daemon=True)
-    reader.start()
+def _local_key_admitted(client, machine) -> bool:
+    """Whether the default local key is the machine's own key or a saved team key. Unknown reads as no."""
+    from ._compute import local_public_key
+    from ._ssh_keys import listed
+    local = local_public_key()
+    if local is None:
+        return False
+    local = local.strip()
+    own = machine.configuration.get("ssh_authorized_key")
+    if isinstance(own, str) and listed([{"public_key": line} for line in own.splitlines()], local):
+        return True
     try:
-        returncode = process.wait()
-    finally:
-        if process.poll() is None:
-            process.terminate()
-    reader.join(timeout=0.5)
-    return (128 - returncode if returncode < 0 else returncode), denied.is_set()
+        return listed(client.ssh_keys.list(), local)
+    except NodusError:
+        return False
 
 
 def _cmd_ssh(args: argparse.Namespace) -> int:
     from ._ssh import UnsupportedTransport, ssh_argv
     with Client(base_url=args.base_url) as client:
+        machine = client.workspaces.get(args.workspace_id)
         try:
-            connection = client.workspaces.get(args.workspace_id).ssh()
+            connection = machine.ssh()
         except NodusError as error:
             if getattr(error, "code", None) == "workspace_ssh_key_required":
                 print(_safe_line(f"Error: {error.message}"), file=sys.stderr)
@@ -826,10 +838,11 @@ def _cmd_ssh(args: argparse.Namespace) -> int:
         print(_safe_line(shlex.join(argv)))
         print("Error: this connection needs cloudflared. Install it and run the command above.", file=sys.stderr)
         return 1
-    returncode, denied = _run_ssh(argv)
-    if denied:
-        print(_ADD_KEY_HINT, file=sys.stderr)
-    return returncode
+    with Client(base_url=args.base_url) as client:
+        admitted = _local_key_admitted(client, machine)
+    if not admitted:
+        print(_REFUSED_HINT, file=sys.stderr)
+    return _exec_ssh(argv)
 
 
 def _cmd_ssh_key(args: argparse.Namespace) -> int:
@@ -1446,7 +1459,7 @@ Use nodus COMMAND --help for command options.""",
     launch.add_argument("--gpus", type=int, default=None, help="1, 2, 4 or 8 GPUs on one machine (default 1, or the count in --gpu such as H100:2)")
     launch.add_argument("--disk", type=int, default=100, help="local disk in GB, from 80 to 2048")
     launch.add_argument("--env", help="software environment, such as pytorch-cuda")
-    launch.add_argument("--ssh-key", help="path to an SSH public key (default ~/.ssh/id_ed25519.pub)")
+    launch.add_argument("--ssh-key", help="path to an SSH public key for this machine (default ~/.ssh/id_ed25519.pub)")
     launch.add_argument("--name", help="machine name (default instance- and 8 random characters)")
     launch.add_argument("--hours", type=_positive_integer, default=4, help="stop automatically after this many hours")
     launch.add_argument("--keep-files", action="store_true",

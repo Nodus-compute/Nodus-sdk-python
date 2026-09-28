@@ -192,10 +192,10 @@ def test_a_repeated_launch_with_the_same_key_sends_the_same_create():
     assert creates[0] == creates[1] and creates[0]["name"] != creates[2]["name"]
 
 
-def test_launch_without_any_public_key_is_refused_before_the_network():
+def test_launch_refuses_a_private_key_before_the_network():
     client = sync_client(lambda request: pytest.fail("no request expected"))
     with pytest.raises(ValidationError, match="ssh_key"):
-        client.launch("H100")
+        client.launch("H100", ssh_key="-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n")
 
 
 def test_launch_requires_a_gpu():
@@ -650,11 +650,13 @@ def ssh_cli(monkeypatch, connection, *, installed=("ssh", "cloudflared")):
             return httpx.Response(200, json=INSTANCE_READY)
         if request.url.path == BASE + "/ws_inst/connections":
             return httpx.Response(200, json=connection)
+        if request.url.path == "/v1/ssh-keys":
+            return httpx.Response(404, text="404 page not found\n")
         pytest.fail("unexpected " + request.url.path)
 
     cli_client(monkeypatch, handler)
     monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}" if name in installed else None)
-    monkeypatch.setattr(cli, "_run_ssh", lambda argv: executed.append(("ssh", argv)) or (0, False))
+    monkeypatch.setattr(cli, "_exec_ssh", lambda argv: executed.append(("ssh", argv)) or 0)
     return executed
 
 

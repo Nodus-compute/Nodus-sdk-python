@@ -165,8 +165,9 @@ and the `nodus workspace` commands.
 ## Launch a GPU
 
 `launch` rents one GPU machine, waits until SSH accepts connections and returns
-its handle. It uses your `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or
-`id_rsa.pub` unless you pass `ssh_key`.
+its handle. It admits your `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or
+`id_rsa.pub` to that machine only, unless you pass `ssh_key`. With no key at
+all it returns once compute is requested, and SSH works after you save a key.
 The machine stops itself after `max_hours`, which is 4 unless you set it.
 Local disk is not kept after it stops. Pass `keep_files=True` to save project
 files as a workspace instead.
@@ -200,9 +201,8 @@ provides the Compute list.
 ### SSH keys
 
 Keys you save are admitted by every machine your team runs, including ones
-already running, within a few seconds. When you launch without passing
-`ssh_key`, `launch` also saves your default `~/.ssh` public key if your account
-does not have it yet.
+already running, within a few seconds. Keys are saved only when you add
+them. `launch` never saves one.
 
 ```bash
 nodus ssh-key add

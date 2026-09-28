@@ -206,7 +206,7 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int | None, gpu_mem
                    environment: str | None, editor: str, max_hours: int | None, size_gb: float | None,
                    budget_usd: float | None, ssh_key: str | None, cpus: int | None, memory_gb: float | None,
                    disk_gb: int | None, repository: str | None, ref: str | None, runtime_id: str | None,
-                   form_factor: str | None) -> dict[str, Any]:
+                   form_factor: str | None, require_ssh_key: bool = True) -> dict[str, Any]:
     body: dict[str, Any] = {"name": _text(name, "name", limit=128)}
     if gpu_count is not None:
         _count(gpu_count, "gpu_count", _GPU_COUNTS)
@@ -235,7 +235,7 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int | None, gpu_mem
         if form_factor is not None:
             body["gpu_form_factor"] = form_factor
     _choice(editor, "editor", ("vscode", "jupyter", "ssh"))
-    if editor == "ssh" and not ssh_key:
+    if editor == "ssh" and not ssh_key and require_ssh_key:
         raise ValidationError("ssh_key is required for an SSH-only workspace")
     if ssh_key is not None:
         body["ssh_authorized_key"] = _ssh_key(ssh_key)
