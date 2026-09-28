@@ -746,15 +746,17 @@ def _reference(machine) -> str:
 def _cmd_launch(args: argparse.Namespace) -> int:
     from ._compute import _timed_out, local_public_key
     from .errors import WorkspaceNotReadyError
+    from ._compute import team_has_keys
     keyless = args.ssh_key is None and local_public_key() is None
     with Client(base_url=args.base_url) as client:
         with _sandbox_mutation(args.idempotency_key, noun="instance") as key:
             machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
                                     ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
                                     keep_files=args.keep_files, wait=False, idempotency_key=key)
-        if keyless:
-            print(_safe_line(f"{machine.id} {machine.state}. No SSH key found. Add one with: nodus ssh-key add, "
-                             f"then connect with: nodus ssh {_reference(machine)}"))
+        if keyless and not team_has_keys(client):
+            print(_safe_line(f"{machine.id} {machine.state}."))
+            print(_GENERATE_HINT)
+            print(_safe_line(f"Then connect with: nodus ssh {_reference(machine)}"))
             return 0
         if not args.wait:
             print(_safe_line(f"{machine.id} {machine.state}. Connect when ready with: nodus ssh {machine.id}"))
@@ -778,6 +780,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
 
 _ADD_KEY_HINT = "Add your key with: nodus ssh-key add"
 _REFUSED_HINT = "If the connection is refused, add your key with: nodus ssh-key add"
+_GENERATE_HINT = "No SSH key found. Create and add one with: nodus ssh-key add --generate"
 
 
 def _exec_ssh(argv: list[str]) -> int:
@@ -790,6 +793,13 @@ def _exec_ssh(argv: list[str]) -> int:
 
 def _local_key_admitted(client, machine) -> bool:
     """Whether the default local key is the machine's own key or a saved team key. Unknown reads as no."""
+    try:
+        return _key_admitted(client, machine)
+    except Exception:
+        return False
+
+
+def _key_admitted(client, machine) -> bool:
     from ._compute import local_public_key
     from ._ssh_keys import listed
     local = local_public_key()
@@ -845,11 +855,35 @@ def _cmd_ssh(args: argparse.Namespace) -> int:
     return _exec_ssh(argv)
 
 
+def _generate_key() -> None:
+    """Create ~/.ssh/id_ed25519 with ssh-keygen, refusing to replace any existing file."""
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        raise ValueError("ssh-keygen was not found. Install an OpenSSH client, or pass the path to a public key.")
+    directory = Path.home() / ".ssh"
+    target = directory / "id_ed25519"
+    if any(os.path.lexists(path) for path in (target, target.with_name("id_ed25519.pub"))):
+        raise ValueError(f"{target} already exists without a usable public key. Recreate {target}.pub with "
+                         f"ssh-keygen -y -f {target}, or pass the path to a public key.")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        # With no input, an overwrite prompt from ssh-keygen is answered no.
+        subprocess.run([keygen, "-t", "ed25519", "-N", "", "-f", str(target), "-C", "nodus", "-q"], check=True,
+                       stdin=subprocess.DEVNULL)
+    except subprocess.CalledProcessError as error:
+        raise ValueError(f"ssh-keygen could not create {target} (exit {error.returncode}).") from None
+
+
 def _cmd_ssh_key(args: argparse.Namespace) -> int:
-    from ._compute import default_public_key
+    from ._compute import default_public_key, local_public_key
     with Client(base_url=args.base_url) as client:
         if args.ssh_key_cmd == "add":
             path = Path(args.path).expanduser() if args.path else None
+            if path is None and local_public_key() is None:
+                if not args.generate:
+                    print(f"Error: {_GENERATE_HINT}", file=sys.stderr)
+                    return 2
+                _generate_key()
             public_key = _read_public_key(args.path) if path else default_public_key()
             name = path.name if path else next(
                 name for name in ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
@@ -1479,6 +1513,8 @@ Use nodus COMMAND --help for command options.""",
     ssh_key_add = ssh_key_sub.add_parser("add", help="save a public key (default ~/.ssh/id_ed25519.pub)")
     ssh_key_add.add_argument("path", nargs="?", metavar="PATH", help="path to an SSH public key")
     ssh_key_add.add_argument("--name", help="label shown in nodus ssh-key ls")
+    ssh_key_add.add_argument("--generate", action="store_true",
+                             help="create ~/.ssh/id_ed25519 with ssh-keygen when no default key exists")
     ssh_key_sub.add_parser("ls", help="list saved public keys")
     ssh_key_rm = ssh_key_sub.add_parser("rm", help="remove a saved public key")
     ssh_key_rm.add_argument("fingerprint", metavar="FINGERPRINT")

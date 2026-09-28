@@ -106,8 +106,10 @@ def launch_calls(*, asynchronous=False, ssh_key=None, wait=True):
     base = launch_handler(calls, itertools.repeat(INSTANCE_READY))
 
     def handler(request):
-        if request.url.path.startswith(KEYS):
-            pytest.fail("launch must not read or change team SSH keys")
+        if request.url.path.startswith(KEYS) and request.method != "GET":
+            pytest.fail("launch must not change team SSH keys")
+        if request.url.path == KEYS:
+            return httpx.Response(200, json={"keys": [OTHER]})
         return base(request)
 
     client = (async_client if asynchronous else sync_client)(handler)
@@ -146,7 +148,7 @@ def test_cli_launch_without_a_local_key_says_how_to_add_one(monkeypatch, capsys)
     cli_client(monkeypatch, launch_handler(calls, itertools.repeat(INSTANCE_CREATING)))
     assert cli.main(["launch", "--gpu", "H100", "--name", "debug-h100"]) == 0
     out = capsys.readouterr().out
-    assert "No SSH key found. Add one with: nodus ssh-key add, then connect with: nodus ssh instance-1a2b3c4d" in out
+    assert GENERATE_HINT in out and "nodus ssh instance-1a2b3c4d" in out
     assert not any(call[1].endswith("/connections") for call in calls)
 
 
@@ -331,3 +333,162 @@ def test_launch_without_a_key_does_not_wait_for_ssh(asynchronous):
     machine = asyncio.run(result) if asynchronous else result
     assert machine.state == "creating"
     assert [call[1] for call in calls] == [BASE, BASE + "/ws_inst/start"]
+
+
+# -- keyless recovery ------------------------------------------------------------------------------------------
+
+GENERATE_HINT = "No SSH key found. Create and add one with: nodus ssh-key add --generate"
+
+
+def test_cli_ssh_key_add_without_any_key_points_to_generate(monkeypatch, capsys):
+    cli_client(monkeypatch, lambda request: pytest.fail("no request expected"))
+    assert cli.main(["ssh-key", "add"]) == 2
+    assert GENERATE_HINT in capsys.readouterr().err
+
+
+def fake_keygen(monkeypatch, runs):
+    def run(argv, **kwargs):
+        runs.append(argv)
+        target = argv[argv.index("-f") + 1]
+        with open(target, "w") as private:
+            private.write(PRIVATE)
+        with open(target + ".pub", "w") as public:
+            public.write(KEY + "\n")
+        return type("Done", (), {"returncode": 0})()
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/" + name if name == "ssh-keygen" else None)
+
+
+def test_cli_ssh_key_add_generate_creates_a_key_and_adds_its_public_half(monkeypatch, capsys, tmp_path):
+    import os
+    import stat
+    runs, calls = [], []
+    fake_keygen(monkeypatch, runs)
+    cli_client(monkeypatch, keys_handler(calls))
+    assert cli.main(["ssh-key", "add", "--generate"]) == 0
+    home = tmp_path / "home" / ".ssh"
+    assert runs == [["/usr/bin/ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(home / "id_ed25519"), "-C", "nodus",
+                     "-q"]]
+    if os.name != "nt":
+        assert stat.S_IMODE(home.stat().st_mode) == 0o700
+    assert calls == [("POST", KEYS, {"public_key": KEY + "\n", "name": "id_ed25519.pub"})]
+    assert "PRIVATE" not in json.dumps(calls) and FINGERPRINT in capsys.readouterr().out
+
+
+def test_cli_ssh_key_add_generate_uses_an_existing_default_key(monkeypatch, capsys, default_key):
+    runs, calls = [], []
+    fake_keygen(monkeypatch, runs)
+    cli_client(monkeypatch, keys_handler(calls))
+    assert cli.main(["ssh-key", "add", "--generate"]) == 0
+    assert runs == [] and calls[0][2]["public_key"] == KEY + "\n"
+
+
+def test_cli_ssh_key_add_generate_never_overwrites_a_private_key(monkeypatch, capsys, tmp_path):
+    ssh_dir = tmp_path / "home" / ".ssh"
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+    (ssh_dir / "id_ed25519").write_text(PRIVATE)
+    runs = []
+    fake_keygen(monkeypatch, runs)
+    cli_client(monkeypatch, lambda request: pytest.fail("no request expected"))
+    assert cli.main(["ssh-key", "add", "--generate"]) == 2
+    assert runs == [] and (ssh_dir / "id_ed25519").read_text() == PRIVATE
+    assert "id_ed25519" in capsys.readouterr().err
+
+
+def test_cli_ssh_key_add_generate_needs_ssh_keygen(monkeypatch, capsys):
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: pytest.fail("nothing to run"))
+    cli_client(monkeypatch, lambda request: pytest.fail("no request expected"))
+    assert cli.main(["ssh-key", "add", "--generate"]) == 2
+    assert "ssh-keygen" in capsys.readouterr().err
+
+
+def test_nodus_ssh_still_connects_when_the_local_key_file_is_malformed(monkeypatch, capsys, tmp_path):
+    ssh_dir = tmp_path / "home" / ".ssh"
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+    (ssh_dir / "id_ed25519.pub").write_text("garbage")
+    executed = ssh_with_keys(monkeypatch, [SAVED])
+    assert cli.main(["ssh", "ws_inst"]) == 0
+    assert executed and capsys.readouterr().err.strip() == HINT
+
+
+def keyless_launch(team, views, *, asynchronous=False, cli_argv=None, monkeypatch=None):
+    calls = []
+    base = launch_handler(calls, views)
+
+    def handler(request):
+        if request.url.path == KEYS:
+            calls.append((request.method, request.url.path, None, None))
+            return team if isinstance(team, httpx.Response) else httpx.Response(200, json={"keys": team})
+        return base(request)
+
+    if cli_argv is not None:
+        cli_client(monkeypatch, handler)
+        return cli.main(cli_argv), calls
+    client = (async_client if asynchronous else sync_client)(handler)
+    result = client.launch("H100", poll_seconds=0.1, timeout_seconds=5)
+    return (asyncio.run(result) if asynchronous else result), calls
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_keyless_launch_waits_for_ssh_when_the_team_has_keys(asynchronous):
+    views = itertools.chain([INSTANCE_CREATING], itertools.repeat(INSTANCE_READY))
+    machine, calls = keyless_launch([OTHER], views, asynchronous=asynchronous)
+    assert machine.ready and calls.count(("GET", BASE + "/ws_inst", None, None)) >= 2
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("missing", [False, True])
+def test_keyless_launch_skips_the_wait_without_any_key(asynchronous, missing):
+    team = httpx.Response(404, text="404 page not found\n") if missing else []
+    machine, calls = keyless_launch(team, itertools.repeat(INSTANCE_CREATING), asynchronous=asynchronous)
+    assert machine.state == "creating" and not any(call[1] == BASE + "/ws_inst" for call in calls)
+
+
+def test_cli_keyless_launch_with_team_keys_prints_the_ready_command(monkeypatch, capsys):
+    views = itertools.chain([INSTANCE_CREATING], itertools.repeat(INSTANCE_READY))
+    code, _ = keyless_launch([OTHER], views, cli_argv=["launch", "--gpu", "H100", "--poll-seconds", "0.1"],
+                             monkeypatch=monkeypatch)
+    out = capsys.readouterr().out
+    assert code == 0 and "Connect: nodus ssh instance-1a2b3c4d" in out and "ssh -p 22022 nodus@203.0.113.7" in out
+    assert GENERATE_HINT not in out
+
+
+@pytest.mark.parametrize("team", [[], httpx.Response(500, json={"error": {"code": "x", "message": "x"}})])
+def test_cli_keyless_launch_without_team_keys_points_to_generate(monkeypatch, capsys, team):
+    code, calls = keyless_launch(team, itertools.repeat(INSTANCE_CREATING),
+                                 cli_argv=["launch", "--gpu", "H100"], monkeypatch=monkeypatch)
+    out = capsys.readouterr().out
+    assert code == 0 and GENERATE_HINT in out and "nodus ssh instance-1a2b3c4d" in out
+    assert not any(call[1].endswith("/connections") for call in calls)
+
+
+def test_cli_ssh_key_add_generate_refuses_a_dangling_symlink(monkeypatch, capsys, tmp_path):
+    import os
+    if not hasattr(os, "symlink") or os.name == "nt":
+        pytest.skip("symlinks need privileges on Windows")
+    ssh_dir = tmp_path / "home" / ".ssh"
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+    (ssh_dir / "id_ed25519").symlink_to(tmp_path / "elsewhere")
+    runs = []
+    fake_keygen(monkeypatch, runs)
+    cli_client(monkeypatch, lambda request: pytest.fail("no request expected"))
+    assert cli.main(["ssh-key", "add", "--generate"]) == 2
+    assert runs == [] and not (tmp_path / "elsewhere").exists()
+
+
+def test_cli_ssh_key_add_generate_reports_a_failed_ssh_keygen(monkeypatch, capsys):
+    import subprocess
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/ssh-keygen")
+    seen = {}
+
+    def fail(argv, **kwargs):
+        seen.update(kwargs)
+        raise subprocess.CalledProcessError(1, argv)
+
+    monkeypatch.setattr(cli.subprocess, "run", fail)
+    cli_client(monkeypatch, lambda request: pytest.fail("no request expected"))
+    assert cli.main(["ssh-key", "add", "--generate"]) == 2
+    assert "ssh-keygen" in capsys.readouterr().err
+    # A key created between the check and ssh-keygen makes it ask to overwrite. No input answers no.
+    assert seen.get("stdin") is subprocess.DEVNULL

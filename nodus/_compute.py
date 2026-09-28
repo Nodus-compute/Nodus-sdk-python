@@ -181,6 +181,21 @@ def local_public_key() -> str | None:
     return default_public_key()
 
 
+def team_has_keys(client: Any) -> bool:
+    """Whether the team has a saved key a keyless machine admits. Unknown reads as no."""
+    try:
+        return bool(client.ssh_keys.list())
+    except NodusError:
+        return False
+
+
+async def team_has_keys_async(client: Any) -> bool:
+    try:
+        return bool(await client.ssh_keys.list())
+    except NodusError:
+        return False
+
+
 def default_name(prefix: str, key: str) -> str:
     """The console's name shape, derived from the key: the server matches a repeated create by name."""
     return f"{prefix}-{hashlib.sha256(key.encode()).hexdigest()[:8]}"
@@ -282,7 +297,7 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb
             machine.start(idempotency_key=key)
         except NodusError as error:
             raise _start_uncertain(machine, error, key) from None
-    if wait and ssh_key is not None:
+    if wait and (ssh_key is not None or team_has_keys(client)):
         try:
             machine.wait_until_ready(poll_seconds=poll_seconds, timeout_seconds=timeout_seconds)
         except WorkspaceNotReadyError as error:
@@ -320,7 +335,7 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, g
             await machine.start(idempotency_key=key)
         except NodusError as error:
             raise _start_uncertain(machine, error, key) from None
-    if wait and ssh_key is not None:
+    if wait and (ssh_key is not None or await team_has_keys_async(client)):
         try:
             await machine.wait_until_ready(poll_seconds=poll_seconds, timeout_seconds=timeout_seconds)
         except WorkspaceNotReadyError as error:

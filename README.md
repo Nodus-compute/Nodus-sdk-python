@@ -166,8 +166,9 @@ and the `nodus workspace` commands.
 
 `launch` rents one GPU machine, waits until SSH accepts connections and returns
 its handle. It admits your `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or
-`id_rsa.pub` to that machine only, unless you pass `ssh_key`. With no key at
-all it returns once compute is requested, and SSH works after you save a key.
+`id_rsa.pub` to that machine only, unless you pass `ssh_key`. With no local key
+it waits for SSH only when your team has saved keys. Otherwise it returns once
+compute is requested, and SSH works after you save a key.
 The machine stops itself after `max_hours`, which is 4 unless you set it.
 Local disk is not kept after it stops. Pass `keep_files=True` to save project
 files as a workspace instead.
@@ -211,6 +212,7 @@ nodus ssh-key rm FINGERPRINT
 ```
 
 `nodus ssh-key add` reads `~/.ssh/id_ed25519.pub` unless you pass a path.
+Add `--generate` to create that key with `ssh-keygen` when you have none.
 In Python, use `client.ssh_keys.add(public_key)`, `list()` and
 `remove(fingerprint)`. Only public keys are accepted.
 

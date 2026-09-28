@@ -1047,8 +1047,8 @@ class Client(_Transport):
 
         Local disk only unless ``keep_files=True``, which saves project files as a workspace. The machine
         stops itself after ``max_hours`` (4 unless set). ``ssh_key`` defaults to ``~/.ssh/id_ed25519.pub``,
-        ``id_ecdsa.pub`` or ``id_rsa.pub`` and admits that key to this machine only. With no key at all it
-        returns once compute is requested, and SSH works after ``ssh_keys.add``. A timeout leaves it running.
+        ``id_ecdsa.pub`` or ``id_rsa.pub`` and admits that key to this machine only. With no local key it
+        waits only when the team has saved keys, and SSH works after ``ssh_keys.add``. A timeout leaves it running.
         """
         from ._compute import launch
         return launch(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
