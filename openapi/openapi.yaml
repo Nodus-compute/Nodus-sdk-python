@@ -3381,7 +3381,7 @@
           "ssh_authorized_key": {
             "type": "string",
             "maxLength": 8192,
-            "description": "Plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Machines also admit every SSH key saved by a team member. Instances and SSH-only workspaces may omit this field when the team has at least one saved key; otherwise it is required and a missing key returns 400 invalid_ssh_authorized_key."
+            "description": "Plain SSH public keys, one per line, up to 20. Private keys, certificates and authorized_keys options are rejected. Machines also admit every SSH key saved by a team member. Instances and SSH-only workspaces may omit this field when the team has at least one saved key. Otherwise it is required, and a missing key returns 400 invalid_ssh_authorized_key."
           }
         },
         "allOf": [{
