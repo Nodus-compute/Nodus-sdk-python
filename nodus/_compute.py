@@ -199,6 +199,36 @@ def workspace_body(gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: flo
                           repository=None, ref=None, runtime_id=None, form_factor=None)
 
 
+def _team_candidate(ssh_key: str) -> str | None:
+    lines = [line for line in ssh_key.splitlines() if line.strip()]
+    return lines[0].strip() if len(lines) == 1 else None
+
+
+def _save_to_team(client: Any, ssh_key: str) -> None:
+    """Save the caller's default key so every machine the team runs admits it. The instance key is sent regardless."""
+    from ._ssh_keys import listed
+    key = _team_candidate(ssh_key)
+    if key is None:
+        return
+    try:
+        if not listed(client.ssh_keys.list(), key):
+            client.ssh_keys.add(ssh_key)
+    except NodusError:
+        return
+
+
+async def _save_to_team_async(client: Any, ssh_key: str) -> None:
+    from ._ssh_keys import listed
+    key = _team_candidate(ssh_key)
+    if key is None:
+        return
+    try:
+        if not listed(await client.ssh_keys.list(), key):
+            await client.ssh_keys.add(ssh_key)
+    except NodusError:
+        return
+
+
 def _check_gpu(gpu: Any) -> None:
     if gpu is None:
         raise ValidationError("Choose a gpu such as \"H100\" or \"H100:2\"")
@@ -251,6 +281,8 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb
     _check_gpu(gpu)
     _wait_bounds(poll_seconds, timeout_seconds)
     key = _key(idempotency_key or _fresh_key())
+    local_key = ssh_key is None
+    ssh_key = _ssh_key(ssh_key or default_public_key())
     if keep_files:
         body = workspace_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
                               environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key),
@@ -260,6 +292,8 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
                              environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
                              max_hours=max_hours)
+    if local_key:
+        _save_to_team(client, ssh_key)
     machine, answered = Workspace(client), {}
     # The server replays a repeated key and body as the original record. Older servers match an instance by name.
     machine._absorb(client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
@@ -289,6 +323,8 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, g
     _check_gpu(gpu)
     _wait_bounds(poll_seconds, timeout_seconds)
     key = _key(idempotency_key or _fresh_key())
+    local_key = ssh_key is None
+    ssh_key = _ssh_key(ssh_key or default_public_key())
     if keep_files:
         body = workspace_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
                               environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key),
@@ -298,6 +334,8 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, g
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
                              environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
                              max_hours=max_hours)
+    if local_key:
+        await _save_to_team_async(client, ssh_key)
     machine, answered = AsyncWorkspace(client), {}
     machine._absorb(await client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
     if _replayed_stop(machine, keep_files, answered):

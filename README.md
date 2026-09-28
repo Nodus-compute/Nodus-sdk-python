@@ -197,6 +197,23 @@ machines launched with `keep_files=True`. In Python, call
 `client.compute.list(include_workspaces=True)`. Both need a Nodus server that
 provides the Compute list.
 
+### SSH keys
+
+Keys you save are admitted by every machine your team runs, including ones
+already running, within a few seconds. When you launch without passing
+`ssh_key`, `launch` also saves your default `~/.ssh` public key if your account
+does not have it yet.
+
+```bash
+nodus ssh-key add
+nodus ssh-key ls
+nodus ssh-key rm FINGERPRINT
+```
+
+`nodus ssh-key add` reads `~/.ssh/id_ed25519.pub` unless you pass a path.
+In Python, use `client.ssh_keys.add(public_key)`, `list()` and
+`remove(fingerprint)`. Only public keys are accepted.
+
 ## Prefer the terminal?
 
 ```bash

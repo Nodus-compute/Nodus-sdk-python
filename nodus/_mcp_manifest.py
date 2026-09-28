@@ -26,6 +26,7 @@ _LOCAL_OPERATIONS = {
     "launch_gpu": ("local.compute.launch", "workspaces:write"),
     "list_compute": ("local.compute.list", "workspaces:read"),
     "stop_compute": ("local.compute.stop", "workspaces:write"),
+    "add_ssh_key": ("local.ssh_keys.add", "workspaces:write"),
 }
 _KEYED_TRANSFERS = {"upload_project", "upload_sandbox_file", "download_sandbox_file", "upload_workspace_files",
                     "launch_gpu", "stop_compute"}

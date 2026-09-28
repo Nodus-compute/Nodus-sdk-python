@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -766,10 +767,44 @@ def _cmd_launch(args: argparse.Namespace) -> int:
     return 0
 
 
+_ADD_KEY_HINT = "Add your key with: nodus ssh-key add"
+
+
+def _run_ssh(argv: list[str]) -> tuple[int, bool]:
+    """Run ssh with the terminal attached, relaying its stderr to spot a public key refusal."""
+    process = subprocess.Popen(argv, stderr=subprocess.PIPE)
+    denied = threading.Event()
+
+    def relay() -> None:
+        for line in iter(process.stderr.readline, b""):
+            sys.stderr.buffer.write(line)
+            sys.stderr.flush()
+            if b"Permission denied (publickey" in line:
+                denied.set()
+
+    # A ProxyCommand child can keep the pipe open after ssh exits, so ssh's exit ends the wait, not EOF.
+    reader = threading.Thread(target=relay, daemon=True)
+    reader.start()
+    try:
+        returncode = process.wait()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+    reader.join(timeout=0.5)
+    return (128 - returncode if returncode < 0 else returncode), denied.is_set()
+
+
 def _cmd_ssh(args: argparse.Namespace) -> int:
     from ._ssh import UnsupportedTransport, ssh_argv
     with Client(base_url=args.base_url) as client:
-        connection = client.workspaces.get(args.workspace_id).ssh()
+        try:
+            connection = client.workspaces.get(args.workspace_id).ssh()
+        except NodusError as error:
+            if getattr(error, "code", None) == "workspace_ssh_key_required":
+                print(_safe_line(f"Error: {error.message}"), file=sys.stderr)
+                print(_ADD_KEY_HINT, file=sys.stderr)
+                return 2
+            raise
     if args.print:
         print(_safe_line(connection.get("command", "")))
         print(_safe(connection.get("ssh_config", "")))
@@ -791,7 +826,32 @@ def _cmd_ssh(args: argparse.Namespace) -> int:
         print(_safe_line(shlex.join(argv)))
         print("Error: this connection needs cloudflared. Install it and run the command above.", file=sys.stderr)
         return 1
-    os.execvp("ssh", argv)
+    returncode, denied = _run_ssh(argv)
+    if denied:
+        print(_ADD_KEY_HINT, file=sys.stderr)
+    return returncode
+
+
+def _cmd_ssh_key(args: argparse.Namespace) -> int:
+    from ._compute import default_public_key
+    with Client(base_url=args.base_url) as client:
+        if args.ssh_key_cmd == "add":
+            path = Path(args.path).expanduser() if args.path else None
+            public_key = _read_public_key(args.path) if path else default_public_key()
+            name = path.name if path else next(
+                name for name in ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
+                if (Path.home() / ".ssh" / name).is_file())
+            saved = client.ssh_keys.add(public_key, name=args.name or name)
+            print(_safe_line(f"Added {saved.get('fingerprint', '')}. Running instances accept it within a few seconds."))
+            return 0
+        if args.ssh_key_cmd == "ls":
+            rows = [[key.get("fingerprint", ""), key.get("name") or "-", str(key.get("added_at") or "-")]
+                    for key in client.ssh_keys.list()]
+            show_table(["FINGERPRINT", "NAME", "ADDED"], rows, empty="No SSH keys saved. Add one with nodus ssh-key add.",
+                       plain=True)
+            return 0
+        client.ssh_keys.remove(args.fingerprint)
+    print(_safe_line(f"Removed {args.fingerprint}."))
     return 0
 
 
@@ -1401,6 +1461,14 @@ Use nodus COMMAND --help for command options.""",
     ssh = sub.add_parser("ssh", help="open an SSH session on an instance or workspace")
     ssh.add_argument("--print", action="store_true", help="print the SSH command and config entry instead")
     ssh.add_argument("workspace_id", metavar="NAME_OR_ID")
+    ssh_key = sub.add_parser("ssh-key", help="save SSH public keys that every machine your team runs admits")
+    ssh_key_sub = ssh_key.add_subparsers(dest="ssh_key_cmd", required=True, metavar="COMMAND")
+    ssh_key_add = ssh_key_sub.add_parser("add", help="save a public key (default ~/.ssh/id_ed25519.pub)")
+    ssh_key_add.add_argument("path", nargs="?", metavar="PATH", help="path to an SSH public key")
+    ssh_key_add.add_argument("--name", help="label shown in nodus ssh-key ls")
+    ssh_key_sub.add_parser("ls", help="list saved public keys")
+    ssh_key_rm = ssh_key_sub.add_parser("rm", help="remove a saved public key")
+    ssh_key_rm.add_argument("fingerprint", metavar="FINGERPRINT")
     stop = sub.add_parser("stop", help="stop an instance or workspace and release its GPU")
     stop.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
     stop.add_argument("workspace_id", metavar="NAME_OR_ID")
@@ -1580,6 +1648,7 @@ def main(argv: list[str] | None = None) -> int:
         "launch": lambda: _cmd_launch(args),
         "ps": lambda: _cmd_ps(args),
         "ssh": lambda: _cmd_ssh(args),
+        "ssh-key": lambda: _cmd_ssh_key(args),
         "stop": lambda: _cmd_stop(args),
         "agent": lambda: _cmd_agent(args),
         "benchmark": lambda: _cmd_benchmark(args),

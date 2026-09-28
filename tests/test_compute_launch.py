@@ -79,6 +79,8 @@ def async_client(handler) -> nodus.AsyncClient:
 
 def launch_handler(calls, views, *, create_view=INSTANCE_STOPPED):
     def handler(request):
+        if request.url.path == "/v1/ssh-keys":
+            return httpx.Response(404, text="404 page not found\n")
         body = json.loads(request.content) if request.content else None
         calls.append((request.method, request.url.path, body, request.headers.get("Idempotency-Key")))
         if request.url.path == BASE + "/capabilities":
@@ -235,6 +237,8 @@ def test_a_launch_whose_start_is_uncertain_carries_the_key_for_the_retry():
     calls = []
 
     def handler(request):
+        if request.url.path == "/v1/ssh-keys":
+            return httpx.Response(404, text="404 page not found\n")
         calls.append(request)
         if request.url.path == BASE:
             return httpx.Response(201, json=INSTANCE_STOPPED)
@@ -472,6 +476,8 @@ def api(monkeypatch):
     requests, responses = [], []
 
     def respond(request):
+        if request.url.path == "/v1/ssh-keys":
+            return httpx.Response(404, text="404 page not found\n")
         requests.append(request)
         return responses.pop(0) if responses else httpx.Response(200, json={"ok": True})
 
@@ -648,7 +654,7 @@ def ssh_cli(monkeypatch, connection, *, installed=("ssh", "cloudflared")):
 
     cli_client(monkeypatch, handler)
     monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}" if name in installed else None)
-    monkeypatch.setattr(cli.os, "execvp", lambda file, argv: executed.append((file, argv)))
+    monkeypatch.setattr(cli, "_run_ssh", lambda argv: executed.append(("ssh", argv)) or (0, False))
     return executed
 
 
@@ -752,6 +758,8 @@ def test_a_replayed_create_of_a_running_machine_is_not_started_again(keep_files)
     calls = []
 
     def handler(request):
+        if request.url.path == "/v1/ssh-keys":
+            return httpx.Response(404, text="404 page not found\n")
         calls.append((request.method, request.url.path, request.headers.get("Idempotency-Key")))
         if request.url.path == BASE + "/capabilities":
             return httpx.Response(200, json=CAPABILITIES)

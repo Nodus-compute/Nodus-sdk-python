@@ -54,6 +54,7 @@ from ._secrets import Secrets, AsyncSecrets
 from ._connections import Connections, AsyncConnections
 from ._workspaces import Workspaces, AsyncWorkspaces, Workspace, AsyncWorkspace
 from ._compute import Compute, AsyncCompute
+from ._ssh_keys import SSHKeys, AsyncSSHKeys
 from ._volumes import Volumes, AsyncVolumes
 from ._operations import Operations, AsyncOperations, OperationDefinition, OperationCatalog, WorkloadPage, WorkloadValidation, RunDraft, RunDraftValues, RunDraftPatch
 
@@ -193,6 +194,8 @@ __all__ = [
     "Workspace",
     "Compute",
     "AsyncCompute",
+    "SSHKeys",
+    "AsyncSSHKeys",
     "AsyncWorkspace",
     "Workspaces",
     "AsyncWorkspaces",
@@ -1024,6 +1027,11 @@ class Client(_Transport):
         """Running instances and training, as the Compute page lists them."""
         return Compute(self)
 
+    @property
+    def ssh_keys(self) -> SSHKeys:
+        """Your SSH public keys, admitted by every machine your team runs."""
+        return SSHKeys(self)
+
     def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
                name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
@@ -1514,6 +1522,11 @@ class AsyncClient(_Transport):
     def compute(self) -> AsyncCompute:
         """Running instances and training, as the Compute page lists them."""
         return AsyncCompute(self)
+
+    @property
+    def ssh_keys(self) -> AsyncSSHKeys:
+        """Your SSH public keys, admitted by every machine your team runs."""
+        return AsyncSSHKeys(self)
 
     async def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                      disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,

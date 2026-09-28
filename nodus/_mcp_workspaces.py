@@ -9,6 +9,7 @@ from mcp.types import ToolAnnotations
 from ._client_identity import acting_as, mcp_caller
 from . import AsyncClient, _resolve, _valid_id, _valid_idempotency_key
 from ._compute import _query
+from ._ssh_keys import _body as _ssh_key_body
 from ._workspaces import AsyncWorkspace, _CONFIGURATION_FIELDS, _job, _tool
 
 
@@ -174,3 +175,11 @@ def register_workspace_tools(server, base_url, request, check_origin):
         async with client() as api:
             machine = await AsyncWorkspace(api, identifier).stop(idempotency_key=key)
         return json.dumps(machine.raw)
+
+    @server.tool(structured_output=False, annotations=write)
+    async def add_ssh_key(ctx: Context, public_key: str, name: str | None = None) -> str:
+        """Save one SSH public key for your account. Every machine your team runs admits it within seconds.
+
+        Adding a saved key again succeeds and replaces its name. Private keys are refused.
+        """
+        return await call(ctx, "POST", "/v1/ssh-keys", _ssh_key_body(public_key, name))
