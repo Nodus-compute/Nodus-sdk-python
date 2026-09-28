@@ -48,9 +48,9 @@ def test_workspace_cli_creates_starts_connects_runs_and_stops(monkeypatch, capsy
         pytest.fail("unexpected " + request.url.path)
 
     monkeypatch.setattr(cli, "Client", client_factory(handler))
-    assert cli.main(["workspace", "new", "kernel-lab", "--gpu", "H100", "--max-hours", "4"]) == 0
+    assert cli.main(["workspace", "new", "kernel-lab", "--gpu", "H100"]) == 0
     assert capsys.readouterr().out.strip() == "ws_kernel"
-    assert calls[1][2]["gpu"] == "H100" and calls[1][2]["max_hours"] == 4 and calls[1][2]["size_gb"] == 10
+    assert calls[0][:2] == ("POST", BASE) and calls[0][2]["gpu"] == "H100" and "size_gb" not in calls[0][2]
     assert cli.main(["workspace", "start", "--idempotency-key", "session-1", "--wait", "--poll-seconds", "0.1", "ws_kernel"]) == 0
     out = capsys.readouterr().out
     started = [call for call in calls if call[1] == BASE + "/ws_kernel/start"]
@@ -70,12 +70,9 @@ def test_workspace_cli_creates_starts_connects_runs_and_stops(monkeypatch, capsy
     assert calls[-1][2] == {"session_id": "sb_session"} and calls[-1][3] == "stop-1"
 
 
-def test_workspace_cli_run_requires_a_budget_and_new_requires_hours():
+def test_workspace_cli_run_requires_a_budget():
     with pytest.raises(SystemExit) as error:
         cli.build_parser().parse_args(["workspace", "run", "ws_kernel", "python x.py"])
-    assert error.value.code == 2
-    with pytest.raises(SystemExit) as error:
-        cli.build_parser().parse_args(["workspace", "new", "lab", "--gpu", "H100"])
     assert error.value.code == 2
 
 
@@ -85,8 +82,7 @@ def test_workspace_cli_create_rejects_conflicting_or_invalid_count_before_networ
         pytest.fail("an invalid GPU count must not save a workspace configuration")
 
     monkeypatch.setattr(cli, "Client", client_factory(handler))
-    assert cli.main(["workspace", "new", "lab", "--gpu", "H100:8", "--gpu-count", count,
-                     "--max-hours", "1", "--size-gb", "1", "--budget", "3.5"]) == 2
+    assert cli.main(["workspace", "new", "lab", "--gpu", "H100:8", "--gpu-count", count, "--size-gb", "1"]) == 2
     assert "gpu_count" in capsys.readouterr().err
 
 
@@ -96,7 +92,7 @@ def test_workspace_cli_create_rejects_conflicting_or_invalid_count_before_networ
     (["--gpu", "H100"], {"gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}),
     (["--cpus", "4", "--memory-gb", "16"], {"compute_class": "vm", "vcpus": 4, "host_memory_gb": 16}),
 ])
-def test_workspace_cli_create_preserves_omitted_count_and_budget(monkeypatch, capsys, options, expected):
+def test_workspace_cli_create_preserves_omitted_count(monkeypatch, capsys, options, expected):
     requests = []
 
     def handler(request):
@@ -105,11 +101,9 @@ def test_workspace_cli_create_preserves_omitted_count_and_budget(monkeypatch, ca
         return httpx.Response(201, json=STOPPED)
 
     monkeypatch.setattr(cli, "Client", client_factory(handler))
-    assert cli.main(["workspace", "new", "lab", *options, "--max-hours", "1", "--size-gb", "1",
-                     "--budget", "3.5"]) == 0
+    assert cli.main(["workspace", "new", "lab", *options, "--size-gb", "1"]) == 0
     assert capsys.readouterr().out.strip() == "ws_kernel"
-    assert len(requests) == 1
-    assert requests[0]["budget_usd"] == 3.5
+    assert len(requests) == 1 and requests[0]["size_gb"] == 1
     assert {key: requests[0][key] for key in expected} == expected
     if "vcpus" in expected:
         assert not {"gpu", "gpu_count", "gpu_memory_gb"}.intersection(requests[0])
@@ -169,3 +163,31 @@ def test_workspace_cli_lists_pending_final_and_legacy_cost(monkeypatch, capsys, 
     assert out.endswith("  " + expected)
     if expected in ("Finalizing cost", "Not available"):
         assert "$" not in out
+
+
+def test_workspace_cli_new_needs_no_hours_and_leaves_project_size_to_the_server(monkeypatch, capsys):
+    requests = []
+
+    def handler(request):
+        assert request.method == "POST" and request.url.path == BASE
+        requests.append(json.loads(request.content))
+        return httpx.Response(201, json=STOPPED)
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "new", "lab", "--gpu", "H100"]) == 0
+    assert cli.main(["workspace", "new", "lab", "--gpu", "H100", "--size-gb", "10"]) == 0
+    assert capsys.readouterr().out.split() == ["ws_kernel", "ws_kernel"]
+    assert requests == [{"name": "lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
+                         "gpu_memory_gb": 80},
+                        {"name": "lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
+                         "gpu_memory_gb": 80, "size_gb": 10}]
+
+
+@pytest.mark.parametrize("flag", [["--max-hours", "4"], ["--budget", "5"], ["--editor", "vscode"]])
+def test_workspace_cli_new_has_no_hours_budget_or_editor_flags(flag):
+    with pytest.raises(SystemExit) as error:
+        cli.build_parser().parse_args(["workspace", "new", "lab", "--gpu", "H100", *flag])
+    assert error.value.code == 2
+    help_text = cli.build_parser()._subparsers._group_actions[0].choices["workspace"] \
+        ._subparsers._group_actions[0].choices["new"].format_help()
+    assert flag[0] not in help_text

@@ -1,7 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
+Breaking: workspaces and instances run until you stop them or account credit runs out.
+
+- `client.workspaces.create`, `Workspace.configure`, `client.launch` and their asynchronous counterparts no longer take `max_hours`, `budget_usd`, `editor`, `repository` or `ref`, because the server no longer has those fields. `create` and `launch` raise `TypeError` for them, and `configure` and the MCP `create_workspace` and `configure_workspace` tools refuse them as unknown fields. There is no per-session time or spending limit. `Workspace.run(budget_usd=...)` is unchanged.
+- `size_gb` is optional for `client.workspaces.create`. When it is omitted, the SDK sends no size and the server gives the project its deployment's capacity. The SDK no longer reads `capabilities()` to choose a size, and `client.launch` sends no size.
+- `Workspace.ready` and `wait_until_ready` wait for both the editor and the notebook on a workspace, and for SSH on an instance. `Workspace.tool` is `ssh` for an instance and `editor` for a workspace.
+- The CLI drops `nodus workspace new --max-hours`, `--budget` and `--editor`, and `nodus launch --hours`. `--size-gb` is optional. The MCP `launch_gpu` tool no longer takes `max_hours`.
 - Add `RLEventEmitter` for reporting scored RL attempts from inside a workload. Events the server would reject raise `EventValidationError` before they are written, instead of after a machine is rented.
 - Add `rl=RLSetup(...)` to `run()`. Mode, environment and task-count rules are checked before submission. `extra={"rl": ...}` still works.
 - Add `client.rl.list_environments()`, returning the RL catalog with the examples you can run today and what was measured by running them. `RLExample.run_arguments()` supplies everything `run()` needs.

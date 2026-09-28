@@ -3302,9 +3302,7 @@
           "environment",
           "gpu",
           "gpu_count",
-          "gpu_memory_gb",
-          "max_hours",
-          "size_gb"
+          "gpu_memory_gb"
         ],
         "properties": {
           "kind": {"type": "string", "enum": ["", "workspace", "instance"], "description": "Omission or an empty value preserves a saved workspace. instance creates standalone compute with SSH and local disk only. The kind cannot change after creation. An existing SSH workspace remains a workspace."},
@@ -3321,24 +3319,6 @@
             "description": "Qualified software environment for NVIDIA, AMD or CPU compute. Custom environments require a team-visible runtime_id."
           },
           "runtime_id": {"type": "string", "pattern": "^nodus:runtime:[a-f0-9]{64}$", "description": "Optional immutable image identity from capabilities.runtimes. Selects the workspace Linux distribution and software. Must match environment and remain qualified and visible to the team. Omission preserves the existing managed environment. The selected runtime cannot be changed when editing a saved project."},
-          "editor": {
-            "type": "string",
-            "enum": [
-              "",
-              "vscode",
-              "jupyter",
-              "ssh"
-            ],
-            "description": "Instances require ssh and expose only SSH connections. For saved workspaces, this is the development-tool preference retained for compatibility with existing configurations. Direct workspace sessions offer browser VS Code and SSH on the same compute. Use the response connections flags to determine current access. On legacy sessions, omission or an empty value preserves both browser tools, and ssh requires ssh_authorized_key."
-          },
-          "repository": {
-            "type": "string",
-            "description": "Optional connected GitHub repository as owner/name, including authorized private repositories. URLs and credentials are not accepted. Repository access is checked when admitting a new session."
-          },
-          "ref": {
-            "type": "string",
-            "description": "Optional repository branch or ref. Requires repository. Omit to use its default branch."
-          },
           "gpu": {
             "type": "string",
             "minLength": 0,
@@ -3361,22 +3341,11 @@
           "vcpus": {"type": "integer", "minimum": 0, "maximum": 256, "description": "Minimum vCPUs on a GPU machine. Omission or zero keeps its included resources. CPU instances require exactly 2, 4, 8, 16 or 32 vCPUs."},
           "host_memory_gb": {"type": "number", "minimum": 0, "maximum": 4096, "description": "Minimum system RAM in GB, separate from GPU memory. Omission or zero keeps included RAM on GPU machines. CPU instances require a positive value. Custom RAM requires direct workspace compute."},
           "disk_gb": {"type": "integer", "anyOf": [{"const": 0}, {"minimum": 80, "maximum": 2048}], "description": "Runtime storage in decimal GB. Omission or zero preserves the existing 80 GB floor. Explicit sizes from 80 through 2048 are accepted. This is separate from the saved project capacity in size_gb. Restoring saved files can require additional allocation."},
-          "budget_usd": {
-            "type": "number",
-            "description": "Deprecated compatibility field. Customer spending limits are not enforced.",
-            "deprecated": true
-          },
-          "max_hours": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 168,
-            "description": "Maximum session lifetime in hours. Closing a browser does not stop compute."
-          },
           "size_gb": {
             "type": "number",
             "minimum": 0,
             "maximum": 10,
-            "description": "Instances require zero and have no saved project storage. For workspaces, positive project capacity within capabilities.storage_limit_bytes. With storage_policy_version included-10gb-v1 or r2-standard-10gb-account-v1, send exactly 10 for the 10,000,000,000-byte per-workspace capacity. The account policy shares its free allowance across workspaces. Other deployments use GiB and their displayed capacity limit."
+            "description": "Instances require zero and have no saved project storage. For workspaces, omit to use the deployment capacity, or send a positive capacity within capabilities.storage_limit_bytes. With storage_policy_version included-10gb-v1 or r2-standard-10gb-account-v1, send exactly 10 for the 10,000,000,000-byte per-workspace capacity. The account policy shares its free allowance across workspaces. Other deployments use GiB and their displayed capacity limit."
           },
           "ssh_authorized_key": {
             "type": "string",
@@ -3387,8 +3356,7 @@
         "allOf": [{
           "if": {"required": ["kind"], "properties": {"kind": {"const": "instance"}}},
           "then": {
-            "required": ["editor"],
-            "properties": {"editor": {"const": "ssh"}, "size_gb": {"const": 0}, "repository": {"maxLength": 0}, "ref": {"maxLength": 0}}
+            "properties": {"size_gb": {"const": 0}}
           },
           "else": {"properties": {"size_gb": {"minimum": 9.5367431640625e-07}}}
         }],
@@ -3534,7 +3502,7 @@
             "format": "int64",
             "description": "Maximum saved-project payload bytes supported by workspace source preparation. The full-capacity path supports 10,000,000,000 bytes with separate bounded archive metadata. Ordinary asset import limits are unchanged."
           },
-          "account_funded_sessions": {"type": "boolean", "description": "Whether new sessions may omit budget_usd or set it to zero to use account funding without a per-session spending cap. Account credit, spending controls and maximum duration still apply. Older servers may omit this capability, which clients must treat as false."}
+          "account_funded_sessions": {"type": "boolean", "description": "Whether sessions use account funding without a per-session spending cap. Account credit and spending controls apply, and a session runs until it is stopped. Older servers may omit this capability, which clients must treat as false."}
         }
       },
       "WorkspaceWorkloadRequest": {
@@ -8678,18 +8646,11 @@
             "additionalProperties": false,
             "description": "Workspace configuration. Read get_workspace_capabilities first for valid GPU models, counts and environments.",
             "properties": {
-              "budget_usd": {
-                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+              "disk_gb": {
+                "description": "Optional runtime disk in GB.",
+                "maximum": 2048,
                 "minimum": 0,
-                "type": "number"
-              },
-              "editor": {
-                "description": "Which tool the workspace opens with. Both stay available.",
-                "enum": [
-                  "vscode",
-                  "jupyter"
-                ],
-                "type": "string"
+                "type": "integer"
               },
               "environment": {
                 "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
@@ -8704,16 +8665,25 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "gpu_form_factor": {
+                "description": "Optional GPU form factor.",
+                "enum": [
+                  "pcie",
+                  "sxm",
+                  "nvl"
+                ],
+                "type": "string"
+              },
               "gpu_memory_gb": {
                 "description": "Memory per GPU in GB, matching the chosen model.",
                 "exclusiveMinimum": 0,
                 "type": "number"
               },
-              "max_hours": {
-                "description": "A session stops itself after this many hours.",
-                "maximum": 168,
-                "minimum": 1,
-                "type": "integer"
+              "host_memory_gb": {
+                "description": "Optional minimum system RAM in GB.",
+                "maximum": 4096,
+                "minimum": 0,
+                "type": "number"
               },
               "name": {
                 "description": "Workspace name shown in the console.",
@@ -8721,27 +8691,32 @@
                 "minLength": 1,
                 "type": "string"
               },
-              "ref": {
-                "description": "Optional git ref for the repository.",
-                "type": "string"
-              },
-              "repository": {
-                "description": "Optional git repository cloned into /workspace on first start.",
+              "runtime_id": {
+                "description": "Runtime id from get_workspace_capabilities, when the workspace uses a specific image.",
                 "type": "string"
               },
               "size_gb": {
-                "description": "Saved project storage in GB for /workspace.",
+                "description": "Saved project storage in GB for /workspace. Omit to use the deployment's capacity.",
                 "exclusiveMinimum": 0,
                 "type": "number"
+              },
+              "ssh_authorized_key": {
+                "description": "Optional SSH public keys, one per line. Team members' account keys are admitted too.",
+                "maxLength": 8192,
+                "type": "string"
+              },
+              "vcpus": {
+                "description": "Optional minimum vCPUs.",
+                "maximum": 256,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
               "name",
               "gpu",
               "gpu_count",
-              "gpu_memory_gb",
-              "max_hours",
-              "size_gb"
+              "gpu_memory_gb"
             ],
             "type": "object"
           }
@@ -8759,18 +8734,11 @@
             "additionalProperties": false,
             "description": "The complete new configuration.",
             "properties": {
-              "budget_usd": {
-                "description": "Spending cap per session. Zero uses account funding without a per-session cap.",
+              "disk_gb": {
+                "description": "Optional runtime disk in GB.",
+                "maximum": 2048,
                 "minimum": 0,
-                "type": "number"
-              },
-              "editor": {
-                "description": "Which tool the workspace opens with. Both stay available.",
-                "enum": [
-                  "vscode",
-                  "jupyter"
-                ],
-                "type": "string"
+                "type": "integer"
               },
               "environment": {
                 "description": "Software environment id from get_workspace_capabilities, such as pytorch-cuda.",
@@ -8785,16 +8753,25 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "gpu_form_factor": {
+                "description": "Optional GPU form factor.",
+                "enum": [
+                  "pcie",
+                  "sxm",
+                  "nvl"
+                ],
+                "type": "string"
+              },
               "gpu_memory_gb": {
                 "description": "Memory per GPU in GB, matching the chosen model.",
                 "exclusiveMinimum": 0,
                 "type": "number"
               },
-              "max_hours": {
-                "description": "A session stops itself after this many hours.",
-                "maximum": 168,
-                "minimum": 1,
-                "type": "integer"
+              "host_memory_gb": {
+                "description": "Optional minimum system RAM in GB.",
+                "maximum": 4096,
+                "minimum": 0,
+                "type": "number"
               },
               "name": {
                 "description": "Workspace name shown in the console.",
@@ -8802,27 +8779,32 @@
                 "minLength": 1,
                 "type": "string"
               },
-              "ref": {
-                "description": "Optional git ref for the repository.",
-                "type": "string"
-              },
-              "repository": {
-                "description": "Optional git repository cloned into /workspace on first start.",
+              "runtime_id": {
+                "description": "Runtime id from get_workspace_capabilities, when the workspace uses a specific image.",
                 "type": "string"
               },
               "size_gb": {
-                "description": "Saved project storage in GB for /workspace.",
+                "description": "Saved project storage in GB for /workspace. Omit to use the deployment's capacity.",
                 "exclusiveMinimum": 0,
                 "type": "number"
+              },
+              "ssh_authorized_key": {
+                "description": "Optional SSH public keys, one per line. Team members' account keys are admitted too.",
+                "maxLength": 8192,
+                "type": "string"
+              },
+              "vcpus": {
+                "description": "Optional minimum vCPUs.",
+                "maximum": 256,
+                "minimum": 0,
+                "type": "integer"
               }
             },
             "required": [
               "name",
               "gpu",
               "gpu_count",
-              "gpu_memory_gb",
-              "max_hours",
-              "size_gb"
+              "gpu_memory_gb"
             ],
             "type": "object"
           },

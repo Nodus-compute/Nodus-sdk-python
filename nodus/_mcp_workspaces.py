@@ -49,7 +49,7 @@ def register_workspace_tools(server, base_url, request, check_origin):
 
     @server.tool(structured_output=False, annotations=read)
     async def get_workspace_capabilities(ctx: Context) -> str:
-        """Discover workspace environments, GPU counts, editors and storage limits."""
+        """Discover workspace environments, GPU counts and storage limits."""
         return await call(ctx, "GET", "/v1/research-workspaces/capabilities")
 
     @server.tool(structured_output=False, annotations=read)
@@ -143,8 +143,8 @@ def register_workspace_tools(server, base_url, request, check_origin):
     @server.tool(structured_output=False, annotations=write)
     async def launch_gpu(idempotency_key: str, gpu: str, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                          disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
-                         name: str | None = None, max_hours: int = 4, keep_files: bool = False) -> str:
-        """Rent one GPU machine for SSH and return once compute is requested. It stops itself after max_hours.
+                         name: str | None = None, keep_files: bool = False) -> str:
+        """Rent one GPU machine for SSH and return once compute is requested. It runs until stop_compute.
 
         ssh_key defaults to the public key in ~/.ssh on this machine. keep_files saves project files as a
         workspace. Poll get_workspace until connections.ssh is true, then call get_workspace_connection.
@@ -153,8 +153,8 @@ def register_workspace_tools(server, base_url, request, check_origin):
         key = _valid_idempotency_key(idempotency_key)
         async with client() as api:
             machine = await api.launch(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                                       environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
-                                       keep_files=keep_files, wait=False, idempotency_key=key)
+                                       environment=environment, ssh_key=ssh_key, name=name, keep_files=keep_files,
+                                       wait=False, idempotency_key=key)
         return json.dumps(machine.raw)
 
     @server.tool(structured_output=False, annotations=read)

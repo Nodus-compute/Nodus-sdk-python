@@ -15,8 +15,8 @@ from nodus.errors import APIError, NotFoundError, ValidationError, WorkspaceNotR
 
 BASE = "/v1/research-workspaces"
 REVISION = "a" * 64
-CONFIGURATION = {"name": "kernel-lab", "environment": "pytorch-cuda", "editor": "vscode", "gpu": "H100",
-                 "gpu_count": 1, "gpu_memory_gb": 80, "budget_usd": 0, "max_hours": 4, "size_gb": 10}
+CONFIGURATION = {"name": "kernel-lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
+                 "gpu_memory_gb": 80, "size_gb": 10}
 STOPPED = {
     "id": "ws_kernel", "expired_at": None, "cleanup_pending": False, "name": "kernel-lab", "size_gb": 10,
     "holder_id": None, "saved_at": None, "stored_bytes": None, "last_error": "", "saving_for_termination": False,
@@ -101,7 +101,6 @@ class Server:
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
 def test_create_start_wait_connect_run_and_stop(async_mode):
     server = Server({
-        ("GET", BASE + "/capabilities"): (200, CAPABILITIES),
         ("POST", BASE): (201, STOPPED),
         ("POST", BASE + "/ws_kernel/start"): (202, CREATING),
         ("GET", BASE + "/ws_kernel"): [(200, CREATING), (200, RUNNING), (200, RUNNING), (200, RUNNING)],
@@ -115,7 +114,7 @@ def test_create_start_wait_connect_run_and_stop(async_mode):
         client = async_client(server) if async_mode else sync_client(server)
         with_client = client if not async_mode else None
         async with (client if async_mode else _sync_ctx(client)):
-            ws = await call(client.workspaces.create("kernel-lab", gpu="H100", max_hours=4))
+            ws = await call(client.workspaces.create("kernel-lab", gpu="H100"))
             assert isinstance(ws, AsyncWorkspace if async_mode else Workspace)
             assert (ws.id, ws.name, ws.state, ws.storage_revision) == ("ws_kernel", "kernel-lab", "stopped", 3)
             assert ws.session_id is None and ws.connections == {"editor": False, "notebook": False, "ssh": False}
@@ -136,19 +135,19 @@ def test_create_start_wait_connect_run_and_stop(async_mode):
     run(async_mode, scenario)
     methods = [(method, path) for method, path, _, _ in server.requests]
     assert methods == [
-        ("GET", BASE + "/capabilities"), ("POST", BASE), ("POST", BASE + "/ws_kernel/start"),
+        ("POST", BASE), ("POST", BASE + "/ws_kernel/start"),
         ("GET", BASE + "/ws_kernel"), ("GET", BASE + "/ws_kernel"), ("POST", BASE + "/ws_kernel/connections"),
         ("POST", BASE + "/ws_kernel/connections"), ("POST", BASE + "/ws_kernel/workloads"),
         ("GET", BASE + "/ws_kernel"), ("POST", BASE + "/ws_kernel/stop"),
     ]
-    created = server.requests[1][2]
-    assert created == {"name": "kernel-lab", "environment": "pytorch-cuda", "editor": "vscode", "gpu": "H100",
-                       "gpu_count": 1, "gpu_memory_gb": 80, "max_hours": 4, "size_gb": 10}
-    start_headers, stop_headers = server.requests[2][3], server.requests[9][3]
+    created = server.requests[0][2]
+    assert created == {"name": "kernel-lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
+                       "gpu_memory_gb": 80}
+    start_headers, stop_headers = server.requests[1][3], server.requests[8][3]
     assert start_headers["idempotency-key"] == "session-1" and stop_headers["idempotency-key"] == "stop-1"
-    assert server.requests[9][2] == {"session_id": "sb_session"}
-    assert server.requests[5][2] == {"tool": "editor"} and server.requests[6][2] == {"tool": "ssh"}
-    submitted = server.requests[7]
+    assert server.requests[8][2] == {"session_id": "sb_session"}
+    assert server.requests[4][2] == {"tool": "editor"} and server.requests[5][2] == {"tool": "ssh"}
+    submitted = server.requests[6]
     assert submitted[2] == {"command": "python train.py", "budget_usd": 5}
     assert submitted[3]["idempotency-key"] == "train-1"
 
@@ -166,17 +165,16 @@ class _sync_ctx:
         return self.client.__exit__(*exc)
 
 
-def test_create_defaults_come_from_the_server_and_the_console_catalog():
-    server = Server({("GET", BASE + "/capabilities"): (200, {**CAPABILITIES, "storage_limit_bytes": 20 * 1024 ** 3,
-                                                                "storage_policy_version": "included-20gib-v0"}),
-                     ("POST", BASE): (201, STOPPED)})
+def test_create_defaults_come_from_the_console_catalog():
+    server = Server({("POST", BASE): (201, STOPPED)})
     with sync_client(server) as client:
-        client.workspaces.create("rocm-lab", gpu="MI300X", gpu_memory_gb=192, gpu_count=2, editor="jupyter", max_hours=1)
-        client.workspaces.create("ada-lab", gpu="nvidia l40s", max_hours=1, size_gb=5)
-    body = server.requests[1][2]
-    assert body["environment"] == "pytorch-rocm" and body["gpu_memory_gb"] == 192 and body["size_gb"] == 20
-    assert body["gpu_count"] == 2 and body["editor"] == "jupyter"
+        client.workspaces.create("rocm-lab", gpu="MI300X", gpu_memory_gb=192, gpu_count=2)
+        client.workspaces.create("ada-lab", gpu="nvidia l40s", size_gb=5)
+    body = server.requests[0][2]
+    assert body["environment"] == "pytorch-rocm" and body["gpu_memory_gb"] == 192 and "size_gb" not in body
+    assert body["gpu_count"] == 2
     assert server.requests[-1][2]["gpu_memory_gb"] == 48 and server.requests[-1][2]["environment"] == "pytorch-cuda"
+    assert server.requests[-1][2]["size_gb"] == 5
 
 
 def test_private_keys_and_mixed_cpu_gpu_requests_never_leave_the_process():
@@ -187,16 +185,16 @@ def test_private_keys_and_mixed_cpu_gpu_requests_never_leave_the_process():
         putty = "PuTTY-User-Key-File-3: ssh-ed25519\nPrivate-Lines: 1\nAAAA\n"
         for bad in (private, putty, "AAAAC3NzaC1lZDI1NTE5", "ssh-ed25519 AAAA\nPrivate-Lines: 1\n"):
             with pytest.raises(ValidationError, match="public keys"):
-                client.workspaces.create("lab", gpu="H100", max_hours=1, size_gb=1, ssh_key=bad)
+                client.workspaces.create("lab", gpu="H100", size_gb=1, ssh_key=bad)
             with pytest.raises(ValidationError, match="public keys"):
                 Workspace(client, "ws_kernel")._configure_body({"ssh_authorized_key": bad})
         good = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGx researcher\necdsa-sha2-nistp256 AAAAE2Vj other\n"
         with pytest.raises(APIError, match="revision"):
             Workspace(client, "ws_kernel")._configure_body({"ssh_authorized_key": good})
         with pytest.raises(ValidationError, match="cpus and memory_gb"):
-            client.workspaces.create("lab", cpus=4, memory_gb=8, gpu_count=8, max_hours=1, size_gb=1)
+            client.workspaces.create("lab", cpus=4, memory_gb=8, gpu_count=8, size_gb=1)
         with pytest.raises(ValidationError, match="form_factor"):
-            client.workspaces.create("lab", gpu="H100", form_factor="mezzanine", max_hours=1, size_gb=1)
+            client.workspaces.create("lab", gpu="H100", form_factor="mezzanine", size_gb=1)
 
 
 def test_final_failures_do_not_advise_a_retry_with_the_same_key():
@@ -212,17 +210,17 @@ def test_final_failures_do_not_advise_a_retry_with_the_same_key():
 
 
 def test_configure_clears_optional_fields_with_none_and_keeps_the_name_rule():
-    configured = {**CONFIGURATION, "ref": "main", "repository": "org/repo", "ssh_authorized_key": "ssh-ed25519 AAAA"}
+    configured = {**CONFIGURATION, "disk_gb": 200, "ssh_authorized_key": "ssh-ed25519 AAAA"}
     server = Server({("GET", BASE + "/ws_kernel"): (200, {**STOPPED, "configuration": configured}),
                      ("PATCH", BASE + "/ws_kernel"): (200, STOPPED)})
     with sync_client(server) as client:
         ws = client.workspaces.get("ws_kernel")
-        ws.configure(ref=None, ssh_authorized_key=None)
+        ws.configure(disk_gb=None, ssh_authorized_key=None)
         with pytest.raises(ValidationError, match="name"):
             ws.configure(name="n" * 300)
         with pytest.raises(ValidationError, match="cleared"):
             ws.configure(gpu=None)
-    assert server.requests[-1][2]["configuration"] == {**CONFIGURATION, "repository": "org/repo"}
+    assert server.requests[-1][2]["configuration"] == CONFIGURATION
 
 
 def test_uncertain_paid_requests_carry_their_key_for_the_retry():
@@ -256,8 +254,8 @@ def test_configure_applies_the_creation_rules_to_each_change():
     server = Server({("GET", BASE + "/ws_kernel"): (200, STOPPED)})
     with sync_client(server) as client:
         ws = client.workspaces.get("ws_kernel")
-        for changes in ({"budget_usd": None}, {"budget_usd": -5}, {"budget_usd": "lots"}, {"gpu_count": 3},
-                        {"max_hours": 0}, {"editor": "emacs"}, {"ssh_authorized_key": ""}):
+        for changes in ({"size_gb": None}, {"size_gb": -5}, {"size_gb": "lots"}, {"gpu_count": 3},
+                        {"disk_gb": 79}, {"compute_class": "gpu"}, {"ssh_authorized_key": ""}):
             with pytest.raises(ValidationError):
                 ws.configure(**changes)
     assert [m for m, *_ in server.requests] == ["GET"]
@@ -288,16 +286,15 @@ def test_wait_until_stopped_reports_a_failed_session_instead_of_waiting():
     assert len(server.requests) == 1
 
 
-def test_create_refuses_to_guess_memory_for_unknown_hardware_and_money():
+def test_create_refuses_to_guess_memory_for_unknown_hardware_or_accept_a_bad_size():
     def handler(_):
         pytest.fail("a refused configuration must not reach the API")
     with sync_client(handler) as client:
         with pytest.raises(ValidationError, match="gpu_memory_gb"):
-            client.workspaces.create("lab", gpu="Z9000", max_hours=1, size_gb=10)
-        with pytest.raises(ValidationError, match="max_hours"):
-            client.workspaces.create("lab", gpu="H100", size_gb=10)
-        with pytest.raises(ValidationError, match="budget_usd"):
-            client.workspaces.create("lab", gpu="H100", max_hours=1, size_gb=10, budget_usd=float("nan"))
+            client.workspaces.create("lab", gpu="Z9000", size_gb=10)
+        for size in (float("nan"), 0, -1, True):
+            with pytest.raises(ValidationError, match="size_gb"):
+                client.workspaces.create("lab", gpu="H100", size_gb=size)
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
@@ -307,13 +304,12 @@ def test_cpu_workspaces_send_the_vm_compute_class(async_mode):
     async def scenario():
         client = async_client(server) if async_mode else sync_client(server)
         async with (client if async_mode else _sync_ctx(client)):
-            await call(client.workspaces.create("cpu-lab", cpus=4, memory_gb=16, max_hours=2, size_gb=10))
+            await call(client.workspaces.create("cpu-lab", cpus=4, memory_gb=16, size_gb=10))
 
     run(async_mode, scenario)
     assert len(server.requests) == 1
-    assert server.requests[-1][2] == {"name": "cpu-lab", "environment": "pytorch-cpu", "editor": "vscode",
-                                      "compute_class": "vm", "vcpus": 4, "host_memory_gb": 16,
-                                      "max_hours": 2, "size_gb": 10}
+    assert server.requests[-1][2] == {"name": "cpu-lab", "environment": "pytorch-cpu", "compute_class": "vm",
+                                      "vcpus": 4, "host_memory_gb": 16, "size_gb": 10}
 
 
 def test_get_accepts_an_id_or_a_unique_name():
@@ -369,14 +365,15 @@ def test_wait_until_ready_times_out_and_leaves_compute_running():
     assert all(method == "GET" for method, *_ in server.requests)
 
 
-def test_wait_until_ready_honours_the_configured_tool():
-    ssh_only = {**RUNNING, "configuration": {**CONFIGURATION, "editor": "ssh", "ssh_authorized_key": "ssh-ed25519 AAAA"},
+def test_ssh_alone_does_not_make_a_workspace_ready():
+    ssh_only = {**RUNNING, "configuration": {**CONFIGURATION, "ssh_authorized_key": "ssh-ed25519 AAAA"},
                 "connections": {"editor": False, "notebook": False, "ssh": True}}
     server = Server({("GET", BASE + "/ws_kernel"): (200, ssh_only)})
     with sync_client(server) as client:
         ws = client.workspaces.get("ws_kernel")
-        assert ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=1) is ws
-        assert ws.ready is True
+        assert ws.ready is False
+        with pytest.raises(WorkspaceNotReadyError, match="still starting"):
+            ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=0)
 
 
 def test_stop_without_a_session_refreshes_first_and_is_a_no_op_when_already_stopped():
@@ -592,13 +589,12 @@ def test_gpu_shorthand_carries_memory_and_count_like_other_clouds(async_mode, gp
     async def scenario():
         client = async_client(server) if async_mode else sync_client(server)
         async with (client if async_mode else _sync_ctx(client)):
-            await call(client.workspaces.create("lab", gpu=gpu, max_hours=1, size_gb=1, budget_usd=3.5))
+            await call(client.workspaces.create("lab", gpu=gpu, size_gb=1))
 
     run(async_mode, scenario)
     assert len(server.requests) == 1
     body = server.requests[-1][2]
     assert {field: body[field] for field in expected} == expected
-    assert body["budget_usd"] == 3.5
 
 
 def test_gpu_shorthand_conflicts_and_unknown_models_are_refused_before_network():
@@ -606,13 +602,13 @@ def test_gpu_shorthand_conflicts_and_unknown_models_are_refused_before_network()
         pytest.fail("a refused configuration must not reach the API")
     with sync_client(handler) as client:
         with pytest.raises(ValidationError, match="gpu_count"):
-            client.workspaces.create("lab", gpu="H100:2", gpu_count=4, max_hours=1, size_gb=1)
+            client.workspaces.create("lab", gpu="H100:2", gpu_count=4, size_gb=1)
         with pytest.raises(ValidationError, match="gpu_memory_gb"):
-            client.workspaces.create("lab", gpu="A100-40GB", gpu_memory_gb=80, max_hours=1, size_gb=1)
+            client.workspaces.create("lab", gpu="A100-40GB", gpu_memory_gb=80, size_gb=1)
         with pytest.raises(ValidationError, match="gpu_memory_gb"):
-            client.workspaces.create("lab", gpu="V100", max_hours=1, size_gb=1)
+            client.workspaces.create("lab", gpu="V100", size_gb=1)
         with pytest.raises(ValidationError, match="gpu_count"):
-            client.workspaces.create("lab", gpu="H100:3", max_hours=1, size_gb=1)
+            client.workspaces.create("lab", gpu="H100:3", size_gb=1)
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
@@ -658,7 +654,7 @@ def test_create_gpu_shorthand_validates_explicit_count_before_network(async_mode
         client = async_client(handler) if async_mode else sync_client(handler)
         async with (client if async_mode else _sync_ctx(client)):
             with pytest.raises(ValidationError, match="gpu_count"):
-                await call(client.workspaces.create("lab", gpu="H100:8", gpu_count=gpu_count, max_hours=1, size_gb=1))
+                await call(client.workspaces.create("lab", gpu="H100:8", gpu_count=gpu_count, size_gb=1))
 
     run(async_mode, scenario)
 
@@ -675,5 +671,91 @@ def test_workspace_final_charge_overflow_is_unavailable(async_mode):
             assert workspace.charge_state == "final"
             assert workspace.final_charge_usd is None
             assert workspace.cost_usd is None
+
+    run(async_mode, scenario)
+
+
+UNSUPPORTED_CREATE_ARGUMENTS = [{"max_hours": 4}, {"budget_usd": 5}, {"repository": "org/repo"}, {"ref": "main"},
+                            {"editor": "vscode"}, {"editor": "ssh"}]
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_create_sends_only_the_machine_and_leaves_project_size_to_the_server(async_mode):
+    server = Server({("POST", BASE): (201, STOPPED)})
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            await call(client.workspaces.create("kernel-lab", gpu="H100"))
+            await call(client.workspaces.create("kernel-lab", gpu="H100", size_gb=10))
+
+    run(async_mode, scenario)
+    assert [(method, path) for method, path, *_ in server.requests] == [("POST", BASE), ("POST", BASE)]
+    assert server.requests[0][2] == {"name": "kernel-lab", "environment": "pytorch-cuda", "gpu": "H100",
+                                     "gpu_count": 1, "gpu_memory_gb": 80}
+    assert server.requests[1][2] == {**server.requests[0][2], "size_gb": 10}
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("argument", UNSUPPORTED_CREATE_ARGUMENTS, ids=lambda r: "-".join(f"{k}={v}" for k, v in r.items()))
+def test_create_refuses_lifetime_budget_editor_and_repository_arguments(async_mode, argument):
+    def handler(_):
+        pytest.fail("a refused argument must not reach the API")
+
+    async def scenario():
+        client = async_client(handler) if async_mode else sync_client(handler)
+        async with (client if async_mode else _sync_ctx(client)):
+            with pytest.raises(TypeError, match=next(iter(argument))):
+                await call(client.workspaces.create("kernel-lab", gpu="H100", **argument))
+
+    run(async_mode, scenario)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("field,value", [("max_hours", 4), ("budget_usd", 5), ("repository", "org/repo"),
+                                         ("ref", "main"), ("editor", "jupyter")])
+def test_configure_refuses_lifetime_budget_editor_and_repository_fields(async_mode, field, value):
+    server = Server({("GET", BASE + "/ws_kernel"): (200, STOPPED)})
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            ws = await call(client.workspaces.get("ws_kernel"))
+            with pytest.raises(ValidationError, match="unknown configuration field: " + field):
+                await call(ws.configure(**{field: value}))
+
+    run(async_mode, scenario)
+    assert [method for method, *_ in server.requests] == ["GET"]
+
+
+def test_a_workspace_is_ready_once_editor_and_notebook_accept_connections():
+    editor_only = {**RUNNING, "configuration": CONFIGURATION,
+                   "connections": {"editor": True, "notebook": False, "ssh": True}}
+    both = {**editor_only, "connections": {"editor": True, "notebook": True, "ssh": False}}
+    server = Server({("GET", BASE + "/ws_kernel"): [(200, editor_only), (200, both)]})
+    with sync_client(server) as client:
+        ws = client.workspaces.get("ws_kernel")
+        assert ws.ready is False and ws.tool == "editor"
+        assert ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=5) is ws
+        assert ws.ready is True
+    assert len(server.requests) == 2
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_an_instance_is_ready_once_ssh_accepts_connections(async_mode):
+    instance = {**CONFIGURATION, "kind": "instance", "size_gb": 0, "disk_gb": 100,
+                "ssh_authorized_key": "ssh-ed25519 AAAA"}
+    starting = {**RUNNING, "size_gb": 0, "configuration": instance,
+                "connections": {"editor": False, "notebook": False, "ssh": False}}
+    ready = {**starting, "connections": {"editor": False, "notebook": False, "ssh": True}}
+    server = Server({("GET", BASE + "/ws_kernel"): [(200, starting), (200, ready)]})
+
+    async def scenario():
+        client = async_client(server) if async_mode else sync_client(server)
+        async with (client if async_mode else _sync_ctx(client)):
+            ws = await call(client.workspaces.get("ws_kernel"))
+            assert ws.ready is False and ws.tool == "ssh"
+            await call(ws.wait_until_ready(poll_seconds=0.1, timeout_seconds=5))
+            assert ws.ready is True
 
     run(async_mode, scenario)
