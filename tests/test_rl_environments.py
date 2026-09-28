@@ -239,3 +239,87 @@ def test_the_async_client_starts_an_example_the_same_way() -> None:
 def test_the_guide_http_example_falls_back_to_the_sdk_hosted_api() -> None:
     guide = (Path(__file__).parents[1] / "docs" / "guides" / "rl-runs.md").read_text()
     assert "${NODUS_BASE_URL:-" + nodus.DEFAULT_BASE_URL + "}" in guide
+
+
+SUMMARY = dict(json.loads((Path(__file__).parent / "fixtures" / "rl-summary.json").read_text()), workload_id="wl_example")
+
+
+def reading_client(routes: dict) -> "nodus.Client":
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = routes.get(request.url.path)
+        return httpx.Response(200, json=body) if body is not None else httpx.Response(404, json={"error": "not_found", "message": "missing"})
+
+    made = nodus.Client(api_key="nk_test", base_url="https://nodus.invalid")
+    made._http = httpx.Client(base_url="https://nodus.invalid", transport=httpx.MockTransport(handler),
+                              headers={"Authorization": "Bearer nk_test"})
+    return made
+
+
+def test_one_environment_is_read_by_id() -> None:
+    made = reading_client({"/v1/rl-environments/gsm8k": CATALOG["environments"][0]})
+    environment = made.rl.get_environment("gsm8k")
+    assert environment.id == "gsm8k"
+    assert [e.id for e in environment.examples] == ["gsm8k-trained"]
+    with pytest.raises(nodus.NotFoundError):
+        made.rl.get_environment("missing")
+    with pytest.raises(nodus.ValidationError):
+        made.rl.get_environment("../workloads")
+
+
+def test_an_example_workload_is_read_without_starting_it() -> None:
+    # The shape the control plane returns for gsm8k/gsm8k-trained.
+    source = {"image": "pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime", "command": ["sh", "-c", "python3 gsm8k_trainer.py"]}
+    workload = {"name": "GSM8K GSM8K, trained", "source": source,
+                "requirements": {"compute_class": "accelerator", "peak_memory_gb": 48},
+                "continuity": {"mode": "checkpointed", "resume_on_interruption": True},
+                "stages": [{"id": "main", "source": source, "outputs": {"results.json": "outputs/results.json"}}],
+                "rl": {"schema_version": 1, "environment_id": "gsm8k", "mode": "train", "model": "Qwen/Qwen3-1.7B",
+                       "planned_tasks": 64, "example_id": "gsm8k-trained"}}
+    made = reading_client({"/v1/rl-environments/gsm8k/examples/gsm8k-trained/workload": {"workload": workload}})
+    assert made.rl.example_workload("gsm8k", "gsm8k-trained") == workload
+    # Its RL details and outputs pass the same checks run() applies before submitting.
+    from nodus._brief import _validate_outputs
+    from nodus._rl_setup import rl_payload
+
+    assert rl_payload(workload["rl"]) == workload["rl"]
+    _validate_outputs(workload["stages"][0]["outputs"])
+    with pytest.raises(nodus.ValidationError):
+        made.rl.example_workload("gsm8k", "Bad ID")
+
+
+def test_a_run_summary_reads_as_the_run_page_shows_it() -> None:
+    made = reading_client({"/v1/workloads/wl_example/rl-summary": SUMMARY})
+    summary = made.rl.summary("wl_example")
+    assert summary.phases["baseline"].passed == 51
+    assert summary.phases["training"].pass_rate is None
+    assert summary.phases["training"].in_progress == 1
+    assert summary.comparison is not None
+    assert summary.comparison.change_pp == pytest.approx(7.8125)
+    assert summary.comparison.measurable is True
+    assert summary.comparison.reason == "comparable"
+    for bad in (None, "false", 0):
+        with pytest.raises(nodus.APIError):
+            reading_client({"/v1/workloads/wl_example/rl-summary": dict(SUMMARY, truncated=bad)}).rl.summary("wl_example")
+    none_yet = dict(SUMMARY, comparison=None)
+    assert reading_client({"/v1/workloads/wl_example/rl-summary": none_yet}).rl.summary("wl_example").comparison is None
+
+
+def test_the_async_client_reads_summaries_and_environments() -> None:
+    import asyncio
+
+    async def go():
+        async def handler(request: httpx.Request) -> httpx.Response:
+            routes = {"/v1/workloads/wl_example/rl-summary": SUMMARY, "/v1/rl-environments/gsm8k": CATALOG["environments"][0],
+                      "/v1/rl-environments/gsm8k/examples/gsm8k-trained/workload": {"workload": {"name": "x"}}}
+            return httpx.Response(200, json=routes[request.url.path])
+
+        made = nodus.AsyncClient(api_key="nk_test", base_url="https://nodus.invalid")
+        made._http = httpx.AsyncClient(base_url="https://nodus.invalid", transport=httpx.MockTransport(handler),
+                                       headers={"Authorization": "Bearer nk_test"})
+        return (await made.rl.summary("wl_example"), await made.rl.get_environment("gsm8k"),
+                await made.rl.example_workload("gsm8k", "gsm8k-trained"))
+
+    summary, environment, workload = asyncio.run(go())
+    assert summary.phases["evaluation"].passed == 56
+    assert environment.id == "gsm8k"
+    assert workload == {"name": "x"}

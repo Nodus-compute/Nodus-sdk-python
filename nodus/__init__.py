@@ -45,8 +45,11 @@ from ._rl_events import (
     RLEventEmitter,
 )
 from ._rl import (
+    RLComparison,
     RLEnvironment,
     RLExample,
+    RLPhaseSummary,
+    RLSummary,
     AsyncRL, RL, RLRecipe, RLRunPreview, RLEvent, RLEventRow, RLEventPage,
     RLGradingReceipt, RLGradingResults,
 )
@@ -140,8 +143,11 @@ __all__ = [
     "RLRecipe",
     "RLRunPreview",
     "RLSetup",
+    "RLComparison",
     "RLEnvironment",
     "RLExample",
+    "RLPhaseSummary",
+    "RLSummary",
     "RLEventEmitter",
     "EpisodeScore",
     "RawTraceFields",
