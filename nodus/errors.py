@@ -22,7 +22,7 @@ __all__ = [
     "NodusError",
     "WorkspaceNotReadyError",
     "StepOutcomeUnknown", "StepDefinitionConflict", "StepResultExpired", "StepFailed",
-    "AgentChildrenUnavailable", "AgentBrokerUnavailable", "AgentMessagesUnavailable", "BrokerRefused",
+    "AgentChildrenUnavailable", "AgentBrokerUnavailable", "AgentMessagesUnavailable", "AgentMessageRecipientUnavailable", "BrokerRefused",
     "ConfigurationError",
     "AuthenticationError",
     "NotFoundError",
@@ -414,6 +414,10 @@ class AgentChildrenUnavailable(NodusError):
 
 class AgentMessagesUnavailable(NodusError):
     """The assigned group or runtime has not enabled durable peer messages."""
+
+
+class AgentMessageRecipientUnavailable(NodusError):
+    """The recipient cannot accept this message and no new send was recorded."""
 
 
 class AgentBrokerUnavailable(NodusError):

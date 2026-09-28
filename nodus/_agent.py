@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 import httpx
-from .errors import NodusError, ValidationError, StepOutcomeUnknown, StepDefinitionConflict, StepResultExpired, StepFailed, AgentChildrenUnavailable, AgentBrokerUnavailable, AgentMessagesUnavailable
+from .errors import NodusError, ValidationError, StepOutcomeUnknown, StepDefinitionConflict, StepResultExpired, StepFailed, AgentChildrenUnavailable, AgentBrokerUnavailable, AgentMessagesUnavailable, AgentMessageRecipientUnavailable
 
 _ID = re.compile(r'^[A-Za-z0-9:_.-]{1,128}$')
 _MAX = 256 << 10
@@ -129,6 +129,8 @@ class _RPC:
                 except ValueError:
                     refusal = None
                 code = (refusal.get('code') or refusal.get('error')) if isinstance(refusal, dict) else None
+                if action == 'peer_send' and response.status_code == 409 and code == 'managed_agent_peer_recipient_unavailable':
+                    raise AgentMessageRecipientUnavailable('The peer recipient cannot accept this message')
                 if (response.status_code == 503 and code == 'managed_agent_peer_messages_unavailable'
                         or response.status_code == 400 and code == 'agent_bridge_unavailable'):
                     raise AgentMessagesUnavailable('Peer messages are unavailable for this managed group or runtime')

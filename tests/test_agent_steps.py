@@ -43,6 +43,9 @@ def journal_socket(tmp_path,monkeypatch):
         def do_POST(self):
             request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             action=self.path[1:]
+            journal_key = request.get('step_id', '')
+            if state.get('multiple_runs'):
+                journal_key = request.get('run_id', '') + ':' + journal_key
             result={}
             state.setdefault('requests', []).append((action, request))
             if action in ('session','renew'):
@@ -51,6 +54,7 @@ def journal_socket(tmp_path,monkeypatch):
                     result['recovery_policy'] = state['recovery_policy']
                     if state.get('checkpoint_id'):
                         result['checkpoint_id'] = state['checkpoint_id']
+                result.update(state.get('session_metadata', {}))
             elif action in ('checkpoint_begin', 'checkpoint_status'):
                 if action == 'checkpoint_begin':
                     checkpoint_id = 'cp_' + request['operation'] + '_' + request['request_id']
@@ -69,7 +73,7 @@ def journal_socket(tmp_path,monkeypatch):
                 if 'status_wait_max_ms' in state:
                     result['status_wait_max_ms'] = state['status_wait_max_ms']
             elif action in ('model_begin', 'model_status'):
-                owner = db.execute('SELECT token FROM journal WHERE step=?', (request['step_id'],)).fetchone()
+                owner = db.execute('SELECT token FROM journal WHERE step=?', (journal_key,)).fetchone()
                 assert owner and owner[0] == request['claim_token']
                 identity = (request['run_id'], request['step_id'], request['call_id'])
                 row = db.execute('SELECT input,id,state,response FROM model_calls WHERE run=? AND step=? AND call=?', identity).fetchone()
@@ -78,6 +82,8 @@ def journal_socket(tmp_path,monkeypatch):
                     if row is None:
                         call_id = 'mdl_' + uuid.uuid4().hex
                         response = state.get('model_response', {'model': request['input']['model'], 'content': [{'type': 'text', 'text': 'Saved answer'}], 'stop_reason': 'end_turn', 'usage': {'input_tokens': 12, 'output_tokens': 3}})
+                        if callable(response):
+                            response = response(request)
                         db.execute('INSERT INTO model_calls VALUES (?,?,?,?,?,?,?)', (*identity, definition, call_id, 'running', json.dumps(response)))
                         db.commit()
                         state.setdefault('model_effects', []).append(request['input'])
@@ -108,26 +114,26 @@ def journal_socket(tmp_path,monkeypatch):
             elif action=='claim':
                 step_id=request['step_id']
                 definition=json.dumps({k:request[k] for k in ['name','version','effect','encoding','input']},sort_keys=True)
-                row=db.execute('SELECT definition,status,result,token,external_key FROM journal WHERE step=?',(step_id,)).fetchone()
+                row=db.execute('SELECT definition,status,result,token,external_key FROM journal WHERE step=?',(journal_key,)).fetchone()
                 if row is None:
                     token,external=uuid.uuid4().hex,uuid.uuid4().hex
-                    db.execute('INSERT INTO journal VALUES (?,?,?,?,?,?)',(step_id,definition,'started',None,token,external));db.commit()
+                    db.execute('INSERT INTO journal VALUES (?,?,?,?,?,?)',(journal_key,definition,'started',None,token,external));db.commit()
                     result={'decision':'execute','step_id':step_id,'claim_token':token,'external_key':external,'revision':1}
                 elif row[0]!=definition:
                     self.send_response(409);self.end_headers();self.wfile.write(b'{"code":"step_definition_conflict"}');return
                 elif row[1]=='unknown' and request['effect'] in ('pure','idempotent'):
                     token=uuid.uuid4().hex
-                    db.execute('UPDATE journal SET status=?,token=? WHERE step=?',('started',token,step_id));db.commit()
+                    db.execute('UPDATE journal SET status=?,token=? WHERE step=?',('started',token,journal_key));db.commit()
                     result={'decision':'execute','step_id':step_id,'claim_token':token,'external_key':row[4],'revision':3}
                 else:
                     result={'decision':'replay' if row[1]=='completed' else 'unknown','step_id':step_id,'result':row[2],'external_key':row[4],'revision':2}
             elif action=='complete':
                 state['complete_requests']+=1
-                row=db.execute('SELECT token,status,result FROM journal WHERE step=?',(request['step_id'],)).fetchone()
+                row=db.execute('SELECT token,status,result FROM journal WHERE step=?',(journal_key,)).fetchone()
                 assert row[0]==request['claim_token']
                 if row[1]=='completed':
                     assert row[2]==request['result']
-                db.execute('UPDATE journal SET status=?,result=? WHERE step=?',('completed',request['result'],request['step_id']));db.commit()
+                db.execute('UPDATE journal SET status=?,result=? WHERE step=?',('completed',request['result'],journal_key));db.commit()
                 if state['lost_completion']:
                     state['lost_completion']=False
                     self.close_connection=True
@@ -136,7 +142,7 @@ def journal_socket(tmp_path,monkeypatch):
                 if state.get('malformed_completion'):
                     result['result'] = encode(None)
             elif action=='unknown':
-                db.execute('UPDATE journal SET status=? WHERE step=?',('unknown',request['step_id']));db.commit()
+                db.execute('UPDATE journal SET status=? WHERE step=?',('unknown',journal_key));db.commit()
                 if state.get('reject_unknown'):
                     self.send_response(500);self.end_headers();self.wfile.write(b'{"error":"unavailable"}');return
                 result={'decision':'unknown','step_id':request['step_id'],'revision':2}
@@ -165,6 +171,13 @@ def journal_socket(tmp_path,monkeypatch):
                     if state.get('corrupt_blob'):
                         chunk = b'x' * len(chunk)
                     result.update(offset=offset, data=base64.b64encode(chunk).decode(), eof=offset + len(chunk) == len(blob['data']))
+            elif state.get('rpc_handler'):
+                result = state['rpc_handler'](action, request)
+                if isinstance(result, tuple):
+                    status, result = result
+                    body = json.dumps(result).encode()
+                    self.send_response(status); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+                    return
             else:
                 raise AssertionError(action)
             body=json.dumps(result).encode();self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)

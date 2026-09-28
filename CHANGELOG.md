@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- Add the qualified `nodus:claude-assistant-v2` template. Ordinary text requests delegate useful independent work to specialists, exchange findings and save one combined answer. Greetings can answer directly. The model catalog determines availability.
+- Preserve paid call, child and message identities across recovery. A refused specialist assignment requests cancellation of the accepted team without starting replacement work.
+- Add `AgentMessageRecipientUnavailable` for a definitive refused peer send. Other uncertain journal outcomes continue to prevent further effects in that runtime session.
+
 ## 0.9.0
 
 Breaking: workspaces and instances run until you stop them or account credit runs out.
