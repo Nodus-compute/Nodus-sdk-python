@@ -7584,6 +7584,166 @@
           "modes"
         ]
       },
+        "RLComparison": {
+          "type": "object",
+          "properties": {
+            "baseline_pass_rate": {
+              "type": "number"
+            },
+            "evaluation_pass_rate": {
+              "type": "number"
+            },
+            "change_pp": {
+              "type": "number",
+              "description": "Evaluation minus baseline pass rate, in percentage points."
+            },
+            "resolution_pp": {
+              "type": "number",
+              "description": "Smallest change the task count can show, 100 divided by the larger scored count."
+            },
+            "comparable": {
+              "type": "boolean"
+            },
+            "measurable": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "comparable",
+                "smallest_step",
+                "different_attempt_counts",
+                "different_tasks",
+                "none_passed",
+                "all_passed"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Plain explanation of reason. Empty when reason is comparable."
+            }
+          },
+          "required": [
+            "baseline_pass_rate",
+            "evaluation_pass_rate",
+            "change_pp",
+            "resolution_pp",
+            "comparable",
+            "measurable",
+            "reason",
+            "message"
+          ]
+        },
+        "RLPhaseSummary": {
+          "type": "object",
+          "properties": {
+            "attempts": {
+              "type": "integer",
+              "description": "Finished attempts, scored or not."
+            },
+            "scored": {
+              "type": "integer",
+              "description": "Attempts that passed or failed."
+            },
+            "passed": {
+              "type": "integer"
+            },
+            "failed": {
+              "type": "integer"
+            },
+            "errors": {
+              "type": "integer",
+              "description": "Attempts that ended in an execution error. Not scored."
+            },
+            "in_progress": {
+              "type": "integer",
+              "description": "Attempts started without a finish yet."
+            },
+            "pass_rate": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "passed divided by scored, as a fraction. Null with nothing scored."
+            },
+            "mean_reward": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "Mean reported reward of scored attempts. Null when none reported a reward."
+            },
+            "reward_samples": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "attempts",
+            "scored",
+            "passed",
+            "failed",
+            "errors",
+            "in_progress",
+            "pass_rate",
+            "mean_reward",
+            "reward_samples"
+          ]
+        },
+        "RLSummary": {
+          "type": "object",
+          "properties": {
+            "schema_version": {
+              "type": "integer"
+            },
+            "workload_id": {
+              "type": "string"
+            },
+            "phases": {
+              "type": "object",
+              "properties": {
+                "baseline": {
+                  "$ref": "#/components/schemas/RLPhaseSummary"
+                },
+                "training": {
+                  "$ref": "#/components/schemas/RLPhaseSummary"
+                },
+                "evaluation": {
+                  "$ref": "#/components/schemas/RLPhaseSummary"
+                }
+              },
+              "required": [
+                "baseline",
+                "training",
+                "evaluation"
+              ]
+            },
+            "comparison": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RLComparison"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Null until both baseline and evaluation have scored attempts."
+            },
+            "dropped_events": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "schema_version",
+            "workload_id",
+            "phases",
+            "comparison",
+            "dropped_events",
+            "truncated"
+          ]
+        },
       "RLEnvironmentExample": {
         "type": "object",
         "description": "One example you can run today. Every number was measured by running it.",
@@ -19953,6 +20113,48 @@
         }
       }
     },
+      "/v1/workloads/{id}/rl-summary": {
+        "get": {
+          "operationId": "getRLSummary",
+          "summary": "Summarize an RL run's scored tasks and before-and-after comparison",
+          "tags": [
+            "RL"
+          ],
+          "parameters": [
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/RLSummary"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Counts every reported attempt once, as its latest report, per phase, and compares baseline with evaluation the way the console's run page does. comparable is false when the phases scored different numbers of attempts or different tasks. measurable is false when the phases are not comparable or every attempt passed or failed in both. resolution_pp is the smallest change the task count can show. Figures come from events the workload reported and do not establish general model improvement."
+        }
+      },
     "/v1/workloads/{id}/rl-events": {
       "get": {
         "operationId": "listWorkloadRLEvents",
@@ -20047,6 +20249,109 @@
         }
       }
     },
+      "/v1/rl-environments/{environment}": {
+        "get": {
+          "operationId": "getRLEnvironment",
+          "summary": "Read one RL environment and its runnable examples",
+          "tags": [
+            "RL"
+          ],
+          "parameters": [
+            {
+              "name": "environment",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Environment id from GET /v1/rl-environments, such as gsm8k."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/RLEnvironment"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "description": "The same entry GET /v1/rl-environments lists. 404 means no environment has that id."
+        }
+      },
+      "/v1/rl-environments/{environment}/examples/{example}/workload": {
+        "get": {
+          "operationId": "getRLExampleWorkload",
+          "summary": "Read the run an example would submit, without starting it",
+          "tags": [
+            "RL"
+          ],
+          "parameters": [
+            {
+              "name": "environment",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Environment id from GET /v1/rl-environments, such as gsm8k."
+            },
+            {
+              "name": "example",
+              "in": "path",
+              "required": true,
+              "schema": {
+                "type": "string"
+              },
+              "description": "Example id from that environment, such as gsm8k-trained."
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "workload": {
+                        "$ref": "#/components/schemas/WorkloadPayload"
+                      }
+                    },
+                    "required": [
+                      "workload"
+                    ]
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "Error. The JSON error and message fields are stable. Additional fields may provide details. Authentication, rate limits, and transient failures apply to all operations.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Error"
+                  }
+                }
+              }
+            }
+          },
+          "description": "Returns the workload POST .../runs submits with the default name. Review it, check it with POST /v1/workloads/validate, or change it, such as its GPU, and submit it with POST /v1/workloads. Starts nothing and charges nothing. 404 means no runnable example has these ids."
+        }
+      },
     "/v1/rl-environments/{environment}/examples/{example}/runs": {
       "post": {
         "operationId": "runRLExample",

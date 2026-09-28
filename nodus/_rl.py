@@ -143,6 +143,107 @@ def _launch_body(
 _CATALOG_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 
+def _catalog_id(label: str, value: Any) -> str:
+    if not isinstance(value, str) or not _CATALOG_ID.fullmatch(value):
+        raise ValidationError(f"{label} must be an id from list_environments(), not {value!r}")
+    return value
+
+
+def _summary_path(workload_id: str) -> str:
+    from . import _valid_id
+
+    return f"/v1/workloads/{_valid_id(workload_id)}/rl-summary"
+
+
+def _example_workload(body: Any) -> dict[str, Any]:
+    workload = body.get("workload") if isinstance(body, Mapping) else None
+    if not isinstance(workload, dict):
+        raise APIError("RL example workload response must contain a workload object", body=body)
+    return workload
+
+
+@dataclass(frozen=True)
+class RLPhaseSummary:
+    """One phase of an RL run: each attempt counted once, as its latest report."""
+
+    attempts: int
+    scored: int
+    passed: int
+    failed: int
+    errors: int
+    in_progress: int
+    pass_rate: float | None
+    mean_reward: float | None
+    reward_samples: int
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "RLPhaseSummary":
+        row = _mapping(value, "phase summary")
+        counts = {name: _required_int(row, name, 0) for name in
+                  ("attempts", "scored", "passed", "failed", "errors", "in_progress", "reward_samples")}
+        return cls(pass_rate=_optional_number(row, "pass_rate"), mean_reward=_optional_number(row, "mean_reward"), **counts)
+
+
+@dataclass(frozen=True)
+class RLComparison:
+    """Baseline against evaluation, as the console's run page compares them.
+
+    ``comparable`` is False when the phases scored different numbers of
+    attempts or different tasks. ``measurable`` is also False when every
+    attempt passed, or every attempt failed, in both. ``resolution_pp`` is the
+    smallest change the task count can show.
+    """
+
+    baseline_pass_rate: float
+    evaluation_pass_rate: float
+    change_pp: float
+    resolution_pp: float
+    comparable: bool
+    measurable: bool
+    reason: str
+    message: str
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "RLComparison":
+        row = _mapping(value, "comparison")
+        numbers = {}
+        for name in ("baseline_pass_rate", "evaluation_pass_rate", "change_pp", "resolution_pp"):
+            number = _optional_number(row, name)
+            if number is None:
+                raise APIError(f"RL response field {name!r} must be a number", body=dict(row))
+            numbers[name] = number
+        flags = {}
+        for name in ("comparable", "measurable"):
+            if not isinstance(row.get(name), bool):
+                raise APIError(f"RL response field {name!r} must be a boolean", body=dict(row))
+            flags[name] = row[name]
+        return cls(reason=_required_text(row, "reason"), message=_optional_text(row, "message") or "", **numbers, **flags)
+
+
+@dataclass(frozen=True)
+class RLSummary:
+    """What the console's run page shows for an RL run."""
+
+    workload_id: str
+    phases: dict[str, RLPhaseSummary]
+    comparison: RLComparison | None
+    dropped_events: int
+    truncated: bool
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "RLSummary":
+        row = _mapping(value, "RL summary")
+        phases = _mapping(row.get("phases"), "phases")
+        comparison = row.get("comparison")
+        return cls(
+            workload_id=_required_text(row, "workload_id"),
+            phases={name: RLPhaseSummary.from_dict(phases.get(name)) for name in ("baseline", "training", "evaluation")},
+            comparison=None if comparison is None else RLComparison.from_dict(comparison),
+            dropped_events=_required_int(row, "dropped_events", 0),
+            truncated=bool(row.get("truncated", False)),
+        )
+
+
 def _example_request(environment_id: Any, example_id: Any, idempotency_key: Any, name: Any) -> tuple[str, dict[str, Any]]:
     for label, value in (("environment_id", environment_id), ("example_id", example_id)):
         if not isinstance(value, str) or not _CATALOG_ID.fullmatch(value):
@@ -544,6 +645,22 @@ class RL:
             raise NodusError("RL example run returned no workload id", body=response)
         return workload
 
+    def get_environment(self, environment_id: str) -> RLEnvironment:
+        """One catalog environment and the examples you can run today."""
+        path = f"/v1/rl-environments/{_catalog_id('environment_id', environment_id)}"
+        return RLEnvironment.from_dict(self._client._one(self._client._request("GET", path), "GET", path))
+
+    def example_workload(self, environment_id: str, example_id: str) -> dict[str, Any]:
+        """The workload ``run_example()`` would submit, without starting it."""
+        path = (f"/v1/rl-environments/{_catalog_id('environment_id', environment_id)}"
+                f"/examples/{_catalog_id('example_id', example_id)}/workload")
+        return _example_workload(self._client._one(self._client._request("GET", path), "GET", path))
+
+    def summary(self, workload_id: str) -> RLSummary:
+        """Per-phase results and the before-and-after comparison of an RL run."""
+        path = _summary_path(workload_id)
+        return RLSummary.from_dict(self._client._one(self._client._request("GET", path), "GET", path))
+
     def list_recipes(self) -> list[RLRecipe]:
         path = "/v1/rl-recipes"
         body = self._client._one(self._client._request("GET", path), "GET", path)
@@ -624,6 +741,25 @@ class AsyncRL:
         if not workload.id:
             raise NodusError("RL example run returned no workload id", body=response)
         return workload
+
+    async def get_environment(self, environment_id: str) -> RLEnvironment:
+        """One catalog environment and the examples you can run today."""
+        path = f"/v1/rl-environments/{_catalog_id('environment_id', environment_id)}"
+        response = await self._client._request("GET", path)
+        return RLEnvironment.from_dict(self._client._one(response, "GET", path))
+
+    async def example_workload(self, environment_id: str, example_id: str) -> dict[str, Any]:
+        """The workload ``run_example()`` would submit, without starting it."""
+        path = (f"/v1/rl-environments/{_catalog_id('environment_id', environment_id)}"
+                f"/examples/{_catalog_id('example_id', example_id)}/workload")
+        response = await self._client._request("GET", path)
+        return _example_workload(self._client._one(response, "GET", path))
+
+    async def summary(self, workload_id: str) -> RLSummary:
+        """Per-phase results and the before-and-after comparison of an RL run."""
+        path = _summary_path(workload_id)
+        response = await self._client._request("GET", path)
+        return RLSummary.from_dict(self._client._one(response, "GET", path))
 
     async def list_recipes(self) -> list[RLRecipe]:
         path = "/v1/rl-recipes"
