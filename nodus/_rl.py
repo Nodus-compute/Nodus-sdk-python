@@ -189,7 +189,7 @@ class RLComparison:
     """Baseline against evaluation, as the console's run page compares them.
 
     ``comparable`` is False when the phases scored different numbers of
-    attempts or different tasks. ``measurable`` is also False when every
+    attempts or different tasks, or when some task events were not stored. ``measurable`` is also False when every
     attempt passed, or every attempt failed, in both. ``resolution_pp`` is the
     smallest change the task count can show.
     """
@@ -240,7 +240,7 @@ class RLSummary:
             phases={name: RLPhaseSummary.from_dict(phases.get(name)) for name in ("baseline", "training", "evaluation")},
             comparison=None if comparison is None else RLComparison.from_dict(comparison),
             dropped_events=_required_int(row, "dropped_events", 0),
-            truncated=bool(row.get("truncated", False)),
+            truncated=_required_bool(row, "truncated"),
         )
 
 

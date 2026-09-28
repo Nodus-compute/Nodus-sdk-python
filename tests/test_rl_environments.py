@@ -267,10 +267,22 @@ def test_one_environment_is_read_by_id() -> None:
 
 
 def test_an_example_workload_is_read_without_starting_it() -> None:
-    workload = {"name": "GSM8K GSM8K, trained", "source": {"image": "img", "command": ["sh", "-c", "x"]},
-                "requirements": {"peak_memory_gb": 48}, "rl": {"schema_version": 1, "example_id": "gsm8k-trained"}}
+    # The shape the control plane returns for gsm8k/gsm8k-trained.
+    source = {"image": "pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime", "command": ["sh", "-c", "python3 gsm8k_trainer.py"]}
+    workload = {"name": "GSM8K GSM8K, trained", "source": source,
+                "requirements": {"compute_class": "accelerator", "peak_memory_gb": 48},
+                "continuity": {"mode": "checkpointed", "resume_on_interruption": True},
+                "stages": [{"id": "main", "source": source, "outputs": {"results.json": "outputs/results.json"}}],
+                "rl": {"schema_version": 1, "environment_id": "gsm8k", "mode": "train", "model": "Qwen/Qwen3-1.7B",
+                       "planned_tasks": 64, "example_id": "gsm8k-trained"}}
     made = reading_client({"/v1/rl-environments/gsm8k/examples/gsm8k-trained/workload": {"workload": workload}})
     assert made.rl.example_workload("gsm8k", "gsm8k-trained") == workload
+    # Its RL details and outputs pass the same checks run() applies before submitting.
+    from nodus._brief import _validate_outputs
+    from nodus._rl_setup import rl_payload
+
+    assert rl_payload(workload["rl"]) == workload["rl"]
+    _validate_outputs(workload["stages"][0]["outputs"])
     with pytest.raises(nodus.ValidationError):
         made.rl.example_workload("gsm8k", "Bad ID")
 
@@ -285,6 +297,9 @@ def test_a_run_summary_reads_as_the_run_page_shows_it() -> None:
     assert summary.comparison.change_pp == pytest.approx(7.8125)
     assert summary.comparison.measurable is True
     assert summary.comparison.reason == "comparable"
+    for bad in (None, "false", 0):
+        with pytest.raises(nodus.APIError):
+            reading_client({"/v1/workloads/wl_example/rl-summary": dict(SUMMARY, truncated=bad)}).rl.summary("wl_example")
     none_yet = dict(SUMMARY, comparison=None)
     assert reading_client({"/v1/workloads/wl_example/rl-summary": none_yet}).rl.summary("wl_example").comparison is None
 

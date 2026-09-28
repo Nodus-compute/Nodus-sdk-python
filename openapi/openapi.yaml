@@ -7615,7 +7615,8 @@
                 "different_attempt_counts",
                 "different_tasks",
                 "none_passed",
-                "all_passed"
+                "all_passed",
+                "incomplete_events"
               ]
             },
             "message": {
@@ -20152,7 +20153,7 @@
               }
             }
           },
-          "description": "Counts every reported attempt once, as its latest report, per phase, and compares baseline with evaluation the way the console's run page does. comparable is false when the phases scored different numbers of attempts or different tasks. measurable is false when the phases are not comparable or every attempt passed or failed in both. resolution_pp is the smallest change the task count can show. Figures come from events the workload reported and do not establish general model improvement."
+          "description": "Counts every reported attempt once, as its latest report, per phase, and compares baseline with evaluation the way the console's run page does. comparable is false when the phases scored different numbers of attempts or different tasks. measurable is false when the phases are not comparable or every attempt passed or failed in both. When dropped_events is above zero or truncated is true, reason is incomplete_events and neither is true, because missing events could change either score. resolution_pp is the smallest change the task count can show. Figures come from events the workload reported and do not establish general model improvement."
         }
       },
     "/v1/workloads/{id}/rl-events": {

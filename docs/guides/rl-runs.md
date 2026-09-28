@@ -70,6 +70,8 @@ whether the baseline and evaluation scores can be compared at all:
 ```python
 def report(client, workload_id):
     summary = client.rl.summary(workload_id)
+    if summary.dropped_events or summary.truncated:
+        print("Some task events were not stored, so these results may be incomplete")
     for phase, result in summary.phases.items():
         print(phase, result.passed, "of", result.scored, "passed")
     comparison = summary.comparison
@@ -82,8 +84,9 @@ def report(client, workload_id):
 ```
 
 `comparable` is false when baseline and evaluation scored different numbers of
-attempts or different tasks. `measurable` is also false when every attempt
-passed, or every attempt failed, in both. The figures come from the task
+attempts or different tasks, or when some task events were not stored.
+`measurable` is also false when every attempt passed, or every attempt
+failed, in both. The figures come from the task
 events the run reported and do not establish general model improvement.
 
 ## Find an example
