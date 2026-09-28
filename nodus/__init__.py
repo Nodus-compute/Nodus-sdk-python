@@ -37,13 +37,27 @@ from pathlib import Path
 from ._freeze import WorkloadFreeze
 from ._outputs import download_path, verified_file, output_destinations
 from ._assets import Asset, Assets, AsyncAssets
+from ._rl_setup import RLSetup
+from ._rl_events import (
+    EpisodeScore,
+    EventValidationError,
+    RawTraceFields,
+    RLEventEmitter,
+)
 from ._rl import (
+    RLComparison,
+    RLEnvironment,
+    RLExample,
+    RLPhaseSummary,
+    RLSummary,
     AsyncRL, RL, RLRecipe, RLRunPreview, RLEvent, RLEventRow, RLEventPage,
     RLGradingReceipt, RLGradingResults,
 )
 from ._secrets import Secrets, AsyncSecrets
 from ._connections import Connections, AsyncConnections
 from ._workspaces import Workspaces, AsyncWorkspaces, Workspace, AsyncWorkspace
+from ._compute import Compute, AsyncCompute
+from ._ssh_keys import SSHKeys, AsyncSSHKeys
 from ._volumes import Volumes, AsyncVolumes
 from ._operations import Operations, AsyncOperations, OperationDefinition, OperationCatalog, WorkloadPage, WorkloadValidation, RunDraft, RunDraftValues, RunDraftPatch
 
@@ -130,6 +144,16 @@ __all__ = [
     "AsyncRL",
     "RLRecipe",
     "RLRunPreview",
+    "RLSetup",
+    "RLComparison",
+    "RLEnvironment",
+    "RLExample",
+    "RLPhaseSummary",
+    "RLSummary",
+    "RLEventEmitter",
+    "EpisodeScore",
+    "RawTraceFields",
+    "EventValidationError",
     "RLEvent",
     "RLEventRow",
     "RLEventPage",
@@ -174,6 +198,10 @@ __all__ = [
     "AsyncSecrets",
     "Sandbox",
     "Workspace",
+    "Compute",
+    "AsyncCompute",
+    "SSHKeys",
+    "AsyncSSHKeys",
     "AsyncWorkspace",
     "Workspaces",
     "AsyncWorkspaces",
@@ -514,10 +542,12 @@ def _redact(key: str) -> str:
     return f"{key[:6]}...{key[-4:]}" if len(key) > 12 else "***"
 
 
-def _headers(api_key: str) -> dict[str, str]:
+def _headers(api_key: str, client: str | None = None) -> dict[str, str]:
+    from . import _client_identity
     return {
         "Authorization": f"Bearer {api_key}",
         "User-Agent": f"nodus-python/{__version__}",
+        _client_identity.HEADER: _client_identity.identify(client or _client_identity.current()),
     }
 
 
@@ -595,14 +625,15 @@ class _WorkloadState:
 
     @property
     def cost_now_usd(self) -> float:
-        """What this workload has cost as of the last read.
+        """Return the fixed lifetime compute charge when final, otherwise an estimate.
 
-        ``meter.settled_usd`` counts only the current billing period and
-        ``spend_usd`` lags a settling lease, so what has been charged is the
-        larger of the two. ``meter.accruing_usd`` is open leases' money on top.
+        The pending estimate includes unposted usage. Check
+        ``meter.charge_state`` to distinguish pending metered costs from final.
         """
         if self.meter is None:
             return self.spend_usd
+        if self.meter.final_charge_usd is not None:
+            return self.meter.final_charge_usd
         return max(self.spend_usd, self.meter.settled_usd) + self.meter.accruing_usd
 
     @property
@@ -877,6 +908,7 @@ class Client(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "Workload":
@@ -923,6 +955,7 @@ class Client(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )
@@ -994,6 +1027,34 @@ class Client(_Transport):
     def workspaces(self) -> Workspaces:
         """GPU workspaces: create, start, connect, run jobs, move files, stop."""
         return Workspaces(self)
+
+    @property
+    def compute(self) -> Compute:
+        """Running instances and training, as the Compute page lists them."""
+        return Compute(self)
+
+    @property
+    def ssh_keys(self) -> SSHKeys:
+        """Your SSH public keys, admitted by every machine your team runs."""
+        return SSHKeys(self)
+
+    def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
+               disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
+               name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
+               timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
+               idempotency_key: str | None = None) -> Workspace:
+        """Rent one GPU machine and wait until SSH accepts connections. Returns its handle.
+
+        Local disk only unless ``keep_files=True``, which saves project files as a workspace. The machine
+        stops itself after ``max_hours`` (4 unless set). ``ssh_key`` defaults to ``~/.ssh/id_ed25519.pub``,
+        ``id_ecdsa.pub`` or ``id_rsa.pub`` and admits that key to this machine only. With no local key it
+        waits only when the team has saved keys, and SSH works after ``ssh_keys.add``. A timeout leaves it running.
+        """
+        from ._compute import launch
+        return launch(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                      environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
+                      keep_files=keep_files, wait=wait, timeout_seconds=timeout_seconds,
+                      poll_seconds=poll_seconds, idempotency_key=idempotency_key)
 
     @property
     def volumes(self) -> Volumes:
@@ -1465,6 +1526,28 @@ class AsyncClient(_Transport):
         return AsyncWorkspaces(self)
 
     @property
+    def compute(self) -> AsyncCompute:
+        """Running instances and training, as the Compute page lists them."""
+        return AsyncCompute(self)
+
+    @property
+    def ssh_keys(self) -> AsyncSSHKeys:
+        """Your SSH public keys, admitted by every machine your team runs."""
+        return AsyncSSHKeys(self)
+
+    async def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
+                     disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
+                     name: str | None = None, max_hours: int = 4, keep_files: bool = False, wait: bool = True,
+                     timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
+                     idempotency_key: str | None = None) -> AsyncWorkspace:
+        """Asynchronous counterpart of :meth:`Client.launch`."""
+        from ._compute import launch_async
+        return await launch_async(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                                  environment=environment, ssh_key=ssh_key, name=name, max_hours=max_hours,
+                                  keep_files=keep_files, wait=wait, timeout_seconds=timeout_seconds,
+                                  poll_seconds=poll_seconds, idempotency_key=idempotency_key)
+
+    @property
     def volumes(self) -> AsyncVolumes:
         """Named storage volumes that sandboxes mount between sessions."""
         return AsyncVolumes(self)
@@ -1622,6 +1705,7 @@ class AsyncClient(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "AsyncWorkload":
@@ -1650,6 +1734,7 @@ class AsyncClient(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )

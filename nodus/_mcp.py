@@ -15,6 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import AsyncClient, _headers, _resolve, _valid_id, _valid_idempotency_key
+from ._client_identity import acting_as, mcp_caller
 
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 Limit = Annotated[int, Field(strict=True, ge=1, le=100)]
@@ -39,7 +40,7 @@ async def _request(client: httpx.AsyncClient, method: str, path: str, *, base_ur
                    idempotency_key: str | None = None) -> str:
     key, origin = _resolve(None, base_url)
     _check_origin(origin)
-    headers = _headers(key)
+    headers = _headers(key, mcp_caller())
     body = None
     if workload is not None:
         body = json.dumps(workload, allow_nan=False).encode("utf-8")
@@ -111,7 +112,9 @@ def create_server(base_url: str | None = None) -> FastMCP:
         """
         key, origin = _resolve(None, base_url)
         _check_origin(origin)
-        async with AsyncClient(api_key=key, base_url=origin, timeout=300) as client:
+        with acting_as(mcp_caller()):
+            sdk = AsyncClient(api_key=key, base_url=origin, timeout=300)
+        async with sdk as client:
             path = await client.download_output(workload_id, name, destination, stage=stage, overwrite=False)
         return json.dumps({"path": str(path), "verified": True})
 

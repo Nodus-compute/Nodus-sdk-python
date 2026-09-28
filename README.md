@@ -162,6 +162,60 @@ with nodus.Client() as client:
 See [GPU workspaces](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/workspaces.md) for uploads, SSH, background jobs
 and the `nodus workspace` commands.
 
+## Launch a GPU
+
+`launch` rents one GPU machine, waits until SSH accepts connections and returns
+its handle. It admits your `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or
+`id_rsa.pub` to that machine only, unless you pass `ssh_key`. With no local key
+it waits for SSH only when your team has saved keys. Otherwise it returns once
+compute is requested, and SSH works after you save a key.
+The machine stops itself after `max_hours`, which is 4 unless you set it.
+Local disk is not kept after it stops. Pass `keep_files=True` to save project
+files as a workspace instead.
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    gpu = client.launch("H100", max_hours=2)
+    print(gpu.ssh()["command"])
+    gpu.stop()
+```
+
+From the terminal:
+
+```bash
+nodus launch --gpu H100 --hours 2
+nodus ps
+nodus ssh NAME_OR_ID
+nodus stop NAME_OR_ID
+```
+
+`nodus ssh` opens the session with your OpenSSH client. Add `--print` to see
+the command and config entry instead.
+If the wait times out, the machine keeps running and the error names its ID.
+`nodus ps` shows running instances, workspaces and training, including
+machines launched with `keep_files=True`. In Python, call
+`client.compute.list(include_workspaces=True)`. Both need a Nodus server that
+provides the Compute list.
+
+### SSH keys
+
+Keys you save are admitted by every machine your team runs, including ones
+already running, within a few seconds. Keys are saved only when you add
+them. `launch` never saves one.
+
+```bash
+nodus ssh-key add
+nodus ssh-key ls
+nodus ssh-key rm FINGERPRINT
+```
+
+`nodus ssh-key add` reads `~/.ssh/id_ed25519.pub` unless you pass a path.
+Add `--generate` to create that key with `ssh-keygen` when you have none.
+In Python, use `client.ssh_keys.add(public_key)`, `list()` and
+`remove(fingerprint)`. Only public keys are accepted.
+
 ## Prefer the terminal?
 
 ```bash

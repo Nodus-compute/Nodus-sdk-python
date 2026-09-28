@@ -84,6 +84,12 @@ with `refresh()` and `wait()` update it in place. Useful attributes are `id`, `s
 Each `WorkloadLink` has `kind` and `url`. Captured wandb links are available before completion.
 Unknown server enum values remain strings for forward compatibility.
 
+Completion does not imply that metered costs are final. While
+`meter.charge_state` is `estimated`, `cost_now_usd` is an estimate. When the
+state becomes `final`, `meter.final_charge_usd` and `cost_now_usd` return the
+same immutable lifetime compute total. Ongoing retained-file usage is excluded.
+See [observed cost and billing](../../concepts/costs.md).
+
 `workload.download(destination=None)` downloads all published customer outputs,
 including automatically collected folder archives when no files were declared,
 and returns a list of local `Path` objects. The default directory is
@@ -126,7 +132,7 @@ to overwrite existing files. Use a new destination directory for another copy.
 | `ManifestFile` | `uri`, `sha256`, `bytes`, `media`, `is_tar` |
 | `Output` | `name`, `stage_id`, `sha256`, `bytes`, `download` |
 | `Route` | `sku`, `compute_class`, `fit_class`, `region`, `memory_gb`, `resources`, prices and estimated cost |
-| `Meter` | `settled_usd`, `accruing_usd`, `total_now_usd`, `accruing_rate_usd_hour`, `as_of`, `compute_settled_usd`, `platform_fee_settled_usd`, `subscription_settled_usd`, `compute_accruing_usd`, `platform_fee_accruing_usd` |
+| `Meter` | `settled_usd`, `accruing_usd`, `total_now_usd`, `accruing_rate_usd_hour`, `as_of`, `charge_state`, `final_charge_usd`, `compute_settled_usd`, `platform_fee_settled_usd`, `subscription_settled_usd`, `compute_accruing_usd`, `platform_fee_accruing_usd` |
 | `Ledger` | `entries`, `charged_usd`, `settlement` |
 
 `Event` has `type` and `payload`, not a `message` attribute. Output download

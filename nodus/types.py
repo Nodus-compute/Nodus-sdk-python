@@ -491,18 +491,10 @@ class Ledger:
 
 @dataclass
 class Meter:
-    """What a workload costs at one instant: what is settled plus what is accruing.
+    """Server-reported month-scoped costs and optional component readings.
 
-    A charge is booked when a lease closes, so ``settled_usd`` does not move
-    while the work runs. ``total_now_usd`` is what answers "what is this
-    costing me right now". ``as_of`` is part of that number, a live figure
-    without the instant it was true cannot be read, and
-    ``accruing_rate_usd_hour`` is what ticks it forward between polls.
-
-    Component fields distinguish compute, platform fees and account subscription
-    charges. Older servers omit these components, which default to zero. Keep
-    using the aggregate fields for totals rather than inferring them from missing
-    components. Subscription charges occur only in account-scoped meters.
+    ``final_charge_usd`` is the fixed lifetime compute total once ``charge_state``
+    is final. It excludes retained-file usage and is absent while costs are pending.
     """
 
     settled_usd: float = 0.0
@@ -516,7 +508,8 @@ class Meter:
     subscription_settled_usd: float = 0.0
     compute_accruing_usd: float = 0.0
     platform_fee_accruing_usd: float = 0.0
-
+    final_charge_usd: float | None = None
+    charge_state: str = ""
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> "Meter | None":
@@ -534,6 +527,8 @@ class Meter:
             total_now_usd=_num(d.get("total_now_usd")),
             as_of=_dt(d.get("as_of")),
             raw=d,
+            final_charge_usd=_num(d.get("final_charge_usd"), None),
+            charge_state=_text(d.get("charge_state")),
         )
 
 

@@ -26,6 +26,8 @@ import pytest
 from test_agent_steps import journal_socket
 
 ROOT = Path(__file__).parents[1]
+RL_SUMMARY = json.loads((Path(__file__).parent / "fixtures" / "rl-summary.json").read_text())
+RL_CATALOG = json.loads((Path(__file__).parent / "fixtures" / "rl-environments.json").read_text())
 DATA = b'{"sum": 6, "sum_of_squares": 385, "gpu": "Synthetic GPU"}\n'
 DIGEST = hashlib.sha256(DATA).hexdigest()
 
@@ -81,6 +83,17 @@ def docs_api(monkeypatch):
 
     def workspace_view():
         running = workspace_state["state"] == "running"
+        if workspace_state.get("instance"):
+            return {"id": "ws_docs", "name": "instance-docs", "size_gb": 0, "holder_id": None, "saved_at": None,
+                    "stored_bytes": None, "last_error": "", "saving_for_termination": False,
+                    "billing_status": "metered_subject_to_account_limits",
+                    "configuration": workspace_state["instance"], "configuration_revision": "d" * 64,
+                    "storage_revision": 0, "storage_policy_version": "",
+                    "session": {"id": "pod_docs", "state": "ready"} if running else None, "meter": None,
+                    "state": workspace_state["state"],
+                    "status_message": "Compute is running." if running else "Compute is stopped. Launching creates a fresh instance with local disk.",
+                    "connections": {"editor": False, "notebook": False, "ssh": running},
+                    "storage": {}, "pending_upload": None}
         return {"id": "ws_docs", "name": "kernel-lab", "size_gb": 10, "holder_id": None, "saved_at": None,
                 "stored_bytes": None, "last_error": "", "saving_for_termination": False,
                 "billing_status": "metered_subject_to_account_limits",
@@ -156,6 +169,10 @@ def docs_api(monkeypatch):
                                               "format": "parquet", "row_count": 10, "bytes": 256, "created_at": "2026-09-19T00:00:00Z"}})
             if path == "/v1/assets":
                 return self.reply({"assets": [], "upload_idempotency": True, "max_import_bytes": 1048576})
+            if path == "/v1/rl-environments":
+                return self.reply(RL_CATALOG)
+            if path == "/v1/workloads/wl_docs/rl-summary":
+                return self.reply(RL_SUMMARY)
             if path == "/v1/workloads":
                 return self.reply({"workloads": [row]})
             if path == "/v1/workloads/wl_docs":
@@ -267,6 +284,11 @@ def docs_api(monkeypatch):
                 return self.reply({"api_key": "nk_docs", "base_url": address, "tenant": "docs-test"})
             if self.headers.get("Authorization") != "Bearer nk_docs":
                 return self.reply({"error": "unauthorized"}, 401)
+            if path == "/v1/research-workspaces" and payload.get("kind") == "instance":
+                assert payload["gpu"] == "H100" and payload["editor"] == "ssh" and payload["size_gb"] == 0
+                assert payload["ssh_authorized_key"].startswith("ssh-ed25519 ") and self.headers.get("Idempotency-Key")
+                workspace_state["instance"] = payload
+                return self.reply(workspace_view(), 201)
             if path == "/v1/research-workspaces":
                 assert payload["gpu"] == "H100" and payload["max_hours"] == 4 and payload["size_gb"] == 10
                 return self.reply(workspace_view(), 201)
@@ -275,11 +297,15 @@ def docs_api(monkeypatch):
                 workspace_state["state"] = "running"
                 return self.reply(workspace_view(), 202)
             if path == "/v1/research-workspaces/ws_docs/stop":
-                assert self.headers.get("Idempotency-Key") and payload == {"session_id": "sb_session"}
+                assert self.headers.get("Idempotency-Key") and payload == {"session_id": "pod_docs" if workspace_state.get("instance") else "sb_session"}
                 workspace_state["state"] = "stopped"
                 return self.reply(workspace_view(), 202)
             if path == "/v1/research-workspaces/ws_docs/connections":
                 assert payload["tool"] in ("editor", "notebook", "ssh")
+                if payload["tool"] == "ssh":
+                    return self.reply({"transport": "tcp", "host": "203.0.113.7", "port": "22022", "user": "nodus",
+                                       "command": "ssh -p 22022 nodus@203.0.113.7",
+                                       "ssh_config": "Host nodus-instance-docs\n  HostName 203.0.113.7\n"})
                 return self.reply({"url": "https://ws-docs-8080.nodus.run/?tkn=docs"})
             if path == "/v1/research-workspaces/ws_docs/workloads":
                 assert self.headers.get("Idempotency-Key") and payload["budget_usd"] > 0
@@ -333,6 +359,10 @@ def docs_api(monkeypatch):
                 if payload != {"mode": "execute", "host_id": "host_docs"}:
                     return self.reply({"error": "invalid_enrollment"}, 400)
                 return self.reply({"id": "pet_docs", "mode": "execute", "token": "synthetic-token", "expires_at": "2026-09-18T12:00:00Z"}, 201)
+            if path == "/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs":
+                if not self.headers.get("Idempotency-Key") or set(payload or {}) - {"name"}:
+                    return self.reply({"error": "invalid_json"}, 400)
+                return self.reply({"workload_id": "wl_docs", "status": "accepted", "revision": 1}, 202)
             if path == "/v1/workloads":
                 submissions.append(payload)
                 if not self.headers.get("Idempotency-Key"):
@@ -395,6 +425,9 @@ def test_python_documentation_executes(path, number, body, docs_api, tmp_path, m
     if path.name == "workspaces.md" and number in (0, 1):
         (tmp_path / "project").mkdir()
         (tmp_path / "project" / "train.py").write_text("print('saved')\n")
+    if "client.launch(" in body:
+        (Path.home() / ".ssh").mkdir(parents=True, exist_ok=True)
+        (Path.home() / ".ssh" / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDocs docs@test\n")
     from nodus._workload_file import write_workload_file
     write_workload_file(tmp_path / "train.toml")
     with nodus.Client() as client:

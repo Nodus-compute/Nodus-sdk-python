@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -22,12 +24,13 @@ import webbrowser
 from typing import Any
 
 from . import Client, SandboxExec, __version__, _is_header_safe, _redact, _resolve_base_url, _current_hosted_url, config, login
-from ._terminal import clean, compute_label, format_cost, show_table, show_workload, status_label
+from ._terminal import clean, compute_label, format_cost, show_table, show_workload, status_label, workload_cost
 from ._brief import STATUS_FILTERS
 from .errors import ValidationError, NodusError, NotFoundError, AuthenticationError, APIError, APIConnectionError, APITimeoutError, asset_id_from_error
 from .types import _num
 from ._workload_file import load_workload_file, write_workload_file
 from ._project_cli import add_source_arguments, source_options
+from ._client_identity import acting_as
 
 # Nearly everything printed here was written somewhere else, and a terminal
 # acts on whatever escapes it is handed. The rule between the two cleaners:
@@ -102,11 +105,10 @@ def _safe_line(text: Any) -> str:
 
 
 def _fmt_workload(wl: Any) -> str:
-    # cost_now_usd, not spend_usd and not the meter: settled charges do not move
-    # while a lease is open, and the meter counts only this billing period.
+    # Terminal metered costs remain explicitly pending until their lifetime total is final.
     route = _safe_line(wl.route.sku) if wl.route else "-"
     status = _safe_line(getattr(wl.status, "value", wl.status))
-    return f"{_safe_line(wl.id)}  {status:<13} {route:<28} {format_cost(wl.cost_now_usd)}"
+    return f"{_safe_line(wl.id)}  {status:<13} {route:<28} {workload_cost(wl)}"
 
 
 @contextmanager
@@ -535,6 +537,8 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
                         "name": sandbox.envelope.get("name", ""),
                         "state": getattr(sandbox.state, "value", sandbox.state),
                         "cost_usd": sandbox.cost_usd,
+                        "charge_state": sandbox.charge_state,
+                        "final_charge_usd": sandbox.final_charge_usd,
                         "url": sandbox.url,
                     }
                     for sandbox in sandboxes
@@ -542,7 +546,7 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
             else:
                 show_table(
                     ["Sandbox", "Name", "Status", "Cost"],
-                    [[sandbox.id, sandbox.envelope.get("name", ""), sandbox.state, format_cost(sandbox.cost_usd)] for sandbox in sandboxes],
+                    [[sandbox.id, sandbox.envelope.get("name", ""), sandbox.state, _sandbox_cost(sandbox)] for sandbox in sandboxes],
                     empty="No sandboxes yet. Use nodus sandbox new to create one.",
                     plain=args.plain,
                 )
@@ -583,6 +587,7 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
         if args.sandbox_cmd == "detail":
             print(json.dumps({"id": sandbox.id, "state": sandbox.state, "url": sandbox.url,
                               "cost_usd": sandbox.cost_usd, "envelope": sandbox.envelope,
+                              "charge_state": sandbox.charge_state, "final_charge_usd": sandbox.final_charge_usd,
                               "failure": sandbox.failure, "startup": sandbox.startup}, indent=2, default=str))
             return 0
         if args.sandbox_cmd == "files":
@@ -609,7 +614,7 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
             return 0
         if args.sandbox_cmd == "cost":
             sandbox.refresh()
-            print(format_cost(sandbox.cost_usd))
+            print(_sandbox_cost(sandbox))
             return 0
         with _sandbox_mutation(args.idempotency_key, sandbox_id=sandbox.id) as key:
             sandbox.terminate(idempotency_key=key)
@@ -618,7 +623,12 @@ def _cmd_sandbox(args: argparse.Namespace) -> int:
 
 
 def _workspace_line(workspace) -> str:
-    cost = format_cost(workspace.cost_usd) if workspace.cost_usd is not None else "-"
+    if workspace.charge_state == "estimated" and workspace.state in ("stopped", "terminated", "failed"):
+        cost = "Finalizing cost"
+    elif workspace.charge_state == "final":
+        cost = format_cost(workspace.final_charge_usd) if workspace.final_charge_usd is not None else "Not available"
+    else:
+        cost = format_cost(workspace.cost_usd) if workspace.cost_usd is not None else "-"
     tool = workspace.tool if workspace.ready else "-"
     return _safe_line(f"{workspace.id}  {workspace.name}  {workspace.state}  {tool}  {cost}")
 
@@ -683,6 +693,232 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
         return 0
 
 
+_AGENT_CLIENTS = {"claude-code": "Claude", "codex": "Codex", "cursor": "Cursor", "mcp": "MCP client"}
+
+
+def _launched_by(item: dict) -> str:
+    who = item.get("launched_by") if isinstance(item.get("launched_by"), dict) else {}
+    agent = _AGENT_CLIENTS.get(who.get("client"))
+    if agent:
+        return agent
+    if who.get("api_key_name"):
+        return f"API key {who['api_key_name']}"
+    return who.get("user_name") or "-"
+
+
+def _compute_row(item: dict) -> list[str]:
+    group = item.get("group") if isinstance(item.get("group"), dict) else None
+    name = str(item.get("name") or item.get("id") or "")
+    if group and group.get("size"):
+        name += f" ({group['size']} runs)"
+    count, gpu = item.get("gpu_count"), item.get("gpu")
+    gpu_text = "-" if not gpu else (f"{count}x {gpu}" if isinstance(count, int) and count > 1 else str(gpu))
+    kind = {"instance": "Instance", "training": "Training", "workspace": "Workspace"}.get(item.get("type"), str(item.get("type") or "-"))
+    return [name, kind, gpu_text, str(item.get("status_text") or item.get("state") or "-"), _launched_by(item)]
+
+
+def _cmd_ps(args: argparse.Namespace) -> int:
+    with Client(base_url=args.base_url) as client:
+        try:
+            items = [item for state in (("running", "history") if args.all else ("running",))
+                     for item in client.compute.iterate(state=state, include_workspaces=True)]
+        except NotFoundError:
+            print("Error: This Nodus server does not list running compute yet. "
+                  "Use nodus workspace ls and nodus list instead.", file=sys.stderr)
+            return 2
+    if args.json:
+        print(json.dumps(items, indent=2, default=str))
+        return 0
+    show_table(["NAME", "TYPE", "GPU", "STATUS", "LAUNCHED BY"], [_compute_row(item) for item in items],
+               empty="Nothing is running." if not args.all else "No compute yet.", plain=True)
+    return 0
+
+
+def _read_public_key(path: str | None) -> str | None:
+    return Path(path).expanduser().read_text() if path else None
+
+
+def _reference(machine) -> str:
+    """The name to type after nodus ssh: the ID when the name would read as a flag."""
+    return shlex.quote(machine.name if machine.name and not machine.name.startswith("-") else machine.id)
+
+
+def _cmd_launch(args: argparse.Namespace) -> int:
+    from ._compute import _timed_out, local_public_key
+    from .errors import WorkspaceNotReadyError
+    from ._compute import team_has_keys
+    keyless = args.ssh_key is None and local_public_key() is None
+    with Client(base_url=args.base_url) as client:
+        with _sandbox_mutation(args.idempotency_key, noun="instance") as key:
+            machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
+                                    ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
+                                    keep_files=args.keep_files, wait=False, idempotency_key=key)
+        if keyless and not team_has_keys(client):
+            print(_safe_line(f"{machine.id} {machine.state}."))
+            print(_GENERATE_HINT)
+            print(_safe_line(f"Then connect with: nodus ssh {_reference(machine)}"))
+            return 0
+        if not args.wait:
+            print(_safe_line(f"{machine.id} {machine.state}. Connect when ready with: nodus ssh {machine.id}"))
+            return 0
+        try:
+            try:
+                machine.wait_until_ready(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
+            except WorkspaceNotReadyError as error:
+                raise _timed_out(machine, error) from None
+            connection = machine.ssh()
+        except (NodusError, KeyboardInterrupt):
+            print(_safe_line(f"{machine.name or machine.id} ({machine.id}) was launched and may still be running. "
+                             f"Check it with nodus ssh {machine.id} or release it with nodus stop {machine.id}."),
+                  file=sys.stderr)
+            raise
+    print(_safe_line(f"{machine.name} ({machine.id}) is ready. It stops itself after {args.hours} hours."))
+    print(_safe_line(f"Connect: nodus ssh {_reference(machine)}"))
+    print(_safe_line(f"Or run: {connection.get('command', '')}"))
+    return 0
+
+
+_ADD_KEY_HINT = "Add your key with: nodus ssh-key add"
+_REFUSED_HINT = "If the connection is refused, add your key with: nodus ssh-key add"
+_GENERATE_HINT = "No SSH key found. Create and add one with: nodus ssh-key add --generate"
+
+
+def _exec_ssh(argv: list[str]) -> int:
+    """Hand the terminal to ssh: replace this process on POSIX, wait for it on Windows."""
+    if os.name == "nt":
+        return subprocess.call(argv)
+    os.execvp("ssh", argv)
+    return 0
+
+
+def _local_key_admitted(client, machine) -> bool:
+    """Whether the default local key is the machine's own key or a saved team key. Unknown reads as no."""
+    try:
+        return _key_admitted(client, machine)
+    except Exception:
+        return False
+
+
+def _key_admitted(client, machine) -> bool:
+    from ._compute import local_public_key
+    from ._ssh_keys import listed
+    local = local_public_key()
+    if local is None:
+        return False
+    local = local.strip()
+    own = machine.configuration.get("ssh_authorized_key")
+    if isinstance(own, str) and listed([{"public_key": line} for line in own.splitlines()], local):
+        return True
+    try:
+        return listed(client.ssh_keys.list(), local)
+    except NodusError:
+        return False
+
+
+def _cmd_ssh(args: argparse.Namespace) -> int:
+    from ._ssh import UnsupportedTransport, ssh_argv
+    with Client(base_url=args.base_url) as client:
+        machine = client.workspaces.get(args.workspace_id)
+        try:
+            connection = machine.ssh()
+        except NodusError as error:
+            if getattr(error, "code", None) == "workspace_ssh_key_required":
+                print(_safe_line(f"Error: {error.message}"), file=sys.stderr)
+                print(_ADD_KEY_HINT, file=sys.stderr)
+                return 2
+            raise
+    if args.print:
+        print(_safe_line(connection.get("command", "")))
+        print(_safe(connection.get("ssh_config", "")))
+        return 0
+    try:
+        argv = ssh_argv(connection)
+    except UnsupportedTransport as unsupported:
+        print(_safe_line(f"Error: nodus ssh cannot open a {unsupported} connection directly. "
+                         "Review its details with nodus ssh --print before using them."), file=sys.stderr)
+        return 1
+    except ValidationError as refused:
+        print(_safe_line(f"Error: {refused} Nothing was run."), file=sys.stderr)
+        return 1
+    if shutil.which("ssh") is None:
+        print(_safe_line(shlex.join(argv)))
+        print("Error: ssh was not found. Install an OpenSSH client and run the command above.", file=sys.stderr)
+        return 1
+    if connection.get("transport") == "tunnel" and shutil.which("cloudflared") is None:
+        print(_safe_line(shlex.join(argv)))
+        print("Error: this connection needs cloudflared. Install it and run the command above.", file=sys.stderr)
+        return 1
+    with Client(base_url=args.base_url) as client:
+        admitted = _local_key_admitted(client, machine)
+    if not admitted:
+        print(_REFUSED_HINT, file=sys.stderr)
+    return _exec_ssh(argv)
+
+
+def _generate_key() -> None:
+    """Create ~/.ssh/id_ed25519 with ssh-keygen, refusing to replace any existing file."""
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        raise ValueError("ssh-keygen was not found. Install an OpenSSH client, or pass the path to a public key.")
+    directory = Path.home() / ".ssh"
+    target = directory / "id_ed25519"
+    if any(os.path.lexists(path) for path in (target, target.with_name("id_ed25519.pub"))):
+        raise ValueError(f"{target} already exists without a usable public key. Recreate {target}.pub with "
+                         f"ssh-keygen -y -f {target}, or pass the path to a public key.")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        # With no input, an overwrite prompt from ssh-keygen is answered no.
+        subprocess.run([keygen, "-t", "ed25519", "-N", "", "-f", str(target), "-C", "nodus", "-q"], check=True,
+                       stdin=subprocess.DEVNULL)
+    except subprocess.CalledProcessError as error:
+        raise ValueError(f"ssh-keygen could not create {target} (exit {error.returncode}).") from None
+
+
+def _cmd_ssh_key(args: argparse.Namespace) -> int:
+    from ._compute import default_public_key, local_public_key
+    with Client(base_url=args.base_url) as client:
+        if args.ssh_key_cmd == "add":
+            path = Path(args.path).expanduser() if args.path else None
+            if path is None and local_public_key() is None:
+                if not args.generate:
+                    print(f"Error: {_GENERATE_HINT}", file=sys.stderr)
+                    return 2
+                _generate_key()
+            public_key = _read_public_key(args.path) if path else default_public_key()
+            name = path.name if path else next(
+                name for name in ("id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub")
+                if (Path.home() / ".ssh" / name).is_file())
+            saved = client.ssh_keys.add(public_key, name=args.name or name)
+            print(_safe_line(f"Added {saved.get('fingerprint', '')}. Running instances accept it within a few seconds."))
+            return 0
+        if args.ssh_key_cmd == "ls":
+            rows = [[key.get("fingerprint", ""), key.get("name") or "-", str(key.get("added_at") or "-")]
+                    for key in client.ssh_keys.list()]
+            show_table(["FINGERPRINT", "NAME", "ADDED"], rows, empty="No SSH keys saved. Add one with nodus ssh-key add.",
+                       plain=True)
+            return 0
+        client.ssh_keys.remove(args.fingerprint)
+    print(_safe_line(f"Removed {args.fingerprint}."))
+    return 0
+
+
+def _cmd_stop(args: argparse.Namespace) -> int:
+    with Client(base_url=args.base_url) as client:
+        machine = client.workspaces.get(args.workspace_id)
+        with _sandbox_mutation(args.idempotency_key, sandbox_id=machine.id, noun="instance") as key:
+            machine.stop(idempotency_key=key)
+    print(_safe_line(f"{machine.id} {machine.state}"))
+    return 0
+
+
+def _sandbox_cost(sandbox):
+    if sandbox.charge_state == "estimated" and sandbox.is_terminal:
+        return "Finalizing cost"
+    if sandbox.charge_state == "final":
+        return format_cost(sandbox.final_charge_usd) if sandbox.final_charge_usd is not None else "Not available"
+    return format_cost(sandbox.cost_usd)
+
+
 def _sandbox_exec_failure(process):
     state = getattr(process.state, "value", process.state)
     detail = process.failure_code or f"exit code {process.exit_code}"
@@ -732,7 +968,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
                     "team": "No runs for this team.",
                 }.get(args.status, f"No runs with status {_safe_line(args.status)}.")
             show_table(["Run", "Status", "Compute", "Cost"],
-                       [[wl.id, status_label(wl.status), compute_label(wl.route), format_cost(wl.cost_now_usd)] for wl in workloads],
+                       [[wl.id, status_label(wl.status), compute_label(wl.route), workload_cost(wl)] for wl in workloads],
                        empty=empty, plain=args.plain)
     return 0
 
@@ -1252,12 +1488,46 @@ Use nodus COMMAND --help for command options.""",
     from ._agent_cli import add_parser as agent_parser
     agent_parser(sub, _positive_cost, _page_limit)
 
+    launch = sub.add_parser("launch", help="rent a GPU machine and print its SSH command when ready")
+    launch.add_argument("--gpu", default="H100", help="GPU model, such as H100 or \"A100-40GB\" (default H100)")
+    launch.add_argument("--gpus", type=int, default=None, help="1, 2, 4 or 8 GPUs on one machine (default 1, or the count in --gpu such as H100:2)")
+    launch.add_argument("--disk", type=int, default=100, help="local disk in GB, from 80 to 2048")
+    launch.add_argument("--env", help="software environment, such as pytorch-cuda")
+    launch.add_argument("--ssh-key", help="path to an SSH public key for this machine (default ~/.ssh/id_ed25519.pub)")
+    launch.add_argument("--name", help="machine name (default instance- and 8 random characters)")
+    launch.add_argument("--hours", type=_positive_integer, default=4, help="stop automatically after this many hours")
+    launch.add_argument("--keep-files", action="store_true",
+                        help="save project files between sessions as a workspace")
+    launch.add_argument("--no-wait", dest="wait", action="store_false", help="return once compute is requested")
+    launch.add_argument("--timeout", type=float, default=900.0, help="seconds to wait for SSH")
+    launch.add_argument("--poll-seconds", type=float, default=5.0)
+    launch.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
+    ps = sub.add_parser("ps", help="list running instances, workspaces and training")
+    ps.add_argument("--all", action="store_true", help="include stopped and finished compute")
+    ps.add_argument("--json", action="store_true", help="print the items as JSON")
+    ssh = sub.add_parser("ssh", help="open an SSH session on an instance or workspace")
+    ssh.add_argument("--print", action="store_true", help="print the SSH command and config entry instead")
+    ssh.add_argument("workspace_id", metavar="NAME_OR_ID")
+    ssh_key = sub.add_parser("ssh-key", help="save SSH public keys that every machine your team runs admits")
+    ssh_key_sub = ssh_key.add_subparsers(dest="ssh_key_cmd", required=True, metavar="COMMAND")
+    ssh_key_add = ssh_key_sub.add_parser("add", help="save a public key (default ~/.ssh/id_ed25519.pub)")
+    ssh_key_add.add_argument("path", nargs="?", metavar="PATH", help="path to an SSH public key")
+    ssh_key_add.add_argument("--name", help="label shown in nodus ssh-key ls")
+    ssh_key_add.add_argument("--generate", action="store_true",
+                             help="create ~/.ssh/id_ed25519 with ssh-keygen when no default key exists")
+    ssh_key_sub.add_parser("ls", help="list saved public keys")
+    ssh_key_rm = ssh_key_sub.add_parser("rm", help="remove a saved public key")
+    ssh_key_rm.add_argument("fingerprint", metavar="FINGERPRINT")
+    stop = sub.add_parser("stop", help="stop an instance or workspace and release its GPU")
+    stop.add_argument("--idempotency-key", help="reuse the key after an uncertain response")
+    stop.add_argument("workspace_id", metavar="NAME_OR_ID")
+
     workspace = sub.add_parser("workspace", help="GPU workspaces with VS Code, JupyterLab and SSH")
     workspace_sub = workspace.add_subparsers(dest="workspace_cmd", required=True, metavar="COMMAND")
     workspace_new = workspace_sub.add_parser("new", help="save a workspace configuration without renting compute")
     workspace_new.add_argument("name")
     workspace_new.add_argument("--gpu", help="GPU model, such as H100 or RTX 4090")
-    workspace_new.add_argument("--gpu-count", type=int, default=1, help="1, 2, 4 or 8 GPUs on one machine")
+    workspace_new.add_argument("--gpu-count", type=int, help="1, 2, 4 or 8 GPUs on one machine")
     workspace_new.add_argument("--gpu-memory-gb", type=float, help="memory per GPU when the model is not known to the SDK")
     workspace_new.add_argument("--cpus", type=int, help="CPU-only workspace with this many vCPUs")
     workspace_new.add_argument("--memory-gb", type=float, help="system RAM for a CPU-only workspace")
@@ -1424,6 +1694,11 @@ def main(argv: list[str] | None = None) -> int:
         "pools": lambda: _cmd_pools(args),
         "sandbox": lambda: _cmd_sandbox(args),
         "workspace": lambda: _cmd_workspace(args),
+        "launch": lambda: _cmd_launch(args),
+        "ps": lambda: _cmd_ps(args),
+        "ssh": lambda: _cmd_ssh(args),
+        "ssh-key": lambda: _cmd_ssh_key(args),
+        "stop": lambda: _cmd_stop(args),
         "agent": lambda: _cmd_agent(args),
         "benchmark": lambda: _cmd_benchmark(args),
         "list": lambda: _cmd_list(args),
@@ -1440,7 +1715,8 @@ def main(argv: list[str] | None = None) -> int:
         "explain": lambda: _cmd_explain(args),
     }
     try:
-        return handlers[args.cmd]()
+        with acting_as("cli"):
+            return handlers[args.cmd]()
     except (NodusError, ValueError, TypeError, OSError) as exc:
         message = _safe(exc)
         if isinstance(exc, APIConnectionError) and not args.debug:

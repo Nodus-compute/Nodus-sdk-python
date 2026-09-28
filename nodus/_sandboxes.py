@@ -342,6 +342,8 @@ class _SandboxState:
     state: Any
     envelope: dict[str, Any]
     cost_usd: float
+    charge_state: str
+    final_charge_usd: float | None
     url: str
     created_at: datetime | None
     updated_at: datetime | None
@@ -354,6 +356,8 @@ class _SandboxState:
         self.state = None
         self.envelope = {}
         self.cost_usd = 0.0
+        self.charge_state = ""
+        self.final_charge_usd = None
         self.url = ""
         self.created_at = None
         self.updated_at = None
@@ -381,6 +385,8 @@ class _SandboxState:
             self.envelope = _obj(body.get("envelope"))
         if "cost_usd" in body:
             self.cost_usd = _num(body.get("cost_usd"))
+        self.charge_state = _text(body.get("charge_state"))
+        self.final_charge_usd = _num(body.get("final_charge_usd"), None)
         if "url" in body:
             self.url = _text(body.get("url"))
         for name in ("created_at", "updated_at", "last_activity_at", "terminal_at"):
@@ -693,6 +699,8 @@ class Sandbox(_SandboxState):
                 "state": getattr(created.state, "value", created.state),
                 "envelope": created.envelope,
                 "cost_usd": created.cost_usd,
+                "charge_state": created.charge_state,
+                "final_charge_usd": created.final_charge_usd,
                 "failure": created.failure,
                 "network_usage": created.network_usage,
                 "url": created.url,

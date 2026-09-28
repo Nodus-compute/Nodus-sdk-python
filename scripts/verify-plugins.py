@@ -33,6 +33,7 @@ TOOLS = {
     "start_workspace", "stop_workspace", "get_workspace_connection", "run_in_workspace",
     "list_workspace_workloads", "list_workspace_sessions", "schedule_workspace", "cancel_workspace_schedule",
     "upload_workspace_files", "download_workspace_files",
+    "launch_gpu", "list_compute", "stop_compute", "add_ssh_key",
 }
 
 

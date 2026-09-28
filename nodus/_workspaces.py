@@ -71,7 +71,9 @@ def _gpu_fields(gpu: str, gpu_count: int | None, gpu_memory_gb: float | None, *,
                 require_memory: bool) -> dict[str, Any]:
     """The gpu, gpu_count and gpu_memory_gb the server needs, from a name and explicit overrides."""
     model, named_memory, named_count = _parse_gpu(_text(gpu, "gpu", limit=64))
-    if named_count is not None and gpu_count is not None and gpu_count != 1 and gpu_count != named_count:
+    if gpu_count is not None:
+        _count(gpu_count, "gpu_count", _GPU_COUNTS)
+    if named_count is not None and gpu_count is not None and gpu_count != named_count:
         raise ValidationError(f"gpu_count {gpu_count} disagrees with the count in {gpu!r}")
     if named_memory is not None and gpu_memory_gb is not None and gpu_memory_gb != named_memory:
         raise ValidationError(f"gpu_memory_gb {gpu_memory_gb} disagrees with the memory in {gpu!r}")
@@ -107,6 +109,15 @@ def _finite(value: Any, field: str, *, minimum: float, allow_equal: bool = False
     if not finite or (value < minimum if allow_equal else value <= minimum):
         raise ValidationError(f"{field} must be a finite number {bound} {minimum}")
     return value
+
+
+def _optional_amount(value: Any) -> float | None:
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            return float(value)
+    except OverflowError:
+        pass
+    return None
 
 
 def _wait_bounds(poll_seconds: Any, timeout_seconds: Any) -> None:
@@ -191,18 +202,20 @@ def _default_size_gb(capabilities: Any) -> float:
     return limit / 1024 ** 3
 
 
-def _configuration(name: str, *, gpu: str | None, gpu_count: int, gpu_memory_gb: float | None,
+def _configuration(name: str, *, gpu: str | None, gpu_count: int | None, gpu_memory_gb: float | None,
                    environment: str | None, editor: str, max_hours: int | None, size_gb: float | None,
                    budget_usd: float | None, ssh_key: str | None, cpus: int | None, memory_gb: float | None,
                    disk_gb: int | None, repository: str | None, ref: str | None, runtime_id: str | None,
-                   form_factor: str | None) -> dict[str, Any]:
+                   form_factor: str | None, require_ssh_key: bool = True) -> dict[str, Any]:
     body: dict[str, Any] = {"name": _text(name, "name", limit=128)}
+    if gpu_count is not None:
+        _count(gpu_count, "gpu_count", _GPU_COUNTS)
     if environment is not None:
         _text(environment, "environment", limit=64)
     if form_factor is not None:
         _choice(form_factor, "form_factor", ("pcie", "sxm", "nvl"))
     if cpus is not None:
-        if gpu is not None or gpu_count != 1 or gpu_memory_gb is not None or form_factor is not None:
+        if gpu is not None or gpu_count not in (None, 1) or gpu_memory_gb is not None or form_factor is not None:
             raise ValidationError("A CPU workspace takes cpus and memory_gb, not gpu, gpu_count, gpu_memory_gb or form_factor")
         body["environment"] = environment or "pytorch-cpu"
         body["editor"] = editor
@@ -215,13 +228,14 @@ def _configuration(name: str, *, gpu: str | None, gpu_count: int, gpu_memory_gb:
         if gpu is None:
             raise ValidationError("Choose a gpu such as \"H100\", or cpus for a CPU-only workspace")
         fields = _gpu_fields(gpu, gpu_count, gpu_memory_gb, require_memory=True)
+        fields.setdefault("gpu_count", 1)
         body["environment"] = environment or ("pytorch-rocm" if _compact_gpu(fields["gpu"]) in _AMD else "pytorch-cuda")
         body["editor"] = editor
         body.update(fields)
         if form_factor is not None:
             body["gpu_form_factor"] = form_factor
     _choice(editor, "editor", ("vscode", "jupyter", "ssh"))
-    if editor == "ssh" and not ssh_key:
+    if editor == "ssh" and not ssh_key and require_ssh_key:
         raise ValidationError("ssh_key is required for an SSH-only workspace")
     if ssh_key is not None:
         body["ssh_authorized_key"] = _ssh_key(ssh_key)
@@ -363,12 +377,24 @@ class _WorkspaceState:
         return self.connections.get(self.tool, False)
 
     @property
+    def charge_state(self) -> str:
+        """The session meter's aggregate charge state, or an empty string when absent."""
+        value = self.meter.get("charge_state") if self.meter else None
+        return value if isinstance(value, str) else ""
+
+    @property
+    def final_charge_usd(self) -> float | None:
+        """The fixed compute charge from the server, excluding ongoing retained files."""
+        value = self.meter.get("final_charge_usd") if self.meter else None
+        return _optional_amount(value)
+
+    @property
     def cost_usd(self) -> float | None:
-        """The session's total so far as the server's meter states it, or None when it sends none."""
+        """The server's fixed compute charge when final, otherwise its current estimate."""
+        if self.charge_state == "final":
+            return self.final_charge_usd
         value = self.meter.get("total_now_usd") if self.meter else None
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-            return float(value)
-        return None
+        return _optional_amount(value)
 
     def _stopped_early(self) -> str | None:
         if self.state in ("stopped", "failed", "stopping"):
@@ -713,8 +739,9 @@ class AsyncWorkspace(_WorkspaceState):
 
 def _legacy_volume(kwargs: dict[str, Any]) -> bool:
     """A create with a size and no compute names a sandbox volume."""
+    count = kwargs.get("gpu_count")
     return kwargs.get("gpu") is None and kwargs.get("cpus") is None and kwargs.get("size_gb") is not None \
-        and kwargs.get("gpu_count") == 1 and kwargs.get("editor") == "vscode" \
+        and (count is None or type(count) is int and count == 1) and kwargs.get("editor") == "vscode" \
         and all(value is None for field, value in kwargs.items() if field not in ("size_gb", "gpu_count", "editor"))
 
 
@@ -737,7 +764,7 @@ class Workspaces:
         """The account's saved-file usage, allowance and charges."""
         return self._client._request("GET", _BASE + "/storage")
 
-    def create(self, name: str, *, gpu: str | None = None, gpu_count: int = 1, gpu_memory_gb: float | None = None,
+    def create(self, name: str, *, gpu: str | None = None, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
                environment: str | None = None, editor: str = "vscode", max_hours: int | None = None,
                size_gb: float | None = None, budget_usd: float | None = None, ssh_key: str | None = None,
                cpus: int | None = None, memory_gb: float | None = None, disk_gb: int | None = None,
@@ -789,12 +816,12 @@ class Workspaces:
             try:
                 return workspace.refresh()
             except NotFoundError as missing:
-                found = _by_name([ws.raw for ws in self.list()], reference)
+                found = self._find(reference)
                 if found is None:
                     raise missing
                 workspace._absorb(found)
                 return workspace
-        found = _by_name([ws.raw for ws in self.list()], reference)
+        found = self._find(reference)
         if found is None:
             raise NotFoundError(f"No workspace is named {reference!r}", status_code=404)
         workspace._absorb(found)
@@ -803,19 +830,28 @@ class Workspaces:
     def list(self) -> list[Workspace]:
         """Every workspace the account can see."""
         result: list[Workspace] = []
+        for row in self._rows():
+            workspace = Workspace(self._client)
+            workspace._absorb(row)
+            result.append(workspace)
+        return result
+
+    def _rows(self, kind: str | None = None) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         cursor, seen = "", set()
         while True:
-            params = {"limit": 100, **({"cursor": cursor} if cursor else {})}
+            params = {"limit": 100, **({"kind": kind} if kind else {}), **({"cursor": cursor} if cursor else {})}
             rows, cursor = _page(self._client._request("GET", _BASE, params=params))
-            for row in rows:
-                workspace = Workspace(self._client)
-                workspace._absorb(row)
-                result.append(workspace)
+            result.extend(rows)
             if not cursor:
                 return result
             if cursor in seen:
                 raise APIError("Workspace pagination repeated a cursor")
             seen.add(cursor)
+
+    def _find(self, name: str) -> dict[str, Any] | None:
+        """A workspace by name, else an instance by name: the server lists the two kinds separately."""
+        return _by_name(self._rows(), name) or _by_name(self._rows("instance"), name)
 
 
 class AsyncWorkspaces:
@@ -828,7 +864,7 @@ class AsyncWorkspaces:
     async def storage(self) -> dict[str, Any]:
         return await self._client._request("GET", _BASE + "/storage")
 
-    async def create(self, name: str, *, gpu: str | None = None, gpu_count: int = 1,
+    async def create(self, name: str, *, gpu: str | None = None, gpu_count: int | None = None,
                      gpu_memory_gb: float | None = None, environment: str | None = None, editor: str = "vscode",
                      max_hours: int | None = None, size_gb: float | None = None, budget_usd: float | None = None,
                      ssh_key: str | None = None, cpus: int | None = None, memory_gb: float | None = None,
@@ -875,12 +911,12 @@ class AsyncWorkspaces:
             try:
                 return await workspace.refresh()
             except NotFoundError as missing:
-                found = _by_name([ws.raw for ws in await self.list()], reference)
+                found = await self._find(reference)
                 if found is None:
                     raise missing
                 workspace._absorb(found)
                 return workspace
-        found = _by_name([ws.raw for ws in await self.list()], reference)
+        found = await self._find(reference)
         if found is None:
             raise NotFoundError(f"No workspace is named {reference!r}", status_code=404)
         workspace._absorb(found)
@@ -888,16 +924,24 @@ class AsyncWorkspaces:
 
     async def list(self) -> list[AsyncWorkspace]:
         result: list[AsyncWorkspace] = []
+        for row in await self._rows():
+            workspace = AsyncWorkspace(self._client)
+            workspace._absorb(row)
+            result.append(workspace)
+        return result
+
+    async def _rows(self, kind: str | None = None) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         cursor, seen = "", set()
         while True:
-            params = {"limit": 100, **({"cursor": cursor} if cursor else {})}
+            params = {"limit": 100, **({"kind": kind} if kind else {}), **({"cursor": cursor} if cursor else {})}
             rows, cursor = _page(await self._client._request("GET", _BASE, params=params))
-            for row in rows:
-                workspace = AsyncWorkspace(self._client)
-                workspace._absorb(row)
-                result.append(workspace)
+            result.extend(rows)
             if not cursor:
                 return result
             if cursor in seen:
                 raise APIError("Workspace pagination repeated a cursor")
             seen.add(cursor)
+
+    async def _find(self, name: str) -> dict[str, Any] | None:
+        return _by_name(await self._rows(), name) or _by_name(await self._rows("instance"), name)

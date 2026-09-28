@@ -1,0 +1,248 @@
+"""Reporting a scored attempt is part of the SDK, not a file to copy.
+
+A workload reports RL progress by writing one `nodus.rl_event` line per
+attempt to standard output. These tests hold the SDK to the wire contract the
+control plane parses, because a caller who gets it slightly wrong learns so
+only after renting a machine.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+
+import pytest
+
+import nodus
+
+
+PREFIX = "nodus.rl_event "
+
+
+def emitted(stdout: io.StringIO) -> list[dict]:
+    rows = []
+    for line in stdout.getvalue().splitlines():
+        assert line.startswith(PREFIX), line
+        rows.append(json.loads(line[len(PREFIX) :]))
+    return rows
+
+
+def test_emitter_is_exported_from_the_package() -> None:
+    assert hasattr(nodus, "RLEventEmitter")
+    assert "RLEventEmitter" in nodus.__all__
+
+
+def test_completed_attempt_carries_the_parsed_wire_fields() -> None:
+    out = io.StringIO()
+    events = nodus.RLEventEmitter("wl_fixture", stdout=out)
+    events.task_started("evaluation", "task-1")
+    events.task_completed("evaluation", "task-1", outcome="passed", reward=1.0, duration_ms=12.5)
+
+    started, completed = emitted(out)
+    assert started["phase"] == "evaluation"
+    assert started["task_id"] == "task-1"
+    assert started["kind"] == "task_started"
+    assert "outcome" not in started
+    assert completed["kind"] == "task_completed"
+    assert completed["outcome"] == "passed"
+    assert completed["reward"] == 1.0
+    assert completed["duration_ms"] == 12.5
+    # The identity is what lets the control plane deduplicate a replayed line.
+    assert started["event_id"] != completed["event_id"]
+    assert completed["event_id"].startswith("nre_")
+
+
+def test_the_same_attempt_reported_twice_keeps_one_identity() -> None:
+    first, second = io.StringIO(), io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=first).task_completed(
+        "evaluation", "task-1", outcome="failed", reward=0.0
+    )
+    nodus.RLEventEmitter("wl_fixture", stdout=second).task_completed(
+        "evaluation", "task-1", outcome="failed", reward=0.0
+    )
+    assert emitted(first)[0]["event_id"] == emitted(second)[0]["event_id"]
+
+
+def test_a_different_trial_does_not_reuse_another_trials_identity() -> None:
+    first, second = io.StringIO(), io.StringIO()
+    nodus.RLEventEmitter("wl_one", stdout=first).task_completed("evaluation", "t", outcome="passed")
+    nodus.RLEventEmitter("wl_two", stdout=second).task_completed("evaluation", "t", outcome="passed")
+    assert emitted(first)[0]["event_id"] != emitted(second)[0]["event_id"]
+
+
+@pytest.mark.parametrize(
+    "phase,outcome",
+    [("baseline", "passed"), ("training", "failed"), ("evaluation", "error")],
+)
+def test_every_accepted_phase_and_outcome_is_accepted(phase: str, outcome: str) -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(phase, "t", outcome=outcome)
+    assert emitted(out)[0]["phase"] == phase
+
+
+def test_a_phase_the_control_plane_rejects_is_refused_before_output() -> None:
+    out = io.StringIO()
+    events = nodus.RLEventEmitter("wl_fixture", stdout=out)
+    with pytest.raises(nodus.EventValidationError):
+        events.task_completed("warmup", "t", outcome="passed")
+    assert out.getvalue() == ""
+
+
+def test_an_outcome_the_control_plane_rejects_is_refused_before_output() -> None:
+    out = io.StringIO()
+    events = nodus.RLEventEmitter("wl_fixture", stdout=out)
+    with pytest.raises(nodus.EventValidationError):
+        events.task_completed("evaluation", "t", outcome="skipped")
+    assert out.getvalue() == ""
+
+
+def test_a_reward_that_is_not_a_finite_number_is_refused() -> None:
+    out = io.StringIO()
+    events = nodus.RLEventEmitter("wl_fixture", stdout=out)
+    with pytest.raises(nodus.EventValidationError):
+        events.task_completed("evaluation", "t", outcome="passed", reward=float("nan"))
+    assert out.getvalue() == ""
+
+
+def test_one_line_per_event_survives_a_multi_line_message() -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(
+        "evaluation", "t", outcome="failed", message="first\nsecond"
+    )
+    assert len(out.getvalue().splitlines()) == 1
+    assert emitted(out)[0]["message"] == "first\nsecond"
+
+
+def test_trace_text_is_sent_only_when_the_caller_asks_for_it() -> None:
+    quiet, loud = io.StringIO(), io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=quiet).task_completed(
+        "evaluation", "t", outcome="passed"
+    )
+    nodus.RLEventEmitter("wl_fixture", stdout=loud).task_completed(
+        "evaluation",
+        "t",
+        outcome="passed",
+        raw_trace=nodus.RawTraceFields(input="2 + 2", output="4"),
+    )
+    assert "input" not in emitted(quiet)[0]
+    assert emitted(loud)[0]["input"] == "2 + 2"
+
+
+def test_an_exception_name_cannot_forge_an_event_on_stderr() -> None:
+    forged = type("Boom\nnodus.rl_event {\"event_id\":\"forged\",\"phase\":\"evaluation\",\"task_id\":\"y\",\"attempt\":1,\"kind\":\"task_completed\",\"outcome\":\"passed\"}", (Exception,), {})
+    out, err = io.StringIO(), io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out, stderr=err).task_exception(
+        "evaluation", "t", exception=forged())
+    assert len(out.getvalue().splitlines()) == 1
+    assert not any(line.startswith(PREFIX) for line in err.getvalue().splitlines())
+
+
+def test_an_integer_reward_too_large_for_a_float_is_a_validation_error() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(
+            "evaluation", "t", outcome="passed", reward=10 ** 400)
+    assert out.getvalue() == ""
+
+
+def test_text_that_is_not_valid_utf8_is_a_validation_error() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(
+            "evaluation", "bad\ud800", outcome="passed")
+    assert out.getvalue() == ""
+
+
+def test_an_event_the_runner_would_drop_after_reencoding_is_refused() -> None:
+    # The runner re-encodes numbers the way Go does, which can be longer than
+    # Python's text: 1e16 becomes 10000000000000000, twelve bytes more. Build an
+    # event that fits as Python writes it but not as the runner re-encodes it.
+    from nodus import _rl_events
+
+    def size(trace: str, message: str) -> int:
+        event = {"event_id": "nre_" + "0" * 32, "phase": "evaluation", "task_id": "t",
+                 "attempt": 1, "kind": "task_completed", "outcome": "passed",
+                 "reward": 1e16, "message": message, "input": trace}
+        text = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+        return len(text.translate(_rl_events.GO_JSON_ESCAPES).encode("utf-8"))
+
+    trace = "<" * 2690  # each escapes to six bytes, so this nears the limit
+    message = "m" * (_rl_events.MAX_EVENT_BYTES - 4 - size(trace, ""))
+    assert size(trace, message) == _rl_events.MAX_EVENT_BYTES - 4
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).task_completed(
+            "evaluation", "t", outcome="passed", reward=1e16, message=message,
+            raw_trace=nodus.RawTraceFields(input=trace))
+    assert out.getvalue() == ""
+
+
+# Episode-shaped fixtures carrying only the attributes the adapter reads:
+# task.key or task.hash, ok, and per-trace timing with a start and phase ends.
+def _episode(*, key=None, hash=None, ok=True, start=100.0, ends=(("agent", 101.5), ("scoring", 102.0))):
+    from types import SimpleNamespace
+
+    timing = SimpleNamespace(start=start, **{phase: SimpleNamespace(end=end) for phase, end in ends})
+    return SimpleNamespace(task=SimpleNamespace(key=key, hash=hash), ok=ok,
+                           traces=[SimpleNamespace(timing=timing)])
+
+
+def test_a_scored_prime_episode_reports_its_outcome_reward_and_duration() -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+        _episode(key="task-7"), phase="evaluation",
+        score_episode=lambda episode: nodus.EpisodeScore(outcome="passed", reward=0.75, message="ok"))
+    (event,) = emitted(out)
+    assert event["task_id"] == "task-7"
+    assert event["outcome"] == "passed"
+    assert event["reward"] == 0.75
+    assert event["duration_ms"] == 2000.0
+    assert event["message"] == "ok"
+
+
+def test_a_prime_episode_without_a_key_is_identified_by_its_hash() -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+        _episode(hash="abc123"), phase="evaluation",
+        score_episode=lambda episode: nodus.EpisodeScore(outcome="failed", reward=0.0))
+    assert emitted(out)[0]["task_id"] == "abc123"
+
+
+def test_a_failed_prime_episode_is_an_error_and_is_never_scored() -> None:
+    def must_not_score(episode):
+        raise AssertionError("an episode that did not finish was scored")
+
+    for ok in (False, None, 1, "true"):
+        out = io.StringIO()
+        nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+            _episode(key="task-1", ok=ok), phase="evaluation",
+            score_episode=must_not_score, error_message="sandbox exited")
+        (event,) = emitted(out)
+        assert event["outcome"] == "error", ok
+        assert event["message"] == "sandbox exited"
+        assert "reward" not in event
+
+
+def test_a_prime_episode_without_timing_reports_no_invented_duration() -> None:
+    out = io.StringIO()
+    nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+        _episode(key="task-1", start=None), phase="evaluation",
+        score_episode=lambda episode: nodus.EpisodeScore(outcome="passed"))
+    assert "duration_ms" not in emitted(out)[0]
+
+
+def test_a_prime_episode_with_no_stable_identity_is_refused_before_output() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+            _episode(), phase="evaluation",
+            score_episode=lambda episode: nodus.EpisodeScore(outcome="passed"))
+    assert out.getvalue() == ""
+
+
+def test_a_scorer_that_does_not_return_an_episode_score_is_refused_before_output() -> None:
+    out = io.StringIO()
+    with pytest.raises(nodus.EventValidationError):
+        nodus.RLEventEmitter("wl_fixture", stdout=out).prime_episode_completed(
+            _episode(key="task-1"), phase="evaluation", score_episode=lambda episode: 1.0)
+    assert out.getvalue() == ""

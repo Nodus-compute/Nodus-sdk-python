@@ -79,6 +79,42 @@ def test_workspace_cli_run_requires_a_budget_and_new_requires_hours():
     assert error.value.code == 2
 
 
+@pytest.mark.parametrize("count", ["1", "0", "3", "-1"])
+def test_workspace_cli_create_rejects_conflicting_or_invalid_count_before_network(monkeypatch, capsys, count):
+    def handler(_):
+        pytest.fail("an invalid GPU count must not save a workspace configuration")
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "new", "lab", "--gpu", "H100:8", "--gpu-count", count,
+                     "--max-hours", "1", "--size-gb", "1", "--budget", "3.5"]) == 2
+    assert "gpu_count" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("options,expected", [
+    (["--gpu", "H100:8"], {"gpu": "H100", "gpu_count": 8, "gpu_memory_gb": 80}),
+    (["--gpu", "H100:8", "--gpu-count", "8"], {"gpu": "H100", "gpu_count": 8, "gpu_memory_gb": 80}),
+    (["--gpu", "H100"], {"gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}),
+    (["--cpus", "4", "--memory-gb", "16"], {"compute_class": "vm", "vcpus": 4, "host_memory_gb": 16}),
+])
+def test_workspace_cli_create_preserves_omitted_count_and_budget(monkeypatch, capsys, options, expected):
+    requests = []
+
+    def handler(request):
+        assert request.method == "POST" and request.url.path == BASE
+        requests.append(json.loads(request.content))
+        return httpx.Response(201, json=STOPPED)
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "new", "lab", *options, "--max-hours", "1", "--size-gb", "1",
+                     "--budget", "3.5"]) == 0
+    assert capsys.readouterr().out.strip() == "ws_kernel"
+    assert len(requests) == 1
+    assert requests[0]["budget_usd"] == 3.5
+    assert {key: requests[0][key] for key in expected} == expected
+    if "vcpus" in expected:
+        assert not {"gpu", "gpu_count", "gpu_memory_gb"}.intersection(requests[0])
+
+
 def test_workspace_cli_upload_and_download_use_the_handle(monkeypatch, capsys, tmp_path):
     seen = {}
 
@@ -109,3 +145,27 @@ def test_workspace_cli_not_ready_is_a_plain_message(monkeypatch, capsys):
     assert cli.main(["workspace", "connect", "ws_kernel"]) == 2
     err = capsys.readouterr().err
     assert "not ready to connect" in err and "finish starting" in err
+
+
+@pytest.mark.parametrize("state,meter,expected", [
+    ("stopped", {"charge_state": "estimated", "total_now_usd": 0}, "Finalizing cost"),
+    ("failed", {"charge_state": "estimated", "total_now_usd": 0.2}, "Finalizing cost"),
+    ("running", {"charge_state": "estimated", "total_now_usd": 0.2}, "$0.20"),
+    ("stopped", {"charge_state": "final", "final_charge_usd": 1.25, "total_now_usd": 1.25}, "$1.25"),
+    ("stopped", {"charge_state": "final", "final_charge_usd": 0, "total_now_usd": 0}, "$0.00"),
+    ("stopped", {"total_now_usd": 0.2}, "$0.20"),
+    ("stopped", None, "-"),
+    ("stopped", {"charge_state": "final", "total_now_usd": 0.2}, "Not available"),
+])
+def test_workspace_cli_lists_pending_final_and_legacy_cost(monkeypatch, capsys, state, meter, expected):
+    view = {**STOPPED, "state": state, "meter": meter,
+            "session": {"id": "sb_session", "state": "ready" if state == "running" else "terminated"}}
+    def handler(request):
+        assert request.method == "GET" and request.url.path == BASE
+        return httpx.Response(200, json={"workspaces": [view], "next_cursor": ""})
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "ls"]) == 0
+    out = capsys.readouterr().out.strip()
+    assert out.endswith("  " + expected)
+    if expected in ("Finalizing cost", "Not available"):
+        assert "$" not in out

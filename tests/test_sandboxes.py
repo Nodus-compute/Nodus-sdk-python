@@ -457,3 +457,67 @@ def test_async_network_usage_and_events_preserve_legacy_responses():
             assert box.network_usage is None
             assert await box.events() == []
     asyncio.run(run())
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_sandbox_charge_finality_preserves_recorded_cost_and_fixed_lifetime_total(async_mode):
+    responses = [
+        {**SANDBOX, "state": "terminated", "cost_usd": 0, "charge_state": "estimated"},
+        {**SANDBOX, "state": "terminated", "cost_usd": 0.20, "charge_state": "final", "final_charge_usd": 1.25},
+        SANDBOX,
+    ]
+
+    def handler(request):
+        return httpx.Response(200, json=responses.pop(0))
+
+    def check(box, expected_state, recorded, final):
+        assert box.charge_state == expected_state
+        assert box.cost_usd == recorded
+        assert box.final_charge_usd == final
+
+    async def run():
+        async with nodus.AsyncClient(api_key="test", base_url="https://nodus.invalid") as client:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url="https://nodus.invalid", transport=httpx.MockTransport(handler))
+            box = await client.sandboxes.from_id("sb_agent")
+            check(box, "estimated", 0, None)
+            await box.refresh()
+            check(box, "final", 0.20, 1.25)
+            await box.refresh()
+            check(box, "", 0, None)
+
+    if async_mode:
+        asyncio.run(run())
+    else:
+        with sync_client(handler) as client:
+            box = client.sandboxes.from_id("sb_agent")
+            check(box, "estimated", 0, None)
+            box.refresh()
+            check(box, "final", 0.20, 1.25)
+            box.refresh()
+            check(box, "", 0, None)
+
+@pytest.mark.parametrize("state,final", [("estimated", None), ("final", 1.25)])
+def test_sandbox_constructor_replay_preserves_wire_charge_finality(state, final, monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert request.method == "POST" and request.url.path == "/v1/sandboxes"
+        assert request.headers["Idempotency-Key"] == "same-admission"
+        body = {**SANDBOX, "state": "creating", "cost_usd": 0,
+                "charge_state": state}
+        if final is not None:
+            body["final_charge_usd"] = final
+        return httpx.Response(202, json=body, headers={"Idempotent-Replayed": "true"})
+
+    client = sync_client(handler)
+    monkeypatch.setattr(nodus, "Client", lambda: client)
+    box = nodus.Sandbox(image="python:3.12", idempotency_key="same-admission")
+    try:
+        assert box.charge_state == state
+        assert box.final_charge_usd == final
+        assert box.cost_usd == 0
+        assert box.replayed
+        assert len(calls) == 1
+    finally:
+        box.close()

@@ -23,8 +23,13 @@ _LOCAL_OPERATIONS = {
     "download_sandbox_file": ("local.sandbox_download", "sandboxes:write"),
     "upload_workspace_files": ("local.workspace_upload", "workspaces:write"),
     "download_workspace_files": ("local.workspace_download", "workspaces:read"),
+    "launch_gpu": ("local.compute.launch", "workspaces:write"),
+    "list_compute": ("local.compute.list", "workspaces:read"),
+    "stop_compute": ("local.compute.stop", "workspaces:write"),
+    "add_ssh_key": ("local.ssh_keys.add", "workspaces:write"),
 }
-_KEYED_TRANSFERS = {"upload_project", "upload_sandbox_file", "download_sandbox_file", "upload_workspace_files"}
+_KEYED_TRANSFERS = {"upload_project", "upload_sandbox_file", "download_sandbox_file", "upload_workspace_files",
+                    "launch_gpu", "stop_compute"}
 
 
 def register_manifest(server):
