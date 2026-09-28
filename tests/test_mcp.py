@@ -624,6 +624,27 @@ async def test_workspace_tools_follow_the_published_contract_and_routes(api):
 
 
 @pytest.mark.asyncio
+async def test_workspace_delete_is_a_confirmed_destructive_keyed_operation(api):
+    server, requests, responses = api
+    receipt = {"id": "ws_lab", "name": "lab", "deleted": True, "deleted_at": "2026-09-28T10:00:00Z"}
+    async with create_connected_server_and_client_session(server) as session:
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+        tool = tools["delete_workspace"]
+        assert tool.annotations.destructiveHint is True and tool.annotations.readOnlyHint is False
+        assert tool.annotations.idempotentHint is True
+        assert "confirm" in tool.description.lower()
+        manifest = json.loads((await session.call_tool("get_operation_manifest", {})).content[0].text)
+        operation = next(row for row in manifest["operations"] if row["name"] == "delete_workspace")
+        assert operation["id"] == "workspaces.delete" and operation["required_scope"] == "workspaces:write"
+        responses.append(httpx.Response(200, json=receipt))
+        result = await session.call_tool("delete_workspace", {"workspace_id": "ws_lab", "idempotency_key": "delete-lab"})
+        assert not result.isError and json.loads(result.content[0].text) == receipt
+        assert len(requests) == 1 and requests[0].method == "DELETE"
+        assert requests[0].url.path == "/v1/research-workspaces/ws_lab" and requests[0].content == b""
+        assert requests[0].headers["Idempotency-Key"] == "delete-lab"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("tool,arguments", [
     ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "python x.py", "budget_usd": 0}, "idempotency_key": "k"}),
     ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "python x.py"}, "idempotency_key": "k"}),

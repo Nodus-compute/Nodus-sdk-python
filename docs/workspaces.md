@@ -127,6 +127,47 @@ download service. Existing destination files are preserved unless
 observed revision. `client.workspaces.storage()` reports the account's saved
 file usage, allowance and charges.
 
+## Delete a workspace or instance
+
+`ws.delete()` permanently deletes an unused workspace or instance and its saved
+project files. Compute must be stopped or failed, with no machine still held,
+and saving or an unfinished upload blocks deletion. Pending schedules are
+cancelled. Deletion stops retained file charges, frees the name and removes
+the workspace from lists. Past sessions, workloads and charges remain in
+Billing and history. This cannot be undone.
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    ws = client.workspaces.get("kernel-lab")
+    receipt = ws.delete()
+    print(receipt["deleted"])
+```
+
+The receipt contains `id`, `name`, `deleted` and `deleted_at`.
+`client.workspaces.delete(workspace_id)` deletes by ID without fetching a
+handle first. Both forms accept `idempotency_key`, and the asynchronous client
+offers the same methods with `await`. A deleted handle has `deleted=True` and
+rejects further API operations with `NotFoundError`.
+
+The CLI asks you to type the workspace name unless `--yes` is supplied:
+
+```bash
+nodus workspace delete kernel-lab
+nodus workspace delete YOUR_WORKSPACE_ID --yes --idempotency-key delete-project-1
+```
+
+An uncertain error includes the request key. Retry using the same workspace ID
+and key, even if the workspace has disappeared from lists. A successful replay
+returns the original receipt. Use a new handle or the collection method for a
+replay after an earlier call already confirmed deletion. Active compute or a
+pending upload raises `WorkspaceNotReadyError` without deleting anything.
+
+The MCP tool `delete_workspace` requires `workspace_id` and `idempotency_key`.
+It is marked destructive and instructs the agent to confirm the exact workspace
+and permanent file deletion with the user before calling it.
+
 ## Storage volumes for sandboxes
 
 A volume is a named store that a sandbox mounts to keep selected files between

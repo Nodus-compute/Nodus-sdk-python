@@ -759,3 +759,206 @@ def test_an_instance_is_ready_once_ssh_accepts_connections(async_mode):
             assert ws.ready is True
 
     run(async_mode, scenario)
+
+
+# DELETE /v1/research-workspaces/{id}: the receipt and refusals the control plane writes.
+DELETED = {"id": "ws_kernel", "name": "kernel-lab", "deleted": True, "deleted_at": "2026-09-28T10:00:00Z"}
+ACTIVE = "Stop compute and wait for saving to finish before deleting this workspace."
+TRANSFER = "Finish or discard the pending upload before deleting this workspace."
+
+
+def _delete_through(async_mode, handler, action):
+    """Run ``action(client)`` against ``handler`` with whichever client flavour is under test."""
+    async def scenario():
+        client = async_client(handler) if async_mode else sync_client(handler)
+        async with (client if async_mode else _sync_ctx(client)):
+            return await call(action(client))
+    return asyncio.run(scenario())
+
+
+def _handle(client, async_mode):
+    return (AsyncWorkspace if async_mode else Workspace)(client, "ws_kernel")
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("via", ["handle", "collection"])
+def test_delete_sends_one_keyed_delete_without_a_body_and_returns_the_receipt(async_mode, via):
+    server = Server({("DELETE", BASE + "/ws_kernel"): (200, DELETED)})
+
+    def action(client):
+        if via == "handle":
+            return _handle(client, async_mode).delete()
+        return client.workspaces.delete("ws_kernel")
+
+    assert _delete_through(async_mode, server, action) == DELETED
+    assert [(method, path, body) for method, path, body, _ in server.requests] == [
+        ("DELETE", BASE + "/ws_kernel", None)]
+    assert server.requests[0][3]["idempotency-key"].startswith("nodus-")
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_delete_sends_the_callers_key_and_fresh_keys_per_intent(async_mode):
+    server = Server({("DELETE", BASE + "/ws_kernel"): (200, DELETED)})
+
+    async def action(client):
+        await call(client.workspaces.delete("ws_kernel", idempotency_key="delete-kernel-lab"))
+        await call(client.workspaces.delete("ws_kernel"))
+        await call(client.workspaces.delete("ws_kernel"))
+
+    _delete_through(async_mode, server, action)
+    keys = [headers["idempotency-key"] for *_, headers in server.requests]
+    assert keys[0] == "delete-kernel-lab" and keys[1] != keys[2]
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_a_deleted_handle_refuses_further_use_without_a_request(async_mode):
+    server = Server({("DELETE", BASE + "/ws_kernel"): (200, DELETED)})
+
+    async def action(client):
+        ws = _handle(client, async_mode)
+        assert ws.deleted is False
+        await call(ws.delete())
+        assert ws.deleted is True
+        for use in (ws.refresh, ws.start, ws.stop, ws.delete, ws.delete_files, lambda: ws.connect("editor")):
+            with pytest.raises(NotFoundError, match="ws_kernel was deleted") as raised:
+                await call(use())
+            assert raised.value.status_code == 404
+            assert "idempotency_key" not in str(raised.value)
+
+    _delete_through(async_mode, server, action)
+    assert len(server.requests) == 1
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("code,message", [("workspace_active", ACTIVE), ("workspace_transfer_pending", TRANSFER)])
+@pytest.mark.parametrize("envelope", ["error", "code"])
+def test_delete_refusals_are_workspace_not_ready_and_leave_the_handle_usable(async_mode, code, message, envelope):
+    # The control plane writes both {"error", "message"} and {"code", "message", "fix", "url"} envelopes.
+    body = {envelope: code, "message": message}
+    if envelope == "code":
+        body.update(fix="", url="https://github.com/nodus-compute/Nodus-sdk-python/tree/main/docs")
+    server = Server({("DELETE", BASE + "/ws_kernel"): (409, body), ("GET", BASE + "/ws_kernel"): (200, RUNNING)})
+
+    async def action(client):
+        ws = _handle(client, async_mode)
+        with pytest.raises(WorkspaceNotReadyError, match=message) as raised:
+            await call(ws.delete())
+        assert raised.value.code == code and raised.value.status_code == 409
+        assert "idempotency_key" not in str(raised.value) and "idempotency_key" not in raised.value.body
+        assert ws.deleted is False
+        await call(ws.refresh())
+        assert ws.state == "running"
+
+    _delete_through(async_mode, server, action)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_an_unknown_or_already_deleted_workspace_is_not_found(async_mode):
+    server = Server({("DELETE", BASE + "/ws_kernel"): (404, {"error": "not_found", "message": "Workspace not found."})})
+
+    async def action(client):
+        ws = _handle(client, async_mode)
+        with pytest.raises(NotFoundError):
+            await call(ws.delete())
+        assert ws.deleted is False
+
+    _delete_through(async_mode, server, action)
+
+
+def _replaying(answers):
+    """Answer DELETE in order. A 200 after the first carries the replay header the server sends."""
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        status, payload = answers[min(len(requests), len(answers)) - 1]
+        headers = {"Idempotent-Replayed": "true"} if status == 200 and len(requests) > 1 else {}
+        return httpx.Response(status, json=payload, headers=headers)
+    return handler, requests
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_an_uncertain_delete_carries_its_key_and_the_retry_replays_it(async_mode):
+    handler, requests = _replaying([(502, {"error": "bad_gateway"}), (200, DELETED)])
+
+    async def action(client):
+        ws = _handle(client, async_mode)
+        with pytest.raises(nodus.NodusError) as raised:
+            await call(ws.delete())
+        key = raised.value.body["idempotency_key"]
+        assert key.startswith("nodus-") and key in str(raised.value)
+        assert ws.deleted is False
+        assert await call(ws.delete(idempotency_key=key)) == DELETED
+        assert ws.deleted is True
+        return key
+
+    key = _delete_through(async_mode, handler, action)
+    assert [request.headers["idempotency-key"] for request in requests] == [key, key]
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_transport_retries_of_a_delete_reuse_one_key(async_mode, monkeypatch):
+    handler, requests = _replaying([(503, {"error": "unavailable"}), (200, DELETED)])
+
+    async def scenario():
+        cls = nodus.AsyncClient if async_mode else nodus.Client
+        client = cls(api_key="nk_live_test", base_url="https://nodus.invalid", max_retries=2)
+        transport = httpx.MockTransport(handler)
+        if async_mode:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url="https://nodus.invalid", transport=transport)
+            async with client:
+                return await client.workspaces.delete("ws_kernel")
+        client._http.close()
+        client._http = httpx.Client(base_url="https://nodus.invalid", transport=transport)
+        with client:
+            return client.workspaces.delete("ws_kernel")
+
+    monkeypatch.setattr(nodus._Transport, "_backoff", staticmethod(lambda attempt, resp: 0))
+    assert asyncio.run(scenario()) == DELETED
+    keys = [request.headers["idempotency-key"] for request in requests]
+    assert len(keys) == 2 and keys[0] == keys[1]
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("receipt", [{}, {"id": "ws_other", "deleted": True}, {"id": "ws_kernel", "deleted": False},
+                                     {"id": "ws_kernel"}, [DELETED]])
+def test_a_receipt_that_does_not_confirm_this_delete_is_uncertain(async_mode, receipt):
+    server = Server({("DELETE", BASE + "/ws_kernel"): (200, receipt)})
+
+    async def action(client):
+        ws = _handle(client, async_mode)
+        with pytest.raises(APIError) as raised:
+            await call(ws.delete())
+        assert ws.deleted is False
+        assert raised.value.body["idempotency_key"] == server.requests[-1][3]["idempotency-key"]
+
+    _delete_through(async_mode, server, action)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("workspace_id", ["", "../other", "ws/a", "https://receiver.example", None, "ws kernel"])
+def test_delete_refuses_unowned_route_shapes_before_transport(async_mode, workspace_id):
+    def handler(_):
+        pytest.fail("an invalid workspace ID reached the API")
+    with pytest.raises(ValidationError):
+        _delete_through(async_mode, handler, lambda client: client.workspaces.delete(workspace_id))
+
+
+def test_delete_refuses_a_key_that_cannot_be_a_header_before_transport():
+    def handler(_):
+        pytest.fail("an invalid idempotency key reached the API")
+    with sync_client(handler) as client:
+        with pytest.raises(ValidationError):
+            client.workspaces.delete("ws_kernel", idempotency_key="two\nlines")
+        with pytest.raises(ValidationError):
+            Workspace(client, "ws_kernel").delete(idempotency_key="two words")
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("key", ["", False, 0])
+def test_delete_never_replaces_an_explicit_invalid_key(async_mode, key):
+    server = Server({("DELETE", BASE + "/ws_kernel"): (200, DELETED)})
+    with pytest.raises(ValidationError):
+        _delete_through(async_mode, server, lambda client: client.workspaces.delete("ws_kernel", idempotency_key=key))
+    assert server.requests == []

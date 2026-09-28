@@ -8855,6 +8855,28 @@
         ],
         "type": "object"
       },
+      "OperationWorkspacesDeleteArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
       "OperationWorkspacesStopArguments": {
         "additionalProperties": false,
         "properties": {
@@ -9234,6 +9256,9 @@
           },
           {
             "$ref": "#/components/schemas/OperationWorkspacesStartArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesDeleteArguments"
           },
           {
             "$ref": "#/components/schemas/OperationWorkspacesStopArguments"
@@ -18029,6 +18054,107 @@
       }
     },
     "/v1/research-workspaces/{id}": {
+      "delete": {
+        "operationId": "deleteResearchWorkspace",
+        "summary": "Delete a stopped workspace and its saved files",
+        "tags": [
+          "Research workspaces"
+        ],
+        "description": "Requires stopped or failed compute with confirmed release and no pending file upload. Cancels a pending schedule, stops storage billing for the current saved files and releases the name and team workspace slot. Past sessions, charges and admitted workloads remain. Files pinned by an existing export or workload remain until their ownership ends. Reuse the same Idempotency-Key after an uncertain response.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Saved workspace identifier."
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Stable retry key for this exact deletion."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace deleted or original deletion replayed",
+            "headers": {
+              "Idempotent-Replayed": {
+                "description": "true when this is the saved response for the same retry key.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "deleted",
+                    "deleted_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "deleted_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace is unknown, belongs to another team or was deleted with a different retry key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "workspace_active requires compute to stop and saving to finish. workspace_transfer_pending requires the pending upload to finish or be discarded. idempotency_conflict requires the original request and key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, rate limits, invalid retry keys and transient errors apply.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "operationId": "updateResearchWorkspaceConfiguration",
         "summary": "Change settings for the next workspace session",

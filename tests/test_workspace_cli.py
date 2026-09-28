@@ -10,7 +10,7 @@ import pytest
 
 import nodus
 from nodus import cli
-from test_gpu_workspaces import BASE, CAPABILITIES, CREATING, RECEIPT, RUNNING, SSH, STOPPED, STOPPING
+from test_gpu_workspaces import BASE, CAPABILITIES, CREATING, DELETED, RECEIPT, RUNNING, SSH, STOPPED, STOPPING
 
 
 def client_factory(handler):
@@ -191,3 +191,118 @@ def test_workspace_cli_new_has_no_hours_budget_or_editor_flags(flag):
     help_text = cli.build_parser()._subparsers._group_actions[0].choices["workspace"] \
         ._subparsers._group_actions[0].choices["new"].format_help()
     assert flag[0] not in help_text
+
+
+@pytest.mark.parametrize("answer,deleted", [("kernel-lab", True), ("yes", False), ("no", False), ("", False)])
+def test_workspace_delete_requires_confirmation(monkeypatch, capsys, answer, deleted):
+    requests, prompts = [], []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=DELETED if request.method == "DELETE" else STOPPED)
+
+    def confirm(prompt):
+        prompts.append(prompt)
+        return answer
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    monkeypatch.setattr("builtins.input", confirm)
+    assert cli.main(["workspace", "delete", "ws_kernel"]) == 0
+    assert len(prompts) == 1 and "kernel-lab" in prompts[0] and "ws_kernel" in prompts[0]
+    assert "saved files" in prompts[0] and "cannot be undone" in prompts[0] and "Billing" in prompts[0]
+    assert "Type" in prompts[0]
+    assert [r.method for r in requests] == (["GET", "DELETE"] if deleted else ["GET"])
+    out = capsys.readouterr().out
+    assert ("ws_kernel deleted" if deleted else "Cancelled") in out
+    if deleted:
+        assert requests[-1].content == b"" and requests[-1].headers["Idempotency-Key"]
+
+
+def test_workspace_delete_cannot_confirm_at_end_of_input(monkeypatch, capsys):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=STOPPED)
+
+    def confirm(_):
+        raise EOFError
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    monkeypatch.setattr("builtins.input", confirm)
+    assert cli.main(["workspace", "delete", "ws_kernel"]) == 2
+    assert "--yes" in capsys.readouterr().err
+    assert [r.method for r in requests] == ["GET"]
+
+
+def test_workspace_delete_by_name_with_yes_skips_prompt_and_uses_resolved_id(monkeypatch, capsys):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path == BASE + "/kernel-lab":
+            return httpx.Response(404, json={"error": "not_found"})
+        if request.url.path == BASE:
+            return httpx.Response(200, json={"workspaces": [STOPPED], "next_cursor": ""})
+        assert request.method == "DELETE" and request.url.path == BASE + "/ws_kernel"
+        return httpx.Response(200, json=DELETED)
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("--yes must not prompt"))
+    assert cli.main(["workspace", "delete", "kernel-lab", "--yes", "--idempotency-key", "delete-intent"]) == 0
+    assert capsys.readouterr().out.strip() == "ws_kernel deleted"
+    assert requests[-1].headers["Idempotency-Key"] == "delete-intent"
+
+
+def test_workspace_delete_replays_by_id_after_the_workspace_disappears(monkeypatch, capsys):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.method == "DELETE":
+            assert request.url.path == BASE + "/ws_kernel"
+            return httpx.Response(200, json=DELETED, headers={"Idempotent-Replayed": "true"})
+        if request.url.path == BASE:
+            return httpx.Response(200, json={"workspaces": [], "next_cursor": ""})
+        return httpx.Response(404, json={"error": "not_found"})
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "delete", "ws_kernel", "--yes", "--idempotency-key", "delete-intent"]) == 0
+    assert capsys.readouterr().out.strip() == "ws_kernel deleted"
+    assert requests[-1].headers["Idempotency-Key"] == "delete-intent"
+
+
+def test_workspace_delete_sanitizes_confirmation_and_reports_uncertain_retry(monkeypatch, capsys):
+    prompts, requests = [], []
+
+    def handler(request):
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json={**STOPPED, "name": "lab\x1b[2J\nforged"})
+        return httpx.Response(502, json={"error": "bad_gateway"})
+
+    def confirm(prompt):
+        prompts.append(prompt)
+        return "lab\x1b[2J\nforged"
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    monkeypatch.setattr("builtins.input", confirm)
+    assert cli.main(["workspace", "delete", "ws_kernel"]) == 2
+    assert "\x1b" not in prompts[0] and "\n" not in prompts[0]
+    err = capsys.readouterr().err
+    assert "outcome unknown" in err and "workspace ID ws_kernel" in err
+    assert "--idempotency-key=" + requests[-1].headers["Idempotency-Key"] in err
+
+
+@pytest.mark.parametrize("key", ["", "two words", "two\nlines"])
+def test_workspace_delete_rejects_invalid_keys_before_lookup(monkeypatch, capsys, key):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=DELETED if request.method == "DELETE" else STOPPED)
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "delete", "ws_kernel", "--yes", "--idempotency-key", key]) == 2
+    assert "idempotency" in capsys.readouterr().err.lower()
+    assert requests == []
