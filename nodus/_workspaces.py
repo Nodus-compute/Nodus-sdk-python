@@ -8,6 +8,7 @@ import re
 import time
 import uuid
 import warnings
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,19 @@ def _key(value: str) -> str:
 
 def _fresh_key() -> str:
     return f"nodus-{uuid.uuid4()}"
+
+
+def _receipt_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)", value,
+        flags=re.ASCII,
+    ) is None:
+        return False
+    try:
+        datetime.fromisoformat(value[:19])
+    except ValueError:
+        return False
+    return True
 
 
 _GPU_SHORTHAND = re.compile(r"^(?P<model>.*?)(?:[-_ ]?(?P<memory>\d{1,4})\s*GB?)?(?::(?P<count>\d+))?$", re.IGNORECASE)
@@ -412,7 +426,9 @@ class _WorkspaceState:
 
     def _confirm_deleted(self, receipt: Any) -> dict[str, Any]:
         """The server's receipt for deleting this workspace. Anything else leaves the outcome unknown."""
-        if not isinstance(receipt, dict) or receipt.get("id") != self.id or receipt.get("deleted") is not True:
+        if (not isinstance(receipt, dict) or receipt.get("id") != self.id or receipt.get("deleted") is not True
+                or not isinstance(receipt.get("name"), str) or not receipt["name"].strip()
+                or not _receipt_timestamp(receipt.get("deleted_at"))):
             raise APIError("Workspace delete response is invalid", body=receipt if isinstance(receipt, dict) else None)
         self.deleted = True
         return receipt

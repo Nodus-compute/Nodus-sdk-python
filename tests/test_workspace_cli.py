@@ -256,20 +256,39 @@ def test_workspace_delete_by_name_with_yes_skips_prompt_and_uses_resolved_id(mon
 
 def test_workspace_delete_replays_by_id_after_the_workspace_disappears(monkeypatch, capsys):
     requests = []
+    workspace_id = "ws_7078015a-0483-46e7-8a88-23dc9e9d860f"
 
     def handler(request):
         requests.append(request)
         if request.method == "DELETE":
-            assert request.url.path == BASE + "/ws_kernel"
-            return httpx.Response(200, json=DELETED, headers={"Idempotent-Replayed": "true"})
+            assert request.url.path == BASE + "/" + workspace_id
+            return httpx.Response(200, json={**DELETED, "id": workspace_id}, headers={"Idempotent-Replayed": "true"})
         if request.url.path == BASE:
             return httpx.Response(200, json={"workspaces": [], "next_cursor": ""})
         return httpx.Response(404, json={"error": "not_found"})
 
     monkeypatch.setattr(cli, "Client", client_factory(handler))
-    assert cli.main(["workspace", "delete", "ws_kernel", "--yes", "--idempotency-key", "delete-intent"]) == 0
-    assert capsys.readouterr().out.strip() == "ws_kernel deleted"
+    assert cli.main(["workspace", "delete", workspace_id, "--yes", "--idempotency-key", "delete-intent"]) == 0
+    assert capsys.readouterr().out.strip() == workspace_id + " deleted"
     assert requests[-1].headers["Idempotency-Key"] == "delete-intent"
+
+
+@pytest.mark.parametrize("reference", ["kernel-lab", "lab.train", "ws_kernel", "ws_not-a-uuid"])
+def test_workspace_delete_rejects_missing_references_without_the_server_id_format(monkeypatch, capsys, reference):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(409, json={"error": "idempotency_conflict"})
+        if request.url.path == BASE:
+            return httpx.Response(200, json={"workspaces": [], "next_cursor": ""})
+        return httpx.Response(404, json={"error": "not_found"})
+
+    monkeypatch.setattr(cli, "Client", client_factory(handler))
+    assert cli.main(["workspace", "delete", reference, "--yes", "--idempotency-key", "delete-intent"]) == 2
+    assert "original workspace ID" in capsys.readouterr().err
+    assert all(request.method == "GET" for request in requests)
 
 
 def test_workspace_delete_sanitizes_confirmation_and_reports_uncertain_retry(monkeypatch, capsys):

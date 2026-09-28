@@ -146,6 +146,8 @@ with nodus.Client() as client:
 ```
 
 The receipt contains `id`, `name`, `deleted` and `deleted_at`.
+An incomplete or malformed receipt leaves the outcome uncertain and preserves
+the request key for a retry.
 `client.workspaces.delete(workspace_id)` deletes by ID without fetching a
 handle first. Both forms accept `idempotency_key`, and the asynchronous client
 offers the same methods with `await`. A deleted handle has `deleted=True` and
@@ -163,10 +165,17 @@ and key, even if the workspace has disappeared from lists. A successful replay
 returns the original receipt. Use a new handle or the collection method for a
 replay after an earlier call already confirmed deletion. Active compute or a
 pending upload raises `WorkspaceNotReadyError` without deleting anything.
+If lookup fails, the CLI accepts only an ID in Nodus's `ws_UUID` format for a
+replay. Use the original workspace ID printed in the uncertain-outcome message.
+A name that resembles an ID cannot recover the original target.
 
 The MCP tool `delete_workspace` requires `workspace_id` and `idempotency_key`.
 It is marked destructive and instructs the agent to confirm the exact workspace
 and permanent file deletion with the user before calling it.
+The MCP client owns that approval step and must ask before invoking the tool.
+Destructive annotations are advisory metadata, not an independent approval
+check in the Nodus MCP server. Keep deletion subject to your client's tool
+approval controls.
 
 ## Storage volumes for sandboxes
 

@@ -624,7 +624,7 @@ async def test_workspace_tools_follow_the_published_contract_and_routes(api):
 
 
 @pytest.mark.asyncio
-async def test_workspace_delete_is_a_confirmed_destructive_keyed_operation(api):
+async def test_workspace_delete_advertises_client_confirmation_and_destructive_keyed_operation(api):
     server, requests, responses = api
     receipt = {"id": "ws_lab", "name": "lab", "deleted": True, "deleted_at": "2026-09-28T10:00:00Z"}
     async with create_connected_server_and_client_session(server) as session:

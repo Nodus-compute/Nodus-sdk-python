@@ -655,6 +655,10 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
         except NotFoundError:
             if args.workspace_cmd != "delete" or not args.idempotency_key:
                 raise
+            if re.fullmatch(r"ws_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", args.workspace_id) is None:
+                raise ValidationError(
+                    "Retry deletion with the original workspace ID printed by the failed attempt "
+                    "and the same --idempotency-key. A missing name cannot identify a deleted workspace.") from None
             from ._workspaces import Workspace
             workspace = Workspace(client, args.workspace_id)
         if args.workspace_cmd == "delete":

@@ -922,7 +922,14 @@ def test_transport_retries_of_a_delete_reuse_one_key(async_mode, monkeypatch):
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
 @pytest.mark.parametrize("receipt", [{}, {"id": "ws_other", "deleted": True}, {"id": "ws_kernel", "deleted": False},
-                                     {"id": "ws_kernel"}, [DELETED]])
+                                     {"id": "ws_kernel"}, [DELETED], {"id": "ws_kernel", "deleted": True},
+                                     {key: value for key, value in DELETED.items() if key != "name"},
+                                     {key: value for key, value in DELETED.items() if key != "deleted_at"},
+                                     *[{**DELETED, "name": name} for name in (None, "", " ", 3)],
+                                     *[{**DELETED, "deleted_at": when} for when in (
+                                         None, "", 3, "2026-09-28", "2026-09-28T10:00:00", "not-a-date",
+                                         "2026-02-30T10:00:00Z", "2026-09-28T10:00:00+12:99",
+                                         "2026-09-28T10:00:00+01:1\u0662")]])
 def test_a_receipt_that_does_not_confirm_this_delete_is_uncertain(async_mode, receipt):
     server = Server({("DELETE", BASE + "/ws_kernel"): (200, receipt)})
 
@@ -934,6 +941,14 @@ def test_a_receipt_that_does_not_confirm_this_delete_is_uncertain(async_mode, re
         assert raised.value.body["idempotency_key"] == server.requests[-1][3]["idempotency-key"]
 
     _delete_through(async_mode, server, action)
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("deleted_at", ["2026-09-28T10:00:00.123456789Z", "2026-09-28T15:30:00+05:30"])
+def test_delete_preserves_the_servers_timestamp(async_mode, deleted_at):
+    receipt = {**DELETED, "deleted_at": deleted_at}
+    server = Server({("DELETE", BASE + "/ws_kernel"): (200, receipt)})
+    assert _delete_through(async_mode, server, lambda client: client.workspaces.delete("ws_kernel")) == receipt
 
 
 @pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
