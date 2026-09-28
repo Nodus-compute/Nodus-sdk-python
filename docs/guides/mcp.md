@@ -283,8 +283,9 @@ permissions. Local connections use your saved SDK credential.
 `create_workspace` takes a `workspace` object with `name`, `gpu`, `gpu_count`
 and `gpu_memory_gb`, plus optional `environment` and `size_gb`, which defaults
 to the deployment's project capacity. Every workspace serves the editor and the
-notebook, and SSH once `ssh_authorized_key` holds a public key. Compute runs until `stop_workspace` or until account credit
-runs out. `stop_workspace` needs the `session_id` shown by `get_workspace`.
+notebook, and SSH once `ssh_authorized_key` holds a public key. Compute runs
+until `stop_workspace` or until account credit runs out. `stop_workspace`
+needs the `session_id` shown by `get_workspace`.
 `run_in_workspace` takes a `job` with `command` and a required `budget_usd`.
 Starting returns before the tools are ready, so poll `get_workspace` until the
 wanted connection is true before asking for a connection.

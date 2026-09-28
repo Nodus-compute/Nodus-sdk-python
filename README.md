@@ -180,8 +180,9 @@ files as a workspace instead.
 import nodus
 
 with nodus.Client() as client:
-    gpu = client.launch("H100")
+    gpu = client.launch("H100", wait=False)
     try:
+        gpu.wait_until_ready()
         print(gpu.ssh()["command"])
     finally:
         gpu.stop()
