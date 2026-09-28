@@ -6,6 +6,7 @@
 - Add `rl=RLSetup(...)` to `run()`. Mode, environment and task-count rules are checked before submission. `extra={"rl": ...}` still works.
 - Add `client.rl.list_environments()`, returning the RL catalog with the examples you can run today and what was measured by running them. `RLExample.run_arguments()` supplies everything `run()` needs.
 - Add `client.rl.run_example(environment_id, example_id, idempotency_key=...)`, which starts a catalog example in one request. Examples now carry an `id` and the `peak_memory_gb` they were measured with, which `run_arguments()` requests.
+- Add `client.rl.summary(workload_id)`, returning each phase's scored attempts, pass rate and mean reward, and whether the baseline and evaluation scores are a like-for-like comparison, as the console's run page shows them. Add `client.rl.get_environment()` and `client.rl.example_workload()`, which returns the workload an example would submit without starting it.
 - `run()` refuses output names the server cannot store. Names must be 1 to 64 lowercase letters, digits, dots, underscores or hyphens, not starting with a dot, a hyphen or `nodus.`. Such names were accepted before and the run's results were refused at upload, after the work had run.
 
 ## 0.8.0

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "workload_id": "wl_docs",
+  "phases": {
+    "baseline": {
+      "attempts": 64,
+      "scored": 64,
+      "passed": 51,
+      "failed": 13,
+      "errors": 0,
+      "in_progress": 0,
+      "pass_rate": 0.796875,
+      "mean_reward": 0.796875,
+      "reward_samples": 64
+    },
+    "training": {
+      "attempts": 0,
+      "scored": 0,
+      "passed": 0,
+      "failed": 0,
+      "errors": 0,
+      "in_progress": 1,
+      "pass_rate": null,
+      "mean_reward": null,
+      "reward_samples": 0
+    },
+    "evaluation": {
+      "attempts": 64,
+      "scored": 64,
+      "passed": 56,
+      "failed": 8,
+      "errors": 0,
+      "in_progress": 0,
+      "pass_rate": 0.875,
+      "mean_reward": 0.875,
+      "reward_samples": 64
+    }
+  },
+  "comparison": {
+    "baseline_pass_rate": 0.796875,
+    "evaluation_pass_rate": 0.875,
+    "change_pp": 7.8125,
+    "resolution_pp": 1.5625,
+    "comparable": true,
+    "measurable": true,
+    "reason": "comparable",
+    "message": ""
+  },
+  "dropped_events": 0,
+  "truncated": false
+}

@@ -26,6 +26,7 @@ import pytest
 from test_agent_steps import journal_socket
 
 ROOT = Path(__file__).parents[1]
+RL_SUMMARY = json.loads((Path(__file__).parent / "fixtures" / "rl-summary.json").read_text())
 RL_CATALOG = json.loads((Path(__file__).parent / "fixtures" / "rl-environments.json").read_text())
 DATA = b'{"sum": 6, "sum_of_squares": 385, "gpu": "Synthetic GPU"}\n'
 DIGEST = hashlib.sha256(DATA).hexdigest()
@@ -170,6 +171,8 @@ def docs_api(monkeypatch):
                 return self.reply({"assets": [], "upload_idempotency": True, "max_import_bytes": 1048576})
             if path == "/v1/rl-environments":
                 return self.reply(RL_CATALOG)
+            if path == "/v1/workloads/wl_docs/rl-summary":
+                return self.reply(RL_SUMMARY)
             if path == "/v1/workloads":
                 return self.reply({"workloads": [row]})
             if path == "/v1/workloads/wl_docs":

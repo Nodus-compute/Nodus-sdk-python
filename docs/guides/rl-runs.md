@@ -48,15 +48,46 @@ Every RL run is an ordinary workload, so the workload endpoints apply to it.
 | Step | HTTP | Python |
 | --- | --- | --- |
 | List environments and examples | `GET /v1/rl-environments` | `client.rl.list_environments()` |
+| Read one environment | `GET /v1/rl-environments/{environment}` | `client.rl.get_environment(...)` |
+| See an example's run before starting it | `GET /v1/rl-environments/{environment}/examples/{example}/workload` | `client.rl.example_workload(...)` |
 | Start an example | `POST /v1/rl-environments/{environment}/examples/{example}/runs` | `client.rl.run_example(...)` |
 | Start your own RL code | `POST /v1/workloads` with an `rl` field | `client.run(..., rl=nodus.RLSetup(...))` |
 | Check status | `GET /v1/workloads/{id}` | `workload.refresh()` or `workload.wait()` |
-| Read scored tasks | `GET /v1/workloads/{id}/rl-events` | `client.rl.events(workload_id)` |
+| See how it did | `GET /v1/workloads/{id}/rl-summary` | `client.rl.summary(workload_id)` |
+| Read each scored task | `GET /v1/workloads/{id}/rl-events` | `client.rl.events(workload_id)` |
 | Read logs | `GET /v1/workloads/{id}/logs` | `workload.logs()` |
 | List and download results | `GET /v1/workloads/{id}/outputs` | `workload.download()` |
 | Stop | `POST /v1/workloads/{id}/cancel` | `workload.cancel()` |
 
 The [OpenAPI specification](../../openapi/openapi.yaml) describes every field.
+
+## See how a run did
+
+`client.rl.summary()` returns what the console's run page shows. Each phase
+has its scored attempts, pass rate and mean reward. The comparison says
+whether the baseline and evaluation scores can be compared at all:
+
+```python
+def report(client, workload_id):
+    summary = client.rl.summary(workload_id)
+    if summary.dropped_events or summary.truncated:
+        print("Some task events were not stored, so these results may be incomplete")
+    for phase, result in summary.phases.items():
+        print(phase, result.passed, "of", result.scored, "passed")
+    comparison = summary.comparison
+    if comparison is None:
+        print("No before-and-after comparison yet")
+    elif not comparison.measurable:
+        print(comparison.message)
+    else:
+        print(f"{comparison.change_pp:+.1f} pp, smallest measurable step {comparison.resolution_pp:.1f} pp")
+```
+
+`comparable` is false when baseline and evaluation scored different numbers of
+attempts or different tasks, or when some task events were not stored.
+`measurable` is also false when every attempt passed, or every attempt
+failed, in both. The figures come from the task
+events the run reported and do not establish general model improvement.
 
 ## Find an example
 
@@ -77,8 +108,10 @@ def show_examples(client):
 after, and `evaluate` when it only scores the model. An environment with an
 empty `examples` list is listed for reference and has no runnable command yet.
 
-To change an example before running it, such as its GPU, start from
-`run_arguments()`. It returns the command, image, result files, GPU memory and
+To see exactly what an example would submit without starting anything, call
+`client.rl.example_workload(environment_id, example_id)`. It returns the
+workload `POST /v1/workloads` accepts. To change an example before running
+it, such as its GPU, start from `run_arguments()`. It returns the command, image, result files, GPU memory and
 RL details that `run()` needs:
 
 ```python
