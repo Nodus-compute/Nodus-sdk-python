@@ -3830,7 +3830,18 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Combined verified logical saved-file payload, excluding metadata, requests and retained recovery copies."
+            "description": "Verified saved-file payload covered by the current policy. Earlier research storage is reported separately in legacy_retained_bytes."
+          },
+          "legacy_retained_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Saved research payload retaining earlier pricing, excluded from the current policy allowance."
+          },
+          "legacy_charged_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Lifetime posted research storage charges under the earlier policy."
           },
           "billable_bytes": {
             "type": "integer",
@@ -3846,7 +3857,7 @@
           "charged_usd": {
             "type": "number",
             "minimum": 0,
-            "description": "Lifetime posted account saved-file charges, separate from compute."
+            "description": "Lifetime posted storage charges under the current policy, separate from compute and legacy_charged_usd."
           },
           "status": {
             "type": "string",
@@ -21528,7 +21539,7 @@
         "tags": [
           "Managed models"
         ],
-        "description": "Requires a Nodus API key or console session. Returns only models explicitly granted to this account. Accounts without configured access receive enabled false and an empty models array. Discovery does not start compute or make a model call. Prices are customer USD micros per million tokens and include the service markup. Managed model access does not install agent harnesses or inject credentials into hosted workers.",
+        "description": "Requires a Nodus API key or console session. Returns only qualified Messages models explicitly granted to this account. Accounts without configured access receive enabled false and an empty models array. Discovery does not start compute or make a model call. Prices are customer USD micros per million tokens and include the service markup. Managed model access does not install agent harnesses or inject credentials into hosted workers.",
         "parameters": [],
         "responses": {
           "200": {
@@ -21801,11 +21812,11 @@
     "/v1/managed-models/chat/completions": {
       "post": {
         "operationId": "createManagedModelChatCompletion",
-        "summary": "Generate a nonstreaming managed chat completion",
+        "summary": "Recover a previously accepted managed chat completion receipt",
         "tags": [
           "Managed models"
         ],
-        "description": "Requires a Nodus API key or console session and an account-qualified catalog model. No customer model-provider key is required. Send JSON without query parameters or Content-Encoding. New requests reserve prepaid Nodus credits under account spending limits before dispatch. The reservation covers the full qualified input window and requested output limit, so it can exceed the final charge. Unused credit is released after settlement. Model usage is billed separately from compute and saved storage. Every logical call requires a stable Idempotency-Key. Preserve the key and body after an uncertain response. An accepted replay returns 409 with the existing billing receipt and never executes again or replays the answer. A different body using the same key returns an idempotency conflict. Persist received answers in your application. Unknown outcomes retain reserved funds and do not authorize a new-key retry. This endpoint does not install agent harnesses or inject credentials into hosted workers.",
+        "description": "This compatibility route only recovers previously accepted receipts. New model calls must use a catalog-qualified Messages model through /v1/managed-models/messages. Requires a Nodus API key or console session. Reuse the original Idempotency-Key and request body to receive HTTP 409 with the existing receipt. Replay does not execute again or return the answer body. A different body or protocol with the same key returns an idempotency conflict. Unknown outcomes retain reserved credits for reconciliation.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -21831,30 +21842,6 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Model response received and its verified usage charge committed.",
-            "headers": {
-              "X-Nodus-Request-ID": {
-                "description": "Durable request receipt ID, returned after reservation is accepted.",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Nodus-Price-Version": {
-                "description": "Immutable customer price version used for this request.",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManagedModelCompletionResponse"
-                }
-              }
-            }
-          },
           "400": {
             "description": "Missing or invalid stable idempotency key, unsupported request format, or request outside the bounded nonstreaming text/function-tool contract.",
             "content": {
