@@ -32,7 +32,7 @@ It manages the Python runtime and package dependencies for you.
 **1. Sign in once.** Run this in your terminal and complete browser sign-in:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.8.0' nodus login
+uvx --from 'nodus-compute[mcp]==0.9.0' nodus login
 ```
 
 **2. Add Nodus to your MCP client.** In Claude Desktop or Cursor, add this to
@@ -43,7 +43,7 @@ your MCP server configuration and reload the connection:
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.8.0", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.9.0", "nodus-mcp"]
     }
   }
 }
@@ -52,7 +52,7 @@ your MCP server configuration and reload the connection:
 For Codex, run this instead of editing JSON:
 
 ```sh
-codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.8.0' nodus-mcp
+codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.9.0' nodus-mcp
 ```
 
 The server uses your saved sign-in. There is no API key to paste into the
@@ -66,7 +66,7 @@ without starting paid compute. Your local client should discover nine tools.
 Install the MCP extra and reuse your existing Nodus sign-in:
 
 ```sh
-pip install --upgrade 'nodus-compute[mcp]==0.8.0'
+pip install --upgrade 'nodus-compute[mcp]==0.9.0'
 nodus login
 ```
 
@@ -280,13 +280,14 @@ permissions. Local connections use your saved SDK credential.
 | `run_in_workspace`, `list_workspace_workloads` | Run a command against the saved project as a workload with its own budget |
 | `list_workspace_sessions`, `schedule_workspace`, `cancel_workspace_schedule` | Read session history and have compute ready by a chosen time |
 
-`create_workspace` takes a `workspace` object with `name`, `gpu`, `gpu_count`,
-`gpu_memory_gb`, `max_hours` and `size_gb`, plus optional `environment`,
-`editor`, `budget_usd`, `repository` and `ref`. `stop_workspace` needs the
-`session_id` shown by `get_workspace`. `run_in_workspace` takes a `job` with
-`command` and a required `budget_usd`. Starting returns before the tools are
-ready, so poll `get_workspace` until the wanted connection is true before
-asking for a connection.
+`create_workspace` takes a `workspace` object with `name`, `gpu`, `gpu_count`
+and `gpu_memory_gb`, plus optional `environment` and `size_gb`, which defaults
+to the deployment's project capacity. Every workspace serves the editor and the
+notebook, and SSH once `ssh_authorized_key` holds a public key. Compute runs until `stop_workspace` or until account credit
+runs out. `stop_workspace` needs the `session_id` shown by `get_workspace`.
+`run_in_workspace` takes a `job` with `command` and a required `budget_usd`.
+Starting returns before the tools are ready, so poll `get_workspace` until the
+wanted connection is true before asking for a connection.
 
 ### Local project and file transfers
 

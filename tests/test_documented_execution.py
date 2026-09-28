@@ -97,8 +97,8 @@ def docs_api(monkeypatch):
         return {"id": "ws_docs", "name": "kernel-lab", "size_gb": 10, "holder_id": None, "saved_at": None,
                 "stored_bytes": None, "last_error": "", "saving_for_termination": False,
                 "billing_status": "metered_subject_to_account_limits",
-                "configuration": {"name": "kernel-lab", "environment": "pytorch-cuda", "editor": "vscode", "gpu": "H100",
-                                  "gpu_count": 1, "gpu_memory_gb": 80, "budget_usd": 0, "max_hours": 4, "size_gb": 10},
+                "configuration": {"name": "kernel-lab", "environment": "pytorch-cuda", "gpu": "H100",
+                                  "gpu_count": 1, "gpu_memory_gb": 80, "size_gb": 10},
                 "configuration_revision": "c" * 64, "storage_revision": 1,
                 "storage_policy_version": "r2-standard-10gb-account-v1",
                 "session": {"id": "sb_session", "state": "ready"} if running else None,
@@ -285,12 +285,12 @@ def docs_api(monkeypatch):
             if self.headers.get("Authorization") != "Bearer nk_docs":
                 return self.reply({"error": "unauthorized"}, 401)
             if path == "/v1/research-workspaces" and payload.get("kind") == "instance":
-                assert payload["gpu"] == "H100" and payload["editor"] == "ssh" and payload["size_gb"] == 0
+                assert payload["gpu"] == "H100" and not {"editor", "max_hours", "size_gb"}.intersection(payload)
                 assert payload["ssh_authorized_key"].startswith("ssh-ed25519 ") and self.headers.get("Idempotency-Key")
-                workspace_state["instance"] = payload
+                workspace_state["instance"] = {**payload, "size_gb": 0}
                 return self.reply(workspace_view(), 201)
             if path == "/v1/research-workspaces":
-                assert payload["gpu"] == "H100" and payload["max_hours"] == 4 and payload["size_gb"] == 10
+                assert payload["gpu"] == "H100" and not {"editor", "max_hours", "budget_usd", "size_gb"}.intersection(payload)
                 return self.reply(workspace_view(), 201)
             if path == "/v1/research-workspaces/ws_docs/start":
                 assert self.headers.get("Idempotency-Key")
@@ -490,20 +490,29 @@ def test_complete_example_programs(script, args, docs_api, tmp_path):
     ["download", "wl_docs"], ["workload", "outputs", "wl_docs"], ["workload", "outputs", "wl_docs", "--reload", "results", "--stage", "main"], ["cancel", "wl_docs"], ["assets"], ["upload", "hello.py"],
     ["sandbox", "new", "--name", "research-agent", "--github-repo", "your-org/private-agent", "--github-ref", "main"],
     ["agent", "deploy", "worker", "--github-repo", "your-org/private-agent", "--github-ref", "main"],
+    ["workspace", "new", "kernel-lab", "--gpu", "H100"], ["launch", "--gpu", "H100"],
 ])
 def test_installed_terminal_commands(args, docs_api, tmp_path):
     from nodus._workload_file import write_workload_file
     if args[0] != "init":
         write_workload_file(tmp_path / "nodus.toml")
     (tmp_path / "hello.py").write_text("print('ready')")
+    env = dict(os.environ)
+    if args[0] == "launch":
+        home = Path(Path.home())
+        (home / ".ssh").mkdir(parents=True, exist_ok=True)
+        (home / ".ssh" / "id_ed25519.pub").write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDocs docs@test\n")
+        env.update(HOME=str(home), USERPROFILE=str(home))
     executable = Path(sysconfig.get_path("scripts")) / ("nodus.exe" if os.name == "nt" else "nodus")
-    result = subprocess.run([str(executable), *args], cwd=tmp_path, capture_output=True, text=True, timeout=20)
+    result = subprocess.run([str(executable), *args], cwd=tmp_path, capture_output=True, text=True, timeout=20, env=env)
     assert result.returncode == 0, result.stderr
     assert "Traceback" not in result.stderr
     assert "\x1b" not in result.stdout
     assert "elapsed" not in result.stderr
     if args[0] == "download":
         assert (tmp_path / "outputs/wl_docs/summarize/result").read_bytes() == DATA
+    if args[0] == "launch":
+        assert "runs until you stop it" in result.stdout and "nodus stop ws_docs" in result.stdout
 
 
 def test_login_saved_credentials_and_logout_in_separate_processes(docs_api, tmp_path):

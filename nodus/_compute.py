@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 from .errors import APIError, NodusError, ValidationError, WorkspaceNotReadyError
-from ._workspaces import (AsyncWorkspace, Workspace, _BASE, _configuration, _default_size_gb, _fresh_key, _key,
-                          _ssh_key, _uncertain, _wait_bounds)
+from ._workspaces import (AsyncWorkspace, Workspace, _BASE, _configuration, _fresh_key, _key, _ssh_key, _uncertain,
+                          _wait_bounds)
 
 _STATES = ("running", "history")
 _TYPES = ("instance", "training", "workspace")
@@ -202,23 +202,19 @@ def default_name(prefix: str, key: str) -> str:
 
 
 def instance_body(gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
-                  environment: str | None, ssh_key: str | None, name: str, max_hours: int) -> dict[str, Any]:
+                  environment: str | None, ssh_key: str | None, name: str) -> dict[str, Any]:
     """A POST /v1/research-workspaces body for an SSH instance with local disk only."""
-    body = _configuration(name, gpu=gpu, gpu_count=gpu_count,
-                          gpu_memory_gb=gpu_memory_gb, environment=environment, editor="ssh", max_hours=max_hours,
-                          size_gb=None, budget_usd=None, ssh_key=ssh_key, cpus=None,
-                          memory_gb=None, disk_gb=disk_gb, repository=None, ref=None, runtime_id=None,
-                          form_factor=None, require_ssh_key=False)
-    return {"kind": "instance", **body, "size_gb": 0}
+    return {"kind": "instance", **workspace_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb,
+                                                  disk_gb=disk_gb, environment=environment, ssh_key=ssh_key,
+                                                  name=name)}
 
 
 def workspace_body(gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
-                   environment: str | None, ssh_key: str | None, name: str, max_hours: int) -> dict[str, Any]:
-    """A POST /v1/research-workspaces body for an SSH workspace that keeps project files."""
+                   environment: str | None, ssh_key: str | None, name: str) -> dict[str, Any]:
+    """A POST /v1/research-workspaces body for a workspace that keeps project files at the server's capacity."""
     return _configuration(name, gpu=gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, environment=environment,
-                          editor="ssh", max_hours=max_hours, size_gb=None, budget_usd=None,
-                          ssh_key=ssh_key, cpus=None, memory_gb=None, disk_gb=disk_gb,
-                          repository=None, ref=None, runtime_id=None, form_factor=None, require_ssh_key=False)
+                          size_gb=None, ssh_key=ssh_key, cpus=None, memory_gb=None, disk_gb=disk_gb,
+                          runtime_id=None, form_factor=None)
 
 
 def _check_gpu(gpu: Any) -> None:
@@ -263,12 +259,12 @@ def _timed_out(machine: Any, error: WorkspaceNotReadyError) -> WorkspaceNotReady
         return error
     return WorkspaceNotReadyError(
         f"{machine.name or machine.id} ({machine.id}) is still running but SSH is not ready yet ({machine.state}). "
-        f"It keeps running until max_hours. Wait with client.workspaces.get({machine.id!r}).wait_until_ready() "
-        "or release it with .stop().", body=machine.raw)
+        f"It keeps running until you stop it. Connect when ready with nodus ssh {machine.id} "
+        f"or release it with client.workspaces.get({machine.id!r}).stop().", body=machine.raw)
 
 
 def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
-           environment: str | None, ssh_key: str | None, name: str | None, max_hours: int, keep_files: bool,
+           environment: str | None, ssh_key: str | None, name: str | None, keep_files: bool,
            wait: bool, timeout_seconds: float, poll_seconds: float, idempotency_key: str | None) -> Workspace:
     _check_gpu(gpu)
     _wait_bounds(poll_seconds, timeout_seconds)
@@ -276,13 +272,10 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb
     ssh_key = _ssh_key(ssh_key) if ssh_key is not None else local_public_key()
     if keep_files:
         body = workspace_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                              environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key),
-                              max_hours=max_hours)
-        body["size_gb"] = _default_size_gb(client.workspaces.capabilities())
+                              environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key))
     else:
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                             environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
-                             max_hours=max_hours)
+                             environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key))
     machine, answered = Workspace(client), {}
     # The server replays a repeated key and body as the original record. Older servers match an instance by name.
     machine._absorb(client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
@@ -299,15 +292,15 @@ def launch(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb
             raise _start_uncertain(machine, error, key) from None
     if wait and (ssh_key is not None or team_has_keys(client)):
         try:
-            machine.wait_until_ready(poll_seconds=poll_seconds, timeout_seconds=timeout_seconds)
+            machine._wait_until("ssh", poll_seconds, timeout_seconds)
         except WorkspaceNotReadyError as error:
             raise _timed_out(machine, error) from None
     return machine
 
 
 async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, gpu_memory_gb: float | None, disk_gb: int,
-                       environment: str | None, ssh_key: str | None, name: str | None, max_hours: int,
-                       keep_files: bool, wait: bool, timeout_seconds: float, poll_seconds: float,
+                       environment: str | None, ssh_key: str | None, name: str | None, keep_files: bool,
+                       wait: bool, timeout_seconds: float, poll_seconds: float,
                        idempotency_key: str | None) -> AsyncWorkspace:
     _check_gpu(gpu)
     _wait_bounds(poll_seconds, timeout_seconds)
@@ -315,13 +308,10 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, g
     ssh_key = _ssh_key(ssh_key) if ssh_key is not None else local_public_key()
     if keep_files:
         body = workspace_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                              environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key),
-                              max_hours=max_hours)
-        body["size_gb"] = _default_size_gb(await client.workspaces.capabilities())
+                              environment=environment, ssh_key=ssh_key, name=name or default_name("workspace", key))
     else:
         body = instance_body(gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
-                             environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key),
-                             max_hours=max_hours)
+                             environment=environment, ssh_key=ssh_key, name=name or default_name("instance", key))
     machine, answered = AsyncWorkspace(client), {}
     machine._absorb(await client._request("POST", _BASE, json=body, idempotency_key=key, headers_out=answered))
     if _replayed_stop(machine, keep_files, answered):
@@ -337,7 +327,7 @@ async def launch_async(client: Any, gpu: str | None, *, gpu_count: int | None, g
             raise _start_uncertain(machine, error, key) from None
     if wait and (ssh_key is not None or await team_has_keys_async(client)):
         try:
-            await machine.wait_until_ready(poll_seconds=poll_seconds, timeout_seconds=timeout_seconds)
+            await machine._wait_until("ssh", poll_seconds, timeout_seconds)
         except WorkspaceNotReadyError as error:
             raise _timed_out(machine, error) from None
     return machine

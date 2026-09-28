@@ -8,16 +8,17 @@ compute when you are done. Saved files survive between sessions.
 import nodus
 
 with nodus.Client() as client:
-    ws = client.workspaces.create("kernel-lab", gpu="H100", max_hours=4)
+    ws = client.workspaces.create("kernel-lab", gpu="H100")
     ws.upload("./project")
-    ws.start().wait_until_ready()
-    print(ws.connect("editor")["url"])
-    job = ws.run("python train.py", budget_usd=5)
-    ws.stop()
+    try:
+        ws.start().wait_until_ready()
+        print(ws.connect("editor")["url"])
+        job = ws.run("python train.py", budget_usd=5)
+    finally:
+        ws.stop()
 ```
 
-`create` saves the configuration and rents nothing. `max_hours` is required
-because the session stops itself after that many hours. Name the GPU the way
+`create` saves the configuration and rents nothing. Name the GPU the way
 you would elsewhere: `gpu="H100"`, `gpu="A100-40GB"`, `gpu="A100-80GB:4"` or
 `gpu="H100:2"`, where the suffix names the memory per GPU and the count on one
 machine. A bare model name is complete for models in the console's GPU
@@ -26,14 +27,19 @@ catalog, such as `H100`, `A100`, `H200`, `B200`, `L40S`, `L4`, `A10`,
 per GPU the console publishes for that model. Other models take the memory in
 the name, as in `V100-16GB`, or `gpu_memory_gb`. `gpu_count` and
 `gpu_memory_gb` remain available as keyword arguments. An explicit count must
-match any count in the GPU name. Omitting both selects one GPU. Project
-storage defaults to the deployment limit reported by
-`client.workspaces.capabilities()`, or pass `size_gb`. Sessions draw on account
-funding without a per-session cap unless you pass `budget_usd`. Use
-`cpus=4, memory_gb=16` instead of `gpu` for a CPU-only workspace.
+match any count in the GPU name. Omitting both selects one GPU. Without
+`size_gb`, the server gives the saved project its deployment's capacity. Use
+`cpus=4, memory_gb=16` instead of `gpu` for a CPU-only workspace. Every
+workspace serves VS Code, JupyterLab and SSH. SSH needs a public key: pass
+`ssh_key` to admit one.
+
+Compute runs until you stop it or your account credit runs out. Sessions draw
+on account credit, and there is no per-session time or spending limit, so the
+example stops compute in `finally` even when a step fails.
 
 `start` returns as soon as compute is requested. `wait_until_ready` polls
-until the configured tool accepts connections and raises
+until the editor and notebook accept connections, or SSH for an instance
+started with `client.launch`, and raises
 `nodus.WorkspaceNotReadyError` if the session stops or fails first. A timeout
 leaves compute running. `ws.state`, `ws.connections`, `ws.session_id` and
 `ws.cost_usd` reflect the last answer, and `ws.refresh()` reads again.

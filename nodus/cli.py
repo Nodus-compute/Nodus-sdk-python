@@ -638,8 +638,8 @@ def _cmd_workspace(args: argparse.Namespace) -> int:
         if args.workspace_cmd == "new":
             workspace = client.workspaces.create(
                 args.name, gpu=args.gpu, gpu_count=args.gpu_count, gpu_memory_gb=args.gpu_memory_gb,
-                environment=args.environment, editor=args.editor, max_hours=args.max_hours, size_gb=args.size_gb,
-                budget_usd=args.budget, ssh_key=Path(args.ssh_key).read_text().strip() if args.ssh_key else None,
+                environment=args.environment, size_gb=args.size_gb,
+                ssh_key=Path(args.ssh_key).read_text().strip() if args.ssh_key else None,
                 cpus=args.cpus, memory_gb=args.memory_gb, disk_gb=args.disk_gb)
             print(_safe_line(workspace.id))
             return 0
@@ -751,7 +751,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
     with Client(base_url=args.base_url) as client:
         with _sandbox_mutation(args.idempotency_key, noun="instance") as key:
             machine = client.launch(args.gpu, gpu_count=args.gpus, disk_gb=args.disk, environment=args.env,
-                                    ssh_key=_read_public_key(args.ssh_key), name=args.name, max_hours=args.hours,
+                                    ssh_key=_read_public_key(args.ssh_key), name=args.name,
                                     keep_files=args.keep_files, wait=False, idempotency_key=key)
         if keyless and not team_has_keys(client):
             print(_safe_line(f"{machine.id} {machine.state}."))
@@ -763,7 +763,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
             return 0
         try:
             try:
-                machine.wait_until_ready(poll_seconds=args.poll_seconds, timeout_seconds=args.timeout)
+                machine._wait_until("ssh", args.poll_seconds, args.timeout)
             except WorkspaceNotReadyError as error:
                 raise _timed_out(machine, error) from None
             connection = machine.ssh()
@@ -772,7 +772,7 @@ def _cmd_launch(args: argparse.Namespace) -> int:
                              f"Check it with nodus ssh {machine.id} or release it with nodus stop {machine.id}."),
                   file=sys.stderr)
             raise
-    print(_safe_line(f"{machine.name} ({machine.id}) is ready. It stops itself after {args.hours} hours."))
+    print(_safe_line(f"{machine.name} ({machine.id}) is ready. It runs until you stop it: nodus stop {machine.id}"))
     print(_safe_line(f"Connect: nodus ssh {_reference(machine)}"))
     print(_safe_line(f"Or run: {connection.get('command', '')}"))
     return 0
@@ -1495,7 +1495,6 @@ Use nodus COMMAND --help for command options.""",
     launch.add_argument("--env", help="software environment, such as pytorch-cuda")
     launch.add_argument("--ssh-key", help="path to an SSH public key for this machine (default ~/.ssh/id_ed25519.pub)")
     launch.add_argument("--name", help="machine name (default instance- and 8 random characters)")
-    launch.add_argument("--hours", type=_positive_integer, default=4, help="stop automatically after this many hours")
     launch.add_argument("--keep-files", action="store_true",
                         help="save project files between sessions as a workspace")
     launch.add_argument("--no-wait", dest="wait", action="store_false", help="return once compute is requested")
@@ -1532,12 +1531,10 @@ Use nodus COMMAND --help for command options.""",
     workspace_new.add_argument("--cpus", type=int, help="CPU-only workspace with this many vCPUs")
     workspace_new.add_argument("--memory-gb", type=float, help="system RAM for a CPU-only workspace")
     workspace_new.add_argument("--environment", help="software environment, such as pytorch-cuda")
-    workspace_new.add_argument("--editor", choices=["vscode", "jupyter", "ssh"], default="vscode")
     workspace_new.add_argument("--ssh-key", help="path to an SSH public key to admit")
-    workspace_new.add_argument("--max-hours", type=_positive_integer, required=True, help="the session stops itself after this many hours")
-    workspace_new.add_argument("--size-gb", type=float, help="project storage, defaulting to the deployment limit")
+    workspace_new.add_argument("--size-gb", type=float,
+                               help="saved project storage in GB, default the deployment's capacity")
     workspace_new.add_argument("--disk-gb", type=int, help="runtime disk from 80 to 2048 GB")
-    workspace_new.add_argument("--budget", type=_positive_cost, default=None, help="optional spending limit per session")
     workspace_sub.add_parser("ls", help="list workspaces with state, ready tool and session cost")
     for action, help_text in (("get", "print the full workspace view"), ("start", "rent compute and restore saved files"),
                               ("stop", "save files and release compute"), ("connect", "print a browser URL for the editor or notebook"),
