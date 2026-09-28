@@ -52,7 +52,7 @@ def test_init_never_overwrites(monkeypatch, tmp_path, capsys):
     assert cli.main(['init']) == 0
     path = tmp_path / 'nodus.toml'
     content = path.read_text()
-    assert 'image' in content and 'budget' in content
+    assert 'image' in content and 'budget' not in content
     assert cli.main(['init']) == 2
     assert path.read_text() == content
     assert 'Error:' in capsys.readouterr().err

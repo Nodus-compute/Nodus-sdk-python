@@ -63,6 +63,14 @@ def format_cost(value: float) -> str:
     return f"${value:.2f}"
 
 
+def workload_cost(workload: Any) -> str:
+    meter = getattr(workload, "meter", None)
+    status = getattr(workload.status, "value", workload.status)
+    if status in ("completed", "failed", "cancelled") and getattr(meter, "charge_state", "") == "estimated":
+        return "Finalizing cost"
+    return format_cost(workload.cost_now_usd)
+
+
 def compute_label(route: Any) -> str:
     if route is None:
         return "Not reported"
@@ -93,7 +101,7 @@ def compute_label(route: Any) -> str:
 
 def workload_rows(workload: Any) -> list[tuple[str, str]]:
     rows = [("Run", clean(workload.id, line=True)), ("Status", status_label(workload.status)),
-            ("Cost", format_cost(workload.cost_now_usd))]
+            ("Cost", workload_cost(workload))]
     rows.append(("Compute", compute_label(workload.route)))
     if workload.route is not None and _number(workload.route.price_usd_hour) and workload.route.price_usd_hour > 0:
         rows.append(("Node hourly price", f"${workload.route.price_usd_hour:.4f}/hour"))

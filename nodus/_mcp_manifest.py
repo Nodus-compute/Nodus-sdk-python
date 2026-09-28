@@ -21,7 +21,15 @@ _LOCAL_OPERATIONS = {
     "upload_project": ("local.project_upload", "sandboxes:write"),
     "upload_sandbox_file": ("local.sandbox_upload", "sandboxes:write"),
     "download_sandbox_file": ("local.sandbox_download", "sandboxes:write"),
+    "upload_workspace_files": ("local.workspace_upload", "workspaces:write"),
+    "download_workspace_files": ("local.workspace_download", "workspaces:read"),
+    "launch_gpu": ("local.compute.launch", "workspaces:write"),
+    "list_compute": ("local.compute.list", "workspaces:read"),
+    "stop_compute": ("local.compute.stop", "workspaces:write"),
+    "add_ssh_key": ("local.ssh_keys.add", "workspaces:write"),
 }
+_KEYED_TRANSFERS = {"upload_project", "upload_sandbox_file", "download_sandbox_file", "upload_workspace_files",
+                    "launch_gpu", "stop_compute"}
 
 
 def register_manifest(server):
@@ -41,8 +49,8 @@ def register_manifest(server):
         local.append(definition)
     for name, (identifier, scope) in _LOCAL_OPERATIONS.items():
         tool = server._tool_manager.get_tool(name)
-        if name in {"upload_project", "upload_sandbox_file", "download_sandbox_file"}:
-            tool.parameters["additionalProperties"] = False
+        tool.parameters["additionalProperties"] = False
+        if name in _KEYED_TRANSFERS:
             tool.parameters["properties"]["idempotency_key"] = {
                 "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[!-~]+$"}
         local.append({"id": identifier, "name": name, "version": "v1", "description": tool.description,

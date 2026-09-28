@@ -103,6 +103,23 @@ def test_readme_links_work_outside_github():
     assert not relative, f'PyPI cannot resolve repository-relative links: {relative}'
 
 
+def test_documented_assistant_turns_accept_caller_stable_request_keys():
+    from types import SimpleNamespace
+    source = (ROOT / 'docs/guides/managed-agents.md').read_text()
+    body, = [body for language, body, _ in _fences(source)
+             if language == 'python' and 'def submit_report(' in body]
+    namespace = {}
+    exec(compile(body, 'managed-agents.md', 'exec'), namespace)
+    calls = []
+    assistant = SimpleNamespace(submit=lambda task, **options: calls.append((task, options)))
+    submit = namespace['submit_report']
+    submit(assistant, 'First report', idempotency_key='report-001')
+    submit(assistant, 'Second report', idempotency_key='report-002')
+    submit(assistant, 'Second report', idempotency_key='report-002')
+    assert [options['idempotency_key'] for _, options in calls] == ['report-001', 'report-002', 'report-002']
+    assert calls[1] == calls[2]
+
+
 def test_marked_first_workload_examples(monkeypatch):
     examples = []
     for path in _documents():
@@ -121,7 +138,7 @@ def test_marked_first_workload_examples(monkeypatch):
         if request.method == "POST" and request.url.path == "/v1/workloads":
             payload = json.loads(request.content)
             assert payload["source"]["command"], "first example must run a command"
-            assert payload["outcome"]["max_cost_usd"] > 0, "first example needs a budget"
+            assert "max_cost_usd" not in payload.get("outcome", {}), "first example must not invent a cap"
             return httpx.Response(202, json={"id": "wl_docs", "workload_id": "wl_docs", "status": "accepted", "revision": 1})
         if request.method == "GET" and request.url.path == "/v1/workloads/wl_docs":
             return httpx.Response(200, json={"id": "wl_docs", "status": "completed", "revision": 2, "spend_usd": 0.01, "meter": {"total_now_usd": 0.01}})

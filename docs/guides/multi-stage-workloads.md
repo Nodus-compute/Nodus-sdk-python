@@ -9,7 +9,7 @@ Save the [complete Python example](../../examples/multi_stage.py) as `multi_stag
 in your current directory. Example scripts are not installed by pip. Then run:
 
 ```bash
-python multi_stage.py --submission-id pipeline-001 --budget 10
+python multi_stage.py --submission-id pipeline-001
 ```
 
 The first stage writes `numbers.json`. The second reads the resolved upstream

@@ -38,7 +38,7 @@ def test_installed_wheel_cli_uses_the_same_isolated_environment(monkeypatch, tmp
 
     def metadata(command, **kwargs):
         scripts = Path(command[0]).parent
-        return json.dumps({'version': '0.7.0', 'module': str(scripts.parent / 'nodus' / '__init__.py')})
+        return json.dumps({'version': '0.7.1', 'module': str(scripts.parent / 'nodus' / '__init__.py')})
 
     monkeypatch.setattr(module.subprocess, 'run', run)
     monkeypatch.setattr(module.subprocess, 'check_output', metadata)

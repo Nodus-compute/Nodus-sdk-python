@@ -10,15 +10,13 @@ Use the setup skill if tools are missing or authentication fails.
 
 ## Submit
 
-Use `submit_workload` only for a workload the user has authorized, with an
-explicit spending limit. Reuse authorization already given for that workload.
-Ask for a missing budget rather than inventing one. Preparing a workload or
+Use `submit_workload` only for a workload the user has authorized. Reuse authorization already given for that workload.
+Customer spending limits are not required or enforced. Preparing a workload or
 checking the connection does not require launching paid compute.
 
 The `workload` argument is an HTTP API request object. It is not the keyword
-arguments to Python `client.run()`. The spending limit is
-`outcome.max_cost_usd`. Require a positive finite amount. Never treat zero or
-an omitted limit as permission for a free run. Consult the
+arguments to Python `client.run()`. Customer spending limits are not enforced. Legacy `outcome.max_cost_usd`
+is accepted for compatibility. An omitted limit does not make execution free. Consult the
 [public OpenAPI schema](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/openapi/openapi.yaml)
 and [workload parameters](https://nodus-compute.ai/docs/reference/parameters/)
 for the image, command, GPU requirements and output configuration.
@@ -28,10 +26,11 @@ Inspect the project's existing command, image, dependency files and declared
 outputs. Preserve an existing workload file. If code is not in an image or an
 uploaded source asset, explain the required packaging before submission. Do not
 claim Nodus uploads the current directory automatically. Ask only for missing
-requirements, particularly the budget and data or code access.
+requirements, including data and code access.
 
 Prepare the complete HTTP request and call `validate_workload` when available.
-Show the command, image, resources, output paths and maximum spend for review.
+Show the command, image, resources and output paths for review. Explain that
+usage is billed to the account without a spending cap.
 Reuse explicit authorization the user already gave for that request. Validation
 starts no compute and is not a price quote or a capacity reservation.
 
@@ -78,4 +77,4 @@ without claiming cleanup is complete from the initial response alone.
 
 An MCP result with `isError: true` is a failure even when the transport worked.
 Report the error and a relevant next step. Do not silently change the user's
-budget, command or resource requirements to make a failed request succeed.
+command or resource requirements to make a failed request succeed.

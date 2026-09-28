@@ -1613,7 +1613,7 @@ def test_uncapped_guidance_is_interactive_without_source_warning(monkeypatch, ca
         warnings.simplefilter("always")
         build_payload(model="x", command=["a"])
     assert not seen
-    assert "No per-run budget" in capsys.readouterr().err
+    assert not capsys.readouterr().err
 
 
 def test_uncapped_guidance_keeps_redirected_programs_quiet(capsys):

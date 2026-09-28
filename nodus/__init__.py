@@ -9,7 +9,6 @@ Upload local code explicitly or include it in the selected container image.
         workload = client.run(
             image="pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
             command=["python", "-c", "import torch\nprint(torch.cuda.get_device_name(0))"],
-            budget=5,
         )
         print(workload.id)
         done = workload.wait()
@@ -38,13 +37,28 @@ from pathlib import Path
 from ._freeze import WorkloadFreeze
 from ._outputs import download_path, verified_file, output_destinations
 from ._assets import Asset, Assets, AsyncAssets
+from ._rl_setup import RLSetup
+from ._rl_events import (
+    EpisodeScore,
+    EventValidationError,
+    RawTraceFields,
+    RLEventEmitter,
+)
 from ._rl import (
+    RLComparison,
+    RLEnvironment,
+    RLExample,
+    RLPhaseSummary,
+    RLSummary,
     AsyncRL, RL, RLRecipe, RLRunPreview, RLEvent, RLEventRow, RLEventPage,
     RLGradingReceipt, RLGradingResults,
 )
 from ._secrets import Secrets, AsyncSecrets
 from ._connections import Connections, AsyncConnections
-from ._workspaces import Workspaces, AsyncWorkspaces
+from ._workspaces import Workspaces, AsyncWorkspaces, Workspace, AsyncWorkspace
+from ._compute import Compute, AsyncCompute
+from ._ssh_keys import SSHKeys, AsyncSSHKeys
+from ._volumes import Volumes, AsyncVolumes
 from ._operations import Operations, AsyncOperations, OperationDefinition, OperationCatalog, WorkloadPage, WorkloadValidation, RunDraft, RunDraftValues, RunDraftPatch
 
 from ._pool_predict import PredictSubscription, ForecastPoint, ForecastQueue, ForecastSeries, ForecastCalibration, PoolForecastSnapshot, PoolForecast, PoolRecommendation, PoolRecommendations, RecommendationOutcome
@@ -89,6 +103,7 @@ from .errors import (
     SignatureError,
     SpendCheckUnavailableError,
     ValidationError,
+    WorkspaceNotReadyError,
     error_from_response,
     asset_id_from_error,
 )
@@ -129,6 +144,16 @@ __all__ = [
     "AsyncRL",
     "RLRecipe",
     "RLRunPreview",
+    "RLSetup",
+    "RLComparison",
+    "RLEnvironment",
+    "RLExample",
+    "RLPhaseSummary",
+    "RLSummary",
+    "RLEventEmitter",
+    "EpisodeScore",
+    "RawTraceFields",
+    "EventValidationError",
     "RLEvent",
     "RLEventRow",
     "RLEventPage",
@@ -172,6 +197,17 @@ __all__ = [
     "Secrets",
     "AsyncSecrets",
     "Sandbox",
+    "Workspace",
+    "Compute",
+    "AsyncCompute",
+    "SSHKeys",
+    "AsyncSSHKeys",
+    "AsyncWorkspace",
+    "Workspaces",
+    "AsyncWorkspaces",
+    "Volumes",
+    "AsyncVolumes",
+    "WorkspaceNotReadyError",
     "SandboxExec",
     "AsyncSandboxes",
     "AsyncSandbox",
@@ -513,10 +549,12 @@ def _redact(key: str) -> str:
     return f"{key[:6]}...{key[-4:]}" if len(key) > 12 else "***"
 
 
-def _headers(api_key: str) -> dict[str, str]:
+def _headers(api_key: str, client: str | None = None) -> dict[str, str]:
+    from . import _client_identity
     return {
         "Authorization": f"Bearer {api_key}",
         "User-Agent": f"nodus-python/{__version__}",
+        _client_identity.HEADER: _client_identity.identify(client or _client_identity.current()),
     }
 
 
@@ -594,14 +632,15 @@ class _WorkloadState:
 
     @property
     def cost_now_usd(self) -> float:
-        """What this workload has cost as of the last read.
+        """Return the fixed lifetime compute charge when final, otherwise an estimate.
 
-        ``meter.settled_usd`` counts only the current billing period and
-        ``spend_usd`` lags a settling lease, so what has been charged is the
-        larger of the two. ``meter.accruing_usd`` is open leases' money on top.
+        The pending estimate includes unposted usage. Check
+        ``meter.charge_state`` to distinguish pending metered costs from final.
         """
         if self.meter is None:
             return self.spend_usd
+        if self.meter.final_charge_usd is not None:
+            return self.meter.final_charge_usd
         return max(self.spend_usd, self.meter.settled_usd) + self.meter.accruing_usd
 
     @property
@@ -876,6 +915,7 @@ class Client(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "Workload":
@@ -884,8 +924,7 @@ class Client(_Transport):
         Returns as soon as the workload is accepted. It is not yet placed. Call
         ``client.wait(wl.id)`` to block until it reaches a terminal state.
 
-        ``budget`` is cost to completion in USD, and omitting it leaves the run
-        capped only by the account. ``finish_by`` takes a datetime or RFC3339
+        ``budget`` is a deprecated compatibility field and does not limit spending. ``finish_by`` takes a datetime or RFC3339
         text. ``extra`` is merged into the payload for a field the control plane
         models and this SDK version does not. Any other keyword is refused
         rather than sent, because the server drops what it does not recognise.
@@ -923,6 +962,7 @@ class Client(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )
@@ -943,11 +983,11 @@ class Client(_Transport):
 
     def benchmark(self, *, workload: dict[str, Any], gpu_families: list[str],
                   batch_sizes: list[int], regions: list[str], repetitions: int,
-                  budget: float, idempotency_key: str) -> dict[str, Any]:
-        """Submit a hardware matrix under one server-allocated spending cap.
+                  budget: float | None = None, idempotency_key: str) -> dict[str, Any]:
+        """Submit a hardware matrix.
 
         Reuse the explicit idempotency key after any uncertain response.
-        Returned costs and budget allocations are supplied by the server.
+        Returned costs are supplied by the server.
         """
         from ._benchmarks import request_payload
         payload = request_payload(workload, gpu_families, batch_sizes, regions,
@@ -992,8 +1032,41 @@ class Client(_Transport):
 
     @property
     def workspaces(self) -> Workspaces:
-        """Manage named persistent workspace metadata."""
+        """GPU workspaces: create, start, connect, run jobs, move files, stop."""
         return Workspaces(self)
+
+    @property
+    def compute(self) -> Compute:
+        """Running instances and training, as the Compute page lists them."""
+        return Compute(self)
+
+    @property
+    def ssh_keys(self) -> SSHKeys:
+        """Your SSH public keys, admitted by every machine your team runs."""
+        return SSHKeys(self)
+
+    def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
+               disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
+               name: str | None = None, keep_files: bool = False, wait: bool = True,
+               timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
+               idempotency_key: str | None = None) -> Workspace:
+        """Rent one GPU machine and wait until SSH accepts connections. Returns its handle.
+
+        Local disk only unless ``keep_files=True``, which saves project files as a workspace. The machine
+        runs until you stop it. ``ssh_key`` defaults to ``~/.ssh/id_ed25519.pub``,
+        ``id_ecdsa.pub`` or ``id_rsa.pub`` and admits that key to this machine only. With no local key it
+        waits only when the team has saved keys, and SSH works after ``ssh_keys.add``. A timeout leaves it running.
+        """
+        from ._compute import launch
+        return launch(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                      environment=environment, ssh_key=ssh_key, name=name, keep_files=keep_files,
+                      wait=wait, timeout_seconds=timeout_seconds,
+                      poll_seconds=poll_seconds, idempotency_key=idempotency_key)
+
+    @property
+    def volumes(self) -> Volumes:
+        """Named storage volumes that sandboxes mount between sessions."""
+        return Volumes(self)
 
     @property
     def agents(self):
@@ -1471,8 +1544,35 @@ class AsyncClient(_Transport):
 
     @property
     def workspaces(self) -> AsyncWorkspaces:
-        """Manage named persistent workspace metadata."""
+        """GPU workspaces: create, start, connect, run jobs, move files, stop."""
         return AsyncWorkspaces(self)
+
+    @property
+    def compute(self) -> AsyncCompute:
+        """Running instances and training, as the Compute page lists them."""
+        return AsyncCompute(self)
+
+    @property
+    def ssh_keys(self) -> AsyncSSHKeys:
+        """Your SSH public keys, admitted by every machine your team runs."""
+        return AsyncSSHKeys(self)
+
+    async def launch(self, gpu: str | None = None, *, gpu_count: int | None = None, gpu_memory_gb: float | None = None,
+                     disk_gb: int = 100, environment: str | None = None, ssh_key: str | None = None,
+                     name: str | None = None, keep_files: bool = False, wait: bool = True,
+                     timeout_seconds: float = 900.0, poll_seconds: float = 5.0,
+                     idempotency_key: str | None = None) -> AsyncWorkspace:
+        """Asynchronous counterpart of :meth:`Client.launch`."""
+        from ._compute import launch_async
+        return await launch_async(self, gpu, gpu_count=gpu_count, gpu_memory_gb=gpu_memory_gb, disk_gb=disk_gb,
+                                  environment=environment, ssh_key=ssh_key, name=name, keep_files=keep_files,
+                                  wait=wait, timeout_seconds=timeout_seconds,
+                                  poll_seconds=poll_seconds, idempotency_key=idempotency_key)
+
+    @property
+    def volumes(self) -> AsyncVolumes:
+        """Named storage volumes that sandboxes mount between sessions."""
+        return AsyncVolumes(self)
 
     @property
     def agents(self):
@@ -1627,6 +1727,7 @@ class AsyncClient(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "AsyncWorkload":
@@ -1655,6 +1756,7 @@ class AsyncClient(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )
@@ -1675,8 +1777,8 @@ class AsyncClient(_Transport):
 
     async def benchmark(self, *, workload: dict[str, Any], gpu_families: list[str],
                         batch_sizes: list[int], regions: list[str], repetitions: int,
-                        budget: float, idempotency_key: str) -> dict[str, Any]:
-        """Submit a hardware matrix under one server-allocated spending cap."""
+                        budget: float | None = None, idempotency_key: str) -> dict[str, Any]:
+        """Submit a hardware matrix."""
         from ._benchmarks import request_payload
         payload = request_payload(workload, gpu_families, batch_sizes, regions,
                                   repetitions, budget, idempotency_key)
@@ -2085,6 +2187,16 @@ class AsyncWorkload(_WorkloadState):
 from . import _agent as agent
 from ._steps import step, step_context
 from .errors import StepOutcomeUnknown, StepDefinitionConflict, StepResultExpired, StepFailed
+from .errors import AgentChildrenUnavailable
+from ._agent_children import ChildReference, ChildOutcome, ChildCompletions, ChildCancellation
+__all__.extend(['AgentChildrenUnavailable', 'ChildReference', 'ChildOutcome', 'ChildCompletions', 'ChildCancellation'])
+
+from .errors import AgentMessagesUnavailable
+from ._agent_messages import MessageReceipt, PeerMessage
+__all__.extend(['AgentMessagesUnavailable', 'MessageReceipt', 'PeerMessage'])
 
 from ._agent_runs import AgentRun
 __all__.append("AgentRun")
+
+from .errors import AgentBrokerUnavailable, BrokerRefused
+__all__.extend(['AgentBrokerUnavailable', 'BrokerRefused'])

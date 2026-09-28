@@ -8,13 +8,12 @@ Save the [complete Python example](../../examples/async_sweep.py) as `async_swee
 in your current directory. Example scripts are not installed by pip. Then run:
 
 ```bash
-python async_sweep.py --run-id experiment-001 --budget-per-run 5
+python async_sweep.py --run-id experiment-001
 ```
 
 This submits three self-contained workloads and permits two active tasks at a
-time. Each receives its own budget. The total experiment can therefore consume
-up to three workload budgets, subject to account limits. The semaphore is a
-client scheduling limit, not a server-side aggregate budget.
+time. Each run records its own usage against account funding. The semaphore limits
+client scheduling and does not cap spending.
 
 Reuse the same `--run-id` only to retry the identical experiment. A new experiment
 needs a new ID. Changing payloads under old keys causes an idempotency conflict.

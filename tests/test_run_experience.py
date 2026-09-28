@@ -66,9 +66,7 @@ def test_uncapped_notice_does_not_assume_an_account_cap(monkeypatch, capsys):
     monkeypatch.setattr('sys.stderr.isatty', lambda: True)
     build_payload(command='python train.py')
     notice = capsys.readouterr().err
-    assert 'No per-run budget' in notice
-    assert 'budget=<usd>' in notice
-    assert 'account spending limit' not in notice
+    assert not notice
 
 
 def test_sync_and_async_run_wire_parity():

@@ -43,8 +43,8 @@ def test_default_template_never_invents_budget_or_changes_name_only_reconnect():
     assert bodies[2]["image"] == "customer:image" and "outcome" not in bodies[2]
 
 
-@pytest.mark.parametrize("budget", [None, 0, -1, float("nan"), float("inf"), True])
-def test_managed_creation_refuses_missing_or_invalid_budget_before_http(budget):
+@pytest.mark.parametrize("budget", [-1, float("nan"), float("inf"), True])
+def test_managed_creation_refuses_malformed_legacy_budget_before_http(budget):
     with client_for(lambda request: pytest.fail("invalid authorization reached HTTP")) as client:
         with pytest.raises(nodus.ValidationError):
             client.sandboxes.create(budget=budget)

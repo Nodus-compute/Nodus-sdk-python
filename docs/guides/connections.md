@@ -202,7 +202,6 @@ with Client() as client:
         command=["python", "train.py"],
         connections=["lab-wandb"],
         sweep_id="experiment-42",
-        budget=5,
     )
     workload.refresh()
     for link in workload.links:
@@ -243,7 +242,6 @@ A CLI workload file uses the same fields:
 command = ["python", "train.py"]
 connections = ["lab-wandb"]
 sweep_id = "experiment-42"
-budget = 5
 
 [policy]
 egress_allow = ["metrics.example.com"]
@@ -266,7 +264,6 @@ from nodus import Client
 with Client() as client:
     workload = client.run(
         command=["python", "train.py"],
-        budget=2,
         outputs={
             "results": {
                 "path": "results.jsonl",

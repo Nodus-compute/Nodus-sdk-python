@@ -16,11 +16,11 @@ COMPONENTS = {
 }
 
 
-def read_meter(asynchronous, meter):
+def read_meter(asynchronous, meter, status="running"):
     cls = nodus.AsyncClient if asynchronous else nodus.Client
     client = cls(api_key="nk_synthetic", base_url="https://nodus.invalid")
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json={
-        "id": "wl_test", "status": "running", "spend_usd": 2.58, "meter": meter,
+        "id": "wl_test", "status": status, "spend_usd": 2.58, "meter": meter,
     }))
     http = httpx.AsyncClient if asynchronous else httpx.Client
     client._http = http(base_url="https://nodus.invalid", transport=transport)
@@ -82,3 +82,27 @@ def test_additive_components_preserve_existing_positional_meter_constructor():
     assert meter.settled_usd == 2.58
     assert meter.raw == {"legacy": True}
     assert meter.compute_settled_usd == 0.0
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_final_charge_is_exported_as_the_fixed_lifetime_total(asynchronous):
+    workload = read_meter(asynchronous, {
+        "settled_usd": 0.20, "accruing_usd": 0, "total_now_usd": 0.20,
+        "final_charge_usd": 1.25, "charge_state": "final",
+    }, status="completed")
+    assert workload.meter is not None
+    assert workload.meter.charge_state == "final"
+    assert workload.meter.final_charge_usd == 1.25
+    assert workload.cost_now_usd == 1.25
+
+
+def test_pending_and_historical_meter_fields_remain_distinct():
+    pending = nodus.Meter.from_dict({
+        "settled_usd": 0.20, "accruing_usd": 0.10,
+        "total_now_usd": 0.30, "charge_state": "estimated",
+    })
+    historical = nodus.Meter.from_dict({"settled_usd": 0.30})
+    assert pending is not None and pending.charge_state == "estimated"
+    assert pending.final_charge_usd is None
+    assert historical is not None and historical.charge_state == ""
+    assert historical.final_charge_usd is None

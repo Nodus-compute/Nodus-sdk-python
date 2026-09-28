@@ -26,7 +26,7 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_no_budget_or_key_is_invented(self):
         with nodus.Client(api_key='test', base_url='https://test.invalid') as client:
-            for budget in (0, -1, float('inf'), True):
+            for budget in (-1, float('inf'), True):
                 with self.assertRaises(ValueError):
                     client.benchmark(workload={}, gpu_families=['A100'], batch_sizes=[1],
                         regions=['us'], repetitions=1, budget=budget, idempotency_key='key')

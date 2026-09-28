@@ -5,7 +5,7 @@ import nodus
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--budget", type=float, required=True)
+    parser.add_argument("--budget", type=float, default=None, help="Deprecated compatibility option")
     args = parser.parse_args()
     with nodus.Client() as client:
         workload = client.run(

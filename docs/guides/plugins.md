@@ -43,7 +43,7 @@ listing is required to use the direct install buttons or repository commands.
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.7.0' nodus login
+uvx --from 'nodus-compute[mcp]==0.9.0' nodus login
 ```
 
 Complete browser sign-in on the same machine where your client runs. The
@@ -117,11 +117,11 @@ compute. The plugin exposes:
 - `list_workload_outputs`
 
 For a new run, give the agent your container image, command, GPU requirements
-and spending limit. For example: **"Prepare my training command for Nodus
-with a $10 maximum. Show me the request before submitting."** Preparing a
+and expected outputs. For example: **"Prepare my training command for Nodus
+and show me the request before submitting."** Preparing a
 request does not start a workload.
 
-The workload skill helps the agent preserve your budget, avoid duplicate
+The workload skill helps the agent preserve your request, avoid duplicate
 submissions after uncertain responses, and check results before reporting
 success. Output listing returns metadata. Use the download tool to retrieve
 the requested files. See the

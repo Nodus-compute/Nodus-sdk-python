@@ -1,47 +1,203 @@
-# Run your own RL code or a prepared recipe
+# Run RL: an example, your own code, or a prepared recipe
 
-You can start with your own training command and optional data. You do not need
-to select a catalog environment. To show reported RL task progress, add the
-optional `rl` metadata to a normal run:
+## Run an example in one call
+
+Set `NODUS_API_KEY` through your secret manager, or run `nodus login` once. See
+[authentication](../getting-started/authentication.md). This starts the GSM8K
+training example, waits for it to finish and downloads its scores:
 
 ```python
+import nodus
+
+with nodus.Client() as client:
+    workload = client.rl.run_example("gsm8k", "gsm8k-trained", idempotency_key="gsm8k-first-run")
+    print(workload.id)
+    done = workload.wait()
+    if not done.succeeded:
+        raise RuntimeError(f"RL run ended: {done.status}\n{done.logs()}")
+    for path in done.download():
+        print(path)
+```
+
+The same request over HTTP, from any language. `NODUS_BASE_URL` is the API
+origin without `/v1`. The command falls back to the hosted API the SDK uses by
+default, so set it only for a private deployment:
+
+```bash
+curl --fail --silent --show-error --request POST \
+  --header "Authorization: Bearer ${NODUS_API_KEY}" \
+  --header "Idempotency-Key: gsm8k-first-run" \
+  "${NODUS_BASE_URL:-https://d1a0b732w6344o.cloudfront.net}/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs"
+```
+
+It answers `202` with a `workload_id`. The server builds the run the example
+describes. That is its command, its runtime image, a GPU with at least the
+memory it was measured on, its result file and its RL details. The console's
+Run button fills in the same settings. The body is optional and may set only
+`name`.
+
+The run rents a GPU and is billed while it runs. Retrying with the same
+`Idempotency-Key` returns the original run instead of starting another, so
+retry with the same key when a request times out. `404` means no runnable
+example has those IDs.
+
+## RL endpoints
+
+Every RL run is an ordinary workload, so the workload endpoints apply to it.
+
+| Step | HTTP | Python |
+| --- | --- | --- |
+| List environments and examples | `GET /v1/rl-environments` | `client.rl.list_environments()` |
+| Read one environment | `GET /v1/rl-environments/{environment}` | `client.rl.get_environment(...)` |
+| See an example's run before starting it | `GET /v1/rl-environments/{environment}/examples/{example}/workload` | `client.rl.example_workload(...)` |
+| Start an example | `POST /v1/rl-environments/{environment}/examples/{example}/runs` | `client.rl.run_example(...)` |
+| Start your own RL code | `POST /v1/workloads` with an `rl` field | `client.run(..., rl=nodus.RLSetup(...))` |
+| Check status | `GET /v1/workloads/{id}` | `workload.refresh()` or `workload.wait()` |
+| See how it did | `GET /v1/workloads/{id}/rl-summary` | `client.rl.summary(workload_id)` |
+| Read each scored task | `GET /v1/workloads/{id}/rl-events` | `client.rl.events(workload_id)` |
+| Read logs | `GET /v1/workloads/{id}/logs` | `workload.logs()` |
+| List and download results | `GET /v1/workloads/{id}/outputs` | `workload.download()` |
+| Stop | `POST /v1/workloads/{id}/cancel` | `workload.cancel()` |
+
+The [OpenAPI specification](../../openapi/openapi.yaml) describes every field.
+
+## See how a run did
+
+`client.rl.summary()` returns what the console's run page shows. Each phase
+has its scored attempts, pass rate and mean reward. The comparison says
+whether the baseline and evaluation scores can be compared at all:
+
+```python
+def report(client, workload_id):
+    summary = client.rl.summary(workload_id)
+    if summary.dropped_events or summary.truncated:
+        print("Some task events were not stored, so these results may be incomplete")
+    for phase, result in summary.phases.items():
+        print(phase, result.passed, "of", result.scored, "passed")
+    comparison = summary.comparison
+    if comparison is None:
+        print("No before-and-after comparison yet")
+    elif not comparison.measurable:
+        print(comparison.message)
+    else:
+        print(f"{comparison.change_pp:+.1f} pp, smallest measurable step {comparison.resolution_pp:.1f} pp")
+```
+
+`comparable` is false when baseline and evaluation scored different numbers of
+attempts or different tasks, or when some task events were not stored.
+`measurable` is also false when every attempt passed, or every attempt
+failed, in both. The figures come from the task
+events the run reported and do not establish general model improvement.
+
+## Find an example
+
+Every environment lists the examples you can run today, with the baseline and
+any training gain that was measured by running them. Use `environment.id` and
+`example.id` to start one:
+
+```python
+def show_examples(client):
+    for environment in client.rl.list_environments():
+        for example in environment.examples:
+            print(environment.id, example.id, example.mode,
+                  example.baseline_pass_rate, example.measured_change_pp,
+                  example.runtime_minutes)
+```
+
+`mode` is `train` when the example trains a model and scores it before and
+after, and `evaluate` when it only scores the model. An environment with an
+empty `examples` list is listed for reference and has no runnable command yet.
+
+To see exactly what an example would submit without starting anything, call
+`client.rl.example_workload(environment_id, example_id)`. It returns the
+workload `POST /v1/workloads` accepts. To change an example before running
+it, such as its GPU, start from `run_arguments()`. It returns the command, image, result files, GPU memory and
+RL details that `run()` needs:
+
+```python
+def run_changed_example(client, example, *, stable_run_id):
+    arguments = example.run_arguments()
+    arguments["gpu"] = "H100"
+    return client.run(idempotency_key=stable_run_id, **arguments)
+```
+
+The command is passed through a shell, as the console does, because an example
+chains its install, download and run steps with `&&`.
+
+## Run your own RL code
+
+You do not need a catalog environment. Add an `RLSetup` to a normal run so the
+console shows your reported progress and compares scores before and after:
+
+```python
+import nodus
+
 def launch_custom_rl(
-    client, *, image, source_asset_id, budget, stable_run_id,
+    client, *, image, source_asset_id, stable_run_id,
     model_label, planned_tasks,
 ):
     if not isinstance(stable_run_id, str) or not stable_run_id:
         raise ValueError("stable_run_id must be a nonempty stable key for this run")
-    if budget is None:
-        raise ValueError("budget must be an explicit spending limit for this run")
     return client.run(
         image=image,
         source_asset_id=source_asset_id,
         command=["python", "train.py"],
         outputs={"results": "outputs"},
-        budget=budget,
         compute_class="accelerator",
         idempotency_key=stable_run_id,
-        extra={
-            "rl": {
-                "schema_version": 1,
-                "environment_id": "custom",
-                "mode": "train",
-                "model": model_label,
-                "planned_tasks": planned_tasks,
-            }
-        },
+        rl=nodus.RLSetup(
+            environment_id="custom",
+            mode="train",
+            model=model_label,
+            planned_tasks=planned_tasks,
+        ),
     )
 ```
 
 Use an imported source asset containing your `train.py`, a compatible runtime
-image and an explicit spending limit. The command must write final results
+image and explicit authorization. The command must write final results
 under `outputs` and write and load its own checkpoint state. Adjust the command
 and output path to match your project.
 
-The metadata describes your experiment. Your code implements the trainer,
-model, task limit and task-event reporting. Use `mode="evaluate"` for evaluation
-without training. Custom runs cannot set `rl.recipe` or claim managed recipe
-validation. A completed command without task events has no reported RL score.
+`RLSetup` checks the same rules the server does, so a wrong mode or an
+out-of-range task count raises `ValueError` before anything is submitted. Use
+`mode="evaluate"` for evaluation without training. `planned_tasks` is how many
+held-out tasks you intend to score.
+
+Inside `train.py`, report each scored attempt with `RLEventEmitter`. It writes
+one line per attempt to standard output, which Nodus turns into the live task
+feed and the before-and-after comparison:
+
+```python
+import os
+import time
+
+from nodus import RLEventEmitter
+
+def score_held_out(tasks, answer, check, phase="evaluation"):
+    events = RLEventEmitter(os.environ.get("NODUS_WORKLOAD_ID", "local"))
+    for task in tasks:
+        events.task_started(phase, task["id"])
+        started = time.monotonic()
+        passed = check(task, answer(task))
+        events.task_completed(
+            phase,
+            task["id"],
+            outcome="passed" if passed else "failed",
+            reward=1.0 if passed else 0.0,
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
+```
+
+Phases are `baseline`, `training` and `evaluation`. To show a real change,
+score the same held-out task IDs in `baseline` and in `evaluation`: a
+comparison between different tasks is reported as not like-for-like. An event
+the server would reject raises `nodus.EventValidationError` in your code,
+before it is written.
+
+Your code implements the trainer, model and task limit. A completed command
+without task events has no reported RL score. Custom runs cannot claim managed
+recipe validation.
 
 ## Use a prepared recipe
 
@@ -84,7 +240,6 @@ def prepare_run(client, recipe):
         "mode": "evaluate",
         "evaluation_tasks": 16,
         "training_steps": 20,
-        "max_cost_usd": 5,
         "seed": 42,
         "include_traces": False,
     }

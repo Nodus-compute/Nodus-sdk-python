@@ -15,6 +15,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import AsyncClient, _headers, _resolve, _valid_id, _valid_idempotency_key
+from ._client_identity import acting_as, mcp_caller
 
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 Limit = Annotated[int, Field(strict=True, ge=1, le=100)]
@@ -39,7 +40,7 @@ async def _request(client: httpx.AsyncClient, method: str, path: str, *, base_ur
                    idempotency_key: str | None = None) -> str:
     key, origin = _resolve(None, base_url)
     _check_origin(origin)
-    headers = _headers(key)
+    headers = _headers(key, mcp_caller())
     body = None
     if workload is not None:
         body = json.dumps(workload, allow_nan=False).encode("utf-8")
@@ -82,11 +83,13 @@ def create_server(base_url: str | None = None) -> FastMCP:
     server = FastMCP("nodus", log_level="WARNING", lifespan=_lifespan)
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
 
-    def require_budget(workload: dict[str, Any]) -> None:
-        outcome = workload.get("outcome")
-        value = outcome.get("max_cost_usd") if isinstance(outcome, dict) else None
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-            raise ValueError("Provide an explicit positive outcome.max_cost_usd authorized by the user.")
+    def validate_legacy_cost(workload):
+        outcome = workload.get("outcome") or {}
+        if not isinstance(outcome, dict):
+            raise ValueError("outcome must be an object")
+        value = outcome.get("max_cost_usd")
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
+            raise ValueError("max_cost_usd must be a finite nonnegative number")
 
     @server.tool(structured_output=False, annotations=read)
     async def validate_workload(ctx: Context, workload: dict[str, Any]) -> str:
@@ -94,7 +97,7 @@ def create_server(base_url: str | None = None) -> FastMCP:
 
         Validation does not reserve capacity or guarantee admission.
         """
-        require_budget(workload)
+        validate_legacy_cost(workload)
         return await _request(ctx.request_context.lifespan_context, "POST", "/v1/workloads/validate",
                               base_url=base_url, workload=workload)
 
@@ -109,19 +112,21 @@ def create_server(base_url: str | None = None) -> FastMCP:
         """
         key, origin = _resolve(None, base_url)
         _check_origin(origin)
-        async with AsyncClient(api_key=key, base_url=origin, timeout=300) as client:
+        with acting_as(mcp_caller()):
+            sdk = AsyncClient(api_key=key, base_url=origin, timeout=300)
+        async with sdk as client:
             path = await client.download_output(workload_id, name, destination, stage=stage, overwrite=False)
         return json.dumps({"path": str(path), "verified": True})
 
     @server.tool(structured_output=False, annotations=ToolAnnotations(
         readOnlyHint=False, destructiveHint=False, idempotentHint=True))
     async def submit_workload(ctx: Context, idempotency_key: str, workload: dict[str, Any]) -> str:
-        """Submit a paid GPU workload with an explicit budget in outcome.max_cost_usd.
+        """Submit an authorized GPU workload.
 
         Use a unique idempotency key for each intentional run. Retry an uncertain
         submission with the same key and unchanged workload to avoid a second run.
         """
-        require_budget(workload)
+        validate_legacy_cost(workload)
         return await _request(ctx.request_context.lifespan_context, "POST", "/v1/workloads", base_url=base_url,
                               workload=workload, idempotency_key=idempotency_key)
 
@@ -164,6 +169,8 @@ def create_server(base_url: str | None = None) -> FastMCP:
     register_execution_tools(server, base_url, _request)
     from ._mcp_transfers import register_transfer_tools
     register_transfer_tools(server, base_url, _check_origin)
+    from ._mcp_workspaces import register_workspace_tools
+    register_workspace_tools(server, base_url, _request, _check_origin)
     from ._mcp_manifest import register_manifest
     register_manifest(server)
     return server

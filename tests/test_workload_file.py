@@ -10,7 +10,7 @@ def test_template_is_runnable_and_never_overwritten(tmp_path):
     path = tmp_path / 'nodus.toml'
     assert write_workload_file(path) == path
     values = load_workload_file(path)
-    assert values['budget'] == 5
+    assert 'budget' not in values
     assert values['command'][0] == 'python'
     with pytest.raises(FileExistsError):
         write_workload_file(path)

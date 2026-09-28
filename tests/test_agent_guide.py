@@ -71,7 +71,7 @@ def test_agent_guide_persists_request_then_resumes_without_submission(agent_scri
     run()
     state = json.loads(state_path.read_text(encoding='utf-8'))
     assert state['id'] == 'wl_agent_guide'
-    assert state['request']['budget'] == 1
+    assert 'budget' not in state['request']
     assert json.loads((tmp_path / 'result-wl_agent_guide.json').read_text()) == settings['result']
     assert 'Synthetic GPU result log' in capsys.readouterr().out
     assert calls.count(('POST', '/v1/workloads')) == 1

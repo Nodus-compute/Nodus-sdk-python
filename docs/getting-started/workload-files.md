@@ -6,7 +6,7 @@ Keep a reusable workload definition in `nodus.toml`. Start with:
 nodus init
 ```
 
-This creates a GPU smoke test with a $5 budget. It does not start paid work or
+This creates a GPU smoke test. It does not start paid work or
 overwrite an existing file. Review the file, then run:
 
 ```bash
@@ -23,11 +23,10 @@ Replace the starter configuration with your actual image and command:
 ```toml
 image = "YOUR_REGISTRY/trainer:v1"
 command = ["python", "/app/train.py"]
-budget = 5
 ```
 
 The image must contain your code and dependencies. The command is an argument
-list, not a shell command. A budget is a workload ceiling, not a quoted price.
+list, not a shell command.
 
 To keep several configurations, save one as `train.toml`:
 
@@ -64,7 +63,6 @@ TOML table. Nested dictionaries use TOML tables:
 ```toml
 image = "YOUR_REGISTRY/trainer:v1"
 command = ["python", "/app/train.py"]
-budget = 25
 peak_memory_gb = 24
 
 [requirements]

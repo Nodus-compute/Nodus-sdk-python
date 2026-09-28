@@ -27,6 +27,13 @@ def test_single_source_assets_and_outputs_compile_to_real_stage():
     {"outputs": {"CON": "model.bin"}},
     {"outputs": {"model.": "model.bin"}},
     {"outputs": {"model": "model.bin", "MODEL": "another.bin"}},
+    # The server stores results only under 1-64 of [a-z0-9._-] with no leading
+    # dot or hyphen, and refuses anything else at submission.
+    {"outputs": {"Model": "model.bin"}},
+    {"outputs": {"-model": "model.bin"}},
+    {"outputs": {".model": "model.bin"}},
+    {"outputs": {"a" * 65: "model.bin"}},
+    {"outputs": {"nodus.meta": "model.bin"}},
     {"stages": [{"id": "CON", "outputs": {"model": "model.bin"}}]},
     {"outputs": {"model": "model.bin"}, "framework": "train_eval"},
     {"stages": [{"id": "train"}], "source_asset_id": "asset_code"},

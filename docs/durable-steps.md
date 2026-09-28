@@ -78,7 +78,7 @@ For account-authenticated events, call `sandbox.agent_events.submit` with
 explicit `command` argv for the driver. The driver must use that same run ID.
 The event receipt, run and command are stored before the API acknowledges the
 submission.
-No budget or original lifetime is extended.
+The original lifetime is not extended.
 
 Repeat the same source and event ID to retrieve the same logical run. A changed
 payload or command is rejected. Read `sandbox.agent_events.get(event_id,

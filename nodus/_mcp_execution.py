@@ -16,8 +16,10 @@ Sequence = Annotated[int, Field(strict=True, ge=0, le=9007199254740991)]
 
 def _budget(body):
     value = body.get("budget_usd")
-    if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
-        raise ValueError("Provide an explicit positive budget_usd authorized by the user.")
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or value < 0:
+        raise ValueError("budget_usd must be a finite nonnegative number.")
 
 
 def register_execution_tools(server, base_url, request):
@@ -51,7 +53,7 @@ def register_execution_tools(server, base_url, request):
 
     @server.tool(structured_output=False, annotations=write)
     async def create_sandbox(ctx: Context, idempotency_key: str, sandbox: dict[str, Any]) -> str:
-        """Create with an explicit authorized budget_usd and return the admission receipt."""
+        """Create and return the admission receipt."""
         _budget(sandbox)
         return await call(ctx, "POST", "/v1/sandboxes", sandbox, idempotency_key)
 
@@ -100,7 +102,7 @@ def register_execution_tools(server, base_url, request):
 
     @server.tool(structured_output=False, annotations=write)
     async def wake_sandbox(ctx: Context, sandbox_id: str, idempotency_key: str) -> str:
-        """Request sandbox wake using its existing authorized spending limit."""
+        """Request sandbox wake using its existing resource configuration."""
         return await call(ctx, "POST", sandbox_path(sandbox_id) + "/wake", {}, idempotency_key)
 
     @server.tool(structured_output=False, annotations=destructive)
@@ -110,13 +112,13 @@ def register_execution_tools(server, base_url, request):
 
     @server.tool(structured_output=False, annotations=write)
     async def create_agent(ctx: Context, idempotency_key: str, agent: dict[str, Any]) -> str:
-        """Create a managed deployment with an explicit authorized budget_usd."""
+        """Create a managed deployment with a stable idempotency key."""
         _budget(agent)
         return await call(ctx, "POST", "/v1/agents", agent, idempotency_key)
 
     @server.tool(structured_output=False, annotations=write)
     async def update_agent(ctx: Context, agent_id: str, idempotency_key: str, update: dict[str, Any]) -> str:
-        """Publish a revision using expected_revision and a complete definition with an authorized budget_usd."""
+        """Publish a revision using expected_revision and a complete definition."""
         if type(update.get("expected_revision")) is not int or update["expected_revision"] < 1:
             raise ValueError("Provide a positive expected_revision from the current deployment.")
         definition = update.get("definition")
@@ -137,7 +139,7 @@ def register_execution_tools(server, base_url, request):
 
     @server.tool(structured_output=False, annotations=write)
     async def submit_agent_run(ctx: Context, agent_id: str, idempotency_key: str, run: dict[str, Any]) -> str:
-        """Accept input durably using the deployment's shared budget, including with zero workers."""
+        """Accept input durably including with zero workers."""
         return await call(ctx, "POST", agent_path(agent_id) + "/runs", run, idempotency_key)
 
     @server.tool(structured_output=False, annotations=read)
@@ -169,7 +171,7 @@ def register_execution_tools(server, base_url, request):
 
     @server.tool(structured_output=False, annotations=write)
     async def resume_agent(ctx: Context, agent_id: str, idempotency_key: str) -> str:
-        """Resume deployment dispatch within its authorized budget and worker limits."""
+        """Resume deployment dispatch within its worker limits."""
         return await call(ctx, "POST", agent_path(agent_id) + "/resume", {}, idempotency_key)
 
     @server.tool(structured_output=False, annotations=write)

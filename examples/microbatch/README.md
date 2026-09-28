@@ -22,11 +22,10 @@ and a PyTorch GPU image. This command submits paid work:
 
 ```sh
 python queue.py --db queue.sqlite submit \
-  --budget "$BATCH_BUDGET_USD" \
   --image "$PYTORCH_IMAGE"
 ```
 
-The queue persists the exact batch, image, budget and idempotency key before
+The queue persists the exact batch, image and idempotency key before
 submission. A retry after an unknown HTTP outcome reuses those values. Never
 delete the database to clear a pending submission. New requests wait for the
 next batch. Failed workloads stay associated with their batch for investigation

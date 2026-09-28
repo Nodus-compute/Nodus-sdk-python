@@ -22,8 +22,6 @@ from .requests import ContinuitySpec, Policy, Requirements, Source, StageInput, 
 _TEMPLATE = '''# Edit the image and command for your workload.
 image = "pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime"
 command = ["python", "-c", "print(__import__('torch').cuda.get_device_name(0))"]
-# Example spending limit in USD. Review before running.
-budget = 5
 '''
 _FIELDS = {
     'command', 'image', 'model', 'peak_memory_gb', 'optimization', 'gpu', 'gpu_count', 'gpu_interconnect',

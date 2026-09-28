@@ -291,7 +291,6 @@ or use `prefer="any"` to skip private pools. Do not set both fields.
 workload = client.run(
     command=["python", "train.py"],
     gpu_count=1,
-    budget=5,
     placement=nodus.Placement(pool=pool_id),
 )
 ```

@@ -312,12 +312,12 @@ class Operations:
         return [Output.from_dict(row) for row in _rows(value, "outputs")]
 
     def validate(self, workload: dict[str, Any]) -> WorkloadValidation:
-        """Validate an explicitly budgeted request without starting compute."""
+        """Validate a workload request without starting compute."""
         value = self._client._request("POST", _PATH + "/workloads.validate", json={"workload": _payload(workload)})
         return _validation(value)
 
     def submit(self, workload: dict[str, Any], *, idempotency_key: str) -> Workload:
-        """Submit paid compute with an explicit budget and a stable retry key."""
+        """Submit paid compute with a stable retry key."""
         from . import _was_replayed
         arguments = _submission(workload, idempotency_key)
         headers: dict[str, str] = {}
@@ -380,12 +380,12 @@ class AsyncOperations:
         return [Output.from_dict(row) for row in _rows(value, "outputs")]
 
     async def validate(self, workload: dict[str, Any]) -> WorkloadValidation:
-        """Validate an explicitly budgeted request without starting compute."""
+        """Validate a workload request without starting compute."""
         value = await self._client._request("POST", _PATH + "/workloads.validate", json={"workload": _payload(workload)})
         return _validation(value)
 
     async def submit(self, workload: dict[str, Any], *, idempotency_key: str) -> AsyncWorkload:
-        """Submit paid compute with an explicit budget and a stable retry key."""
+        """Submit paid compute with a stable retry key."""
         from . import _was_replayed
         arguments = _submission(workload, idempotency_key)
         headers: dict[str, str] = {}

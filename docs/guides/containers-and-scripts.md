@@ -22,7 +22,6 @@ with nodus.Client() as client:
         image="pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime",
         source_asset_id=code.id,
         command=["python", "hello.py"],
-        budget=5,
     )
     print(workload.id)
     done = workload.wait()
@@ -63,7 +62,6 @@ with nodus.Client() as client:
     workload = client.run(
         image="YOUR_REGISTRY/hello:v1",
         command=["python", "/app/hello.py"],
-        budget=5,
     )
     print(workload.id)
 ```

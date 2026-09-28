@@ -7,11 +7,15 @@ from nodus._brief import build_payload
 from nodus._terminal import workload_rows
 
 
-@pytest.mark.parametrize('budget', [True, False, 0, -1, math.nan, math.inf, -math.inf,
+@pytest.mark.parametrize('budget', [True, False, -1, math.nan, math.inf, -math.inf,
                                    pytest.param(10 ** 1000, id='huge'), [], {}, 'not-money'])
 def test_invalid_budget_has_actionable_error(budget):
-    with pytest.raises(ValueError, match='budget.*finite positive'):
+    with pytest.raises(ValueError, match='budget.*finite non-negative'):
         build_payload(command=['python', 'train.py'], budget=budget)
+
+
+def test_legacy_zero_budget_is_accepted():
+    assert build_payload(command=['python', 'train.py'], budget=0)['outcome']['max_cost_usd'] == 0
 
 
 @pytest.mark.parametrize('amount,expected', [

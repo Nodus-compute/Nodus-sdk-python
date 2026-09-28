@@ -29,8 +29,6 @@ def enqueue(db, request_id, value):
 
 
 def prepare(db, budget, image, limit=64):
-    if not math.isfinite(budget) or budget <= 0:
-        raise ValueError("A finite positive per-batch budget is required")
     db.execute("BEGIN IMMEDIATE")
     try:
         pending = db.execute("SELECT id,payload FROM batches WHERE workload IS NULL ORDER BY rowid LIMIT 1").fetchone()
@@ -73,7 +71,7 @@ def main():
     add.add_argument("id")
     add.add_argument("value", type=float)
     drain = commands.add_parser("submit")
-    drain.add_argument("--budget", type=float, required=True)
+    drain.add_argument("--budget", type=float, default=None, help="Deprecated compatibility option")
     drain.add_argument("--image", required=True)
     args = parser.parse_args()
     with connect(args.db) as db:

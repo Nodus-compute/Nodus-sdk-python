@@ -38,7 +38,6 @@ with nodus.Client() as client:
         command=["python", "train.py"],
         inputs=[{"name": "training", "asset_id": dataset.id}],
         outputs={"model": "model.bin"},
-        budget=25,
     )
     print(workload.id)
 ```

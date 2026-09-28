@@ -7,7 +7,7 @@ Save the [complete Python example](../../examples/ci_submit.py) as `ci_submit.py
 in your current directory. Example scripts are not installed by pip. Then run:
 
 ```bash
-python ci_submit.py --submission-id YOUR_PIPELINE_RUN_ID --budget 5
+python ci_submit.py --submission-id YOUR_PIPELINE_RUN_ID
 ```
 
 Each `run()` gets a fresh UUID unless `idempotency_key` is set. That UUID protects

@@ -12,7 +12,7 @@ issue. Python argument mistakes (`TypeError` / `ValueError`) are separate.
 | `ValidationError` | Correct the rejected request field |
 | `IdempotencyConflictError` | Reuse the original payload or assign a new logical key |
 | `NotFoundError` | Check workload ownership/ID. Logs may not yet be committed |
-| `BudgetExceededError` | For `payment_method_required`, add a card in Billing. Otherwise inspect headroom and account limits |
+| `BudgetExceededError` | For `payment_method_required`, add a card in Billing. Otherwise inspect available credits and account funding |
 | `SpendCheckUnavailableError` | Spending authorization is temporarily unavailable. Retry using the same submission key |
 | `RateLimitError` | Pace requests. SDK honors bounded retry-after delays |
 | `CapacityUnavailableError` | Retry later or relax feasible workload constraints |
@@ -44,8 +44,7 @@ See [idempotency](../guides/ci-and-idempotency.md) and
 - **Missing output methods:** upgrade with
   `pip install --upgrade nodus-compute`.
 
-An omitted budget prints a short notice only in an interactive terminal. It
-does not emit `UserWarning`. A known image without a bootstrap fetch tool can
+A known image without a bootstrap fetch tool can
 still emit `UserWarning` before submission.
 
 ## Backend compatibility
@@ -56,10 +55,10 @@ live log streaming requires `GET /v1/workloads/{id}/logs/live`. A 404 from these
 routes can mean the deployment lacks the feature, even when saved credentials,
 workload history, and committed logs still work.
 
-GPU enforcement and spending limits also require their matching backend support.
+GPU enforcement also requires matching backend support.
 An older server may ignore fields it does not recognize. Successful submission
 alone does not prove those constraints were applied. Confirm support with the
-deployment operator before relying on a specific GPU or a hard spending cap.
+deployment operator before relying on a specific GPU.
 
 If login verification is unavailable, preserve the saved credentials and retry
 after the backend is updated. Use committed logs to inspect output when live

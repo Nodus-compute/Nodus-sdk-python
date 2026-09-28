@@ -101,10 +101,10 @@ async def test_output_download_verifies_bytes_and_refuses_overwrite(api, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_validate_and_submit_require_explicit_positive_budget(api):
+async def test_validate_and_submit_accept_optional_legacy_budget(api):
     server, requests, responses = api
     async with create_connected_server_and_client_session(server) as session:
-        for budget in (None, 0, -1, True, "10"):
+        for budget in (-1, True, "10"):
             workload = {"outcome": {"max_cost_usd": budget}}
             for tool in ("validate_workload", "submit_workload"):
                 args = {"workload": workload}
@@ -113,7 +113,7 @@ async def test_validate_and_submit_require_explicit_positive_budget(api):
                 result = await session.call_tool(tool, args)
                 assert result.isError
         assert requests == []
-        workload = {"source": {"image": "customer/image", "command": ["python", "train.py"]}, "outcome": {"max_cost_usd": 10}}
+        workload = {"source": {"image": "customer/image", "command": ["python", "train.py"]}}
         responses.append(httpx.Response(200, json={"valid": True, "submitted": False, "workload": workload}))
         result = await session.call_tool("validate_workload", {"workload": workload})
         assert not result.isError
@@ -324,7 +324,12 @@ async def test_download_keeps_resolved_credential_and_origin_together(api, nodus
 
 
 @pytest.mark.asyncio
-async def test_sandbox_and_agent_tools_return_acceptance_without_polling(api):
+@pytest.mark.parametrize("agent", [
+    {"name": "worker", "entrypoint": "agent:main", "budget_usd": 20},
+    {"name": "assistant", "assistant_template": "nodus:claude-assistant-v1",
+     "model": "nodus:claude-haiku", "model_max_output_tokens": 1024, "budget_usd": 20},
+])
+async def test_sandbox_and_agent_tools_return_acceptance_without_polling(api, agent):
     server, requests, responses = api
     async with create_connected_server_and_client_session(server) as session:
         tools = {tool.name: tool for tool in (await session.list_tools()).tools}
@@ -334,7 +339,6 @@ async def test_sandbox_and_agent_tools_return_acceptance_without_polling(api):
         assert tools["get_sandbox"].annotations.readOnlyHint is True
         assert tools["get_agent_run"].annotations.readOnlyHint is True
         sandbox = {"template": "nodus:agent-tools-v1", "budget_usd": 5}
-        agent = {"name": "worker", "entrypoint": "agent:main", "budget_usd": 20}
         operations = [
             ("create_sandbox", {"sandbox": sandbox}, "/v1/sandboxes", sandbox, {"id": "sb_one", "status": "pending"}),
             ("submit_sandbox_command", {"sandbox_id": "sb_one", "command": {"command": ["python", "example.py"]}},
@@ -406,10 +410,14 @@ async def test_new_controls_require_stable_keys_and_never_wait_for_cleanup(api, 
 
 
 @pytest.mark.asyncio
-async def test_agent_update_and_signal_preserve_revision_and_input(api):
+@pytest.mark.parametrize("definition", [
+    {"name": "worker", "entrypoint": "agent:main", "budget_usd": 20},
+    {"name": "assistant", "assistant_template": "nodus:claude-assistant-v1",
+     "model": "nodus:claude-haiku", "model_max_output_tokens": 1024, "budget_usd": 20},
+])
+async def test_agent_update_and_signal_preserve_revision_and_input(api, definition):
     server, requests, _ = api
     async with create_connected_server_and_client_session(server) as session:
-        definition = {"name": "worker", "entrypoint": "agent:main", "budget_usd": 20}
         update = {"expected_revision": 3, "definition": definition}
         result = await session.call_tool("update_agent", {"agent_id": "agent_one", "update": update, "idempotency_key": "revision-4"})
         assert not result.isError, result
@@ -426,7 +434,7 @@ async def test_new_tools_reject_missing_authority_before_network(api):
     server, requests, _ = api
     async with create_connected_server_and_client_session(server) as session:
         for tool, payload in (("create_sandbox", "sandbox"), ("create_agent", "agent")):
-            for budget in (None, True, 0, -1, "20"):
+            for budget in (True, -1, "20"):
                 result = await session.call_tool(tool, {payload: {"budget_usd": budget}, "idempotency_key": "explicit-intent"})
                 assert result.isError
         for arguments in (
@@ -561,3 +569,135 @@ async def test_case_aliased_budgets_cannot_raise_authorized_spending(api, tool, 
         result = await session.call_tool(tool, {**arguments, "idempotency_key": "authorized-one-dollar"})
         assert result.isError
         assert requests == []
+
+
+WORKSPACE_VIEW = {"id": "ws_lab", "name": "lab", "state": "stopped", "storage_revision": 0,
+                  "configuration": {"name": "lab", "gpu": "H100", "size_gb": 10},
+                  "configuration_revision": "a" * 64, "session": None, "meter": None,
+                  "connections": {"editor": False, "notebook": False, "ssh": False}, "pending_upload": None}
+
+
+@pytest.mark.asyncio
+async def test_workspace_tools_follow_the_published_contract_and_routes(api):
+    server, requests, responses = api
+    workspace = {"name": "lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1, "gpu_memory_gb": 80}
+    job = {"command": "python train.py", "budget_usd": 5}
+    async with create_connected_server_and_client_session(server) as session:
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+        assert tools["stop_workspace"].annotations.destructiveHint is True
+        assert tools["get_workspace"].annotations.readOnlyHint is True
+        assert tools["create_workspace"].inputSchema["required"] == ["workspace", "idempotency_key"]
+        writes = [
+            ("create_workspace", {"workspace": workspace}, "POST", "/v1/research-workspaces", workspace, WORKSPACE_VIEW),
+            ("start_workspace", {"workspace_id": "ws_lab"}, "POST", "/v1/research-workspaces/ws_lab/start", {}, {**WORKSPACE_VIEW, "state": "creating"}),
+            ("run_in_workspace", {"workspace_id": "ws_lab", "job": job}, "POST", "/v1/research-workspaces/ws_lab/workloads", job, {"id": "wl_1", "status": "queued"}),
+            ("stop_workspace", {"workspace_id": "ws_lab", "session_id": "sb_1"}, "POST", "/v1/research-workspaces/ws_lab/stop", {"session_id": "sb_1"}, {**WORKSPACE_VIEW, "state": "stopping"}),
+            ("configure_workspace", {"workspace_id": "ws_lab", "configuration_revision": "a" * 64, "configuration": workspace}, "PATCH", "/v1/research-workspaces/ws_lab", {"configuration_revision": "a" * 64, "configuration": workspace}, WORKSPACE_VIEW),
+            ("schedule_workspace", {"workspace_id": "ws_lab", "schedule": {"ready_by": "2026-09-28T09:00:00Z"}}, "POST", "/v1/research-workspaces/ws_lab/schedule", {"ready_by": "2026-09-28T09:00:00Z"}, {"id": "plan_1"}),
+            ("cancel_workspace_schedule", {"workspace_id": "ws_lab"}, "DELETE", "/v1/research-workspaces/ws_lab/schedule", None, WORKSPACE_VIEW),
+        ]
+        for tool, arguments, method, path, body, receipt in writes:
+            key = tool + "-same-intent"
+            responses.append(httpx.Response(202, json=receipt))
+            before = len(requests)
+            result = await session.call_tool(tool, {**arguments, "idempotency_key": key})
+            assert not result.isError, result
+            assert json.loads(result.content[0].text) == receipt
+            assert len(requests) == before + 1 and requests[-1].method == method and requests[-1].url.path == path
+            assert requests[-1].headers["Idempotency-Key"] == key
+            assert (json.loads(requests[-1].content) if requests[-1].content else None) == body
+        reads = [
+            ("get_workspace_capabilities", {}, "GET", "/v1/research-workspaces/capabilities"),
+            ("list_workspaces", {}, "GET", "/v1/research-workspaces"),
+            ("get_workspace", {"workspace_id": "ws_lab"}, "GET", "/v1/research-workspaces/ws_lab"),
+            ("get_workspace_connection", {"workspace_id": "ws_lab", "tool": "ssh"}, "POST", "/v1/research-workspaces/ws_lab/connections"),
+            ("list_workspace_workloads", {"workspace_id": "ws_lab"}, "GET", "/v1/research-workspaces/ws_lab/workloads"),
+            ("list_workspace_sessions", {"workspace_id": "ws_lab"}, "GET", "/v1/research-workspaces/ws_lab/sessions"),
+        ]
+        for tool, arguments, method, path in reads:
+            before = len(requests)
+            result = await session.call_tool(tool, arguments)
+            assert not result.isError, result
+            assert len(requests) == before + 1 and requests[-1].method == method and requests[-1].url.path == path
+            assert "Idempotency-Key" not in requests[-1].headers
+        assert json.loads(requests[-1 - 2].content) == {"tool": "ssh"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool,arguments", [
+    ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "python x.py", "budget_usd": 0}, "idempotency_key": "k"}),
+    ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "python x.py"}, "idempotency_key": "k"}),
+    ("run_in_workspace", {"workspace_id": "ws_lab", "job": {"command": "", "budget_usd": 1}, "idempotency_key": "k"}),
+    ("create_workspace", {"workspace": {"name": "lab", "gpu": "H100", "colour": "blue"}, "idempotency_key": "k"}),
+    ("get_workspace_connection", {"workspace_id": "ws_lab", "tool": "terminal"}),
+    ("stop_workspace", {"workspace_id": "ws_lab", "idempotency_key": "k"}),
+    ("start_workspace", {"workspace_id": "../other", "idempotency_key": "k"}),
+])
+async def test_workspace_tool_arguments_are_refused_before_network(api, tool, arguments):
+    server, requests, _ = api
+    async with create_connected_server_and_client_session(server) as session:
+        result = await session.call_tool(tool, arguments)
+        assert result.isError
+        assert requests == []
+
+
+@pytest.mark.asyncio
+async def test_local_workspace_upload_and_download_use_verified_transfers(api, tmp_path, monkeypatch):
+    server, requests, responses = api
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "train.py").write_text("print('hi')\n")
+    seen = {}
+
+    async def upload(self, directory, *, idempotency_key=None, poll_seconds=2.0, timeout_seconds=600.0):
+        seen["upload"] = (self.id, str(directory), idempotency_key)
+        return {"id": "tr_1", "state": "verifying"}
+
+    async def download(self, destination, *, overwrite=False):
+        seen["download"] = (self.id, str(destination), overwrite)
+        return destination
+
+    from nodus import _workspaces
+    monkeypatch.setattr(_workspaces.AsyncWorkspace, "upload", upload)
+    monkeypatch.setattr(_workspaces.AsyncWorkspace, "download", download)
+    async with create_connected_server_and_client_session(server) as session:
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+        assert tools["upload_workspace_files"].inputSchema["additionalProperties"] is False
+        assert "idempotency_key" in tools["upload_workspace_files"].inputSchema["required"]
+        result = await session.call_tool("upload_workspace_files", {"workspace_id": "ws_lab", "directory": str(project), "idempotency_key": "upload-one"})
+        assert not result.isError, result
+        assert json.loads(result.content[0].text) == {"workspace_id": "ws_lab", "upload": {"id": "tr_1", "state": "verifying"}}
+        result = await session.call_tool("download_workspace_files", {"workspace_id": "ws_lab", "destination": str(tmp_path / "saved.tar")})
+        assert not result.isError, result
+        assert json.loads(result.content[0].text) == {"workspace_id": "ws_lab", "path": str(tmp_path / "saved.tar"), "verified": True}
+        catalog = json.loads((await session.call_tool("get_operation_manifest", {})).content[0].text)
+        names = {row["name"]: row for row in catalog["operations"]}
+        assert names["upload_workspace_files"]["required_scope"] == "workspaces:write"
+        assert names["download_workspace_files"]["required_scope"] == "workspaces:read"
+        assert "local_mcp" in names["create_workspace"]["transports"]
+    assert seen == {"upload": ("ws_lab", str(project), "upload-one"),
+                    "download": ("ws_lab", str(tmp_path / "saved.tar"), False)}
+    assert requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("max_hours", 4), ("budget_usd", 5), ("editor", "vscode"),
+                                         ("repository", "org/repo"), ("ref", "main")])
+async def test_workspace_tools_refuse_lifetime_budget_editor_and_repository_fields(api, field, value):
+    server, requests, _ = api
+    workspace = {"name": "lab", "environment": "pytorch-cuda", "gpu": "H100", "gpu_count": 1,
+                 "gpu_memory_gb": 80, "size_gb": 10, field: value}
+    async with create_connected_server_and_client_session(server) as session:
+        for tool, arguments in (("create_workspace", {"workspace": workspace}),
+                                ("configure_workspace", {"workspace_id": "ws_lab", "configuration_revision": "a" * 64,
+                                                         "configuration": workspace})):
+            result = await session.call_tool(tool, {**arguments, "idempotency_key": "k"})
+            assert result.isError, (tool, result)
+    assert requests == []
+
+
+@pytest.mark.parametrize("field", ["max_hours", "budget_usd", "editor", "repository", "ref"])
+def test_workspace_configuration_allowlist_excludes_lifetime_budget_editor_and_repository(field):
+    from nodus._mcp_workspaces import _configuration
+    with pytest.raises(ValueError, match="Unknown workspace configuration field: " + field):
+        _configuration({"name": "lab", "gpu": "H100", field: 1})

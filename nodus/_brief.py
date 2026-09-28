@@ -23,6 +23,7 @@ import warnings
 from datetime import datetime, timezone
 from typing import Any
 
+from ._rl_setup import rl_payload
 from .types import WorkloadStatus
 from ._connections import _live_refs, _group
 from ._outputs import portable_output_name
@@ -84,14 +85,6 @@ def _warn_if_it_cannot_bootstrap(image: str) -> None:
     )
 
 
-def _warn_if_it_is_uncapped(outcome: dict[str, Any]) -> None:
-    """Explain an omitted workload budget without assuming account limits."""
-    if "max_cost_usd" in outcome:
-        return
-    if sys.stderr.isatty():
-        print("No per-run budget set. Add budget=<usd> to limit this run.", file=sys.stderr)
-
-
 def _as_command(command: list[str] | str | None) -> list[str]:
     """Argv for the workload. A string is split the way a shell would split it."""
     if isinstance(command, str):
@@ -144,8 +137,8 @@ def _reject_unknown(unknown: dict[str, Any], known: tuple[str, ...]) -> None:
     """Refuse a keyword this SDK does not model, naming what it looked like.
 
     The control plane ignores fields it does not know, so a forwarded typo is
-    accepted and runs: ``budget_usd=400`` submits a workload with no cost
-    ceiling at all and answers 202. :data:`UNSUPPORTED` names the fields that
+    accepted and runs: a misspelled resource requirement can select a machine
+    that does not fit the workload. :data:`UNSUPPORTED` names the fields that
     deserve a better refusal than "unknown".
     """
     if not unknown:
@@ -193,6 +186,7 @@ def build_payload(
     stages: list[dict[str, Any]] | None = None,
     framework: str | None = None,
     policy: dict[str, Any] | None = None,
+    rl: Any = None,
     extra: dict[str, Any] | None = None,
     **unknown: Any,
 ) -> dict[str, Any]:
@@ -245,9 +239,9 @@ def build_payload(
         try:
             amount = float(budget)
         except (TypeError, ValueError, OverflowError):
-            raise ValueError("budget must be a finite positive amount in USD. Omit it for no per-run limit.") from None
-        if isinstance(budget, bool) or not math.isfinite(amount) or amount <= 0:
-            raise ValueError("budget must be a finite positive amount in USD. Omit it for no per-run limit.")
+            raise ValueError("Legacy budget must be a finite non-negative number.") from None
+        if isinstance(budget, bool) or not math.isfinite(amount) or amount < 0:
+            raise ValueError("Legacy budget must be a finite non-negative number.")
         outcome["max_cost_usd"] = amount
     deadline = _as_timestamp(finish_by)
     if deadline:
@@ -338,6 +332,12 @@ def build_payload(
             raise ValueError(UNSUPPORTED["expected_runtime_hours"])
         if "requirements" in stage:
             stage["requirements"] = validate_requirements(stage["requirements"])
+    if rl is not None:
+        # extra is merged earlier, so without this check one of the two would
+        # silently win.
+        if "rl" in payload:
+            raise ValueError("Pass RL settings once: use rl= or extra={'rl': ...}, not both")
+        payload["rl"] = rl_payload(rl)
     _warn_about_the_money(payload)
     return payload
 
@@ -497,8 +497,13 @@ def _validate_outputs(outputs: dict[str, str | OutputSpec] | None) -> None:
                     raise ValueError("Outputs in one stage must use distinct sink tables.")
                 targets.add(target)
             path = path["path"]
-        if not portable_output_name(name):
-            raise ValueError("Output names must be portable file names using letters, digits, dots, underscores or hyphens.")
+        # The server stores results after the work has run, under this rule,
+        # and refuses other names at submission. Portability is for downloads.
+        if (not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_][a-z0-9._-]{0,63}", name)
+                or name.startswith("nodus.") or not portable_output_name(name)):
+            raise ValueError(
+                "Output names must be 1 to 64 lowercase letters, digits, dots, underscores or hyphens, "
+                "not starting with a dot or hyphen or with nodus.")
         if (not isinstance(path, str) or not path or "\\" in path or ":" in path
                 or any(ord(c) < 32 for c in path) or PurePosixPath(path).is_absolute()
                 or any(part in ("", ".", "..") for part in path.split("/"))):
@@ -541,7 +546,6 @@ def _warn_about_the_money(payload: dict[str, Any]) -> None:
     After the merge, not before: a warning drawn from a draft can describe a
     submission that never happens.
     """
-    _warn_if_it_is_uncapped(payload.get("outcome") or {})
     source = payload.get("source") or {}
     if source.get("image"):
         _warn_if_it_cannot_bootstrap(source["image"])

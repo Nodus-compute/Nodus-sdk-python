@@ -32,6 +32,7 @@ def journal_socket(tmp_path,monkeypatch):
     path=Path(socket_dir.name)/'j.sock'
     db=sqlite3.connect(tmp_path/'journal.sqlite',check_same_thread=False)
     db.execute('CREATE TABLE journal (step TEXT PRIMARY KEY, definition TEXT, status TEXT, result TEXT, token TEXT, external_key TEXT)')
+    db.execute('CREATE TABLE model_calls (run TEXT, step TEXT, call TEXT, input TEXT, id TEXT, state TEXT, response TEXT, PRIMARY KEY(run,step,call))')
     effects=sqlite3.connect(tmp_path/'remote-effects.sqlite',check_same_thread=False)
     effects.execute('CREATE TABLE effects (id INTEGER PRIMARY KEY, external_key TEXT UNIQUE)')
     state={'effects':effects,'status':'active','result':None,'lost_completion':False,'unknown_on_resume':False,'complete_requests':0}
@@ -65,6 +66,45 @@ def journal_socket(tmp_path,monkeypatch):
                         result['status'] = 'committed'
                     if result['status'] == 'failed':
                         result['failure_code'] = 'agent_checkpoint_state_empty'
+                if 'status_wait_max_ms' in state:
+                    result['status_wait_max_ms'] = state['status_wait_max_ms']
+            elif action in ('model_begin', 'model_status'):
+                owner = db.execute('SELECT token FROM journal WHERE step=?', (request['step_id'],)).fetchone()
+                assert owner and owner[0] == request['claim_token']
+                identity = (request['run_id'], request['step_id'], request['call_id'])
+                row = db.execute('SELECT input,id,state,response FROM model_calls WHERE run=? AND step=? AND call=?', identity).fetchone()
+                if action == 'model_begin':
+                    definition = json.dumps(request['input'], sort_keys=True, separators=(',', ':'))
+                    if row is None:
+                        call_id = 'mdl_' + uuid.uuid4().hex
+                        response = state.get('model_response', {'model': request['input']['model'], 'content': [{'type': 'text', 'text': 'Saved answer'}], 'stop_reason': 'end_turn', 'usage': {'input_tokens': 12, 'output_tokens': 3}})
+                        db.execute('INSERT INTO model_calls VALUES (?,?,?,?,?,?,?)', (*identity, definition, call_id, 'running', json.dumps(response)))
+                        db.commit()
+                        state.setdefault('model_effects', []).append(request['input'])
+                        row = (definition, call_id, 'running', json.dumps(response))
+                    elif row[0] != definition:
+                        self.send_response(409);self.end_headers();self.wfile.write(b'{"code":"idempotency_conflict"}');return
+                    if state.get('lost_model_begin'):
+                        state['lost_model_begin'] = False
+                        self.close_connection = True
+                        return
+                assert row is not None
+                if action == 'model_status' and row[2] == 'running':
+                    if state.get('model_pending_polls', 0):
+                        state['model_pending_polls'] -= 1
+                    else:
+                        status = state.get('model_final_state', 'succeeded')
+                        db.execute('UPDATE model_calls SET state=? WHERE run=? AND step=? AND call=?', (status, *identity))
+                        db.commit()
+                        row = (row[0], row[1], status, row[3])
+                result = {'receipt': {'id': row[1], 'model': json.loads(row[0])['model'], 'state': row[2], 'charge_micros': 17 if row[2] == 'succeeded' else 0}}
+                if row[2] == 'succeeded':
+                    result['response'] = json.loads(row[3])
+                if state.get('change_model_identity') and action == 'model_status':
+                    result['receipt']['id'] = 'mdl_unrelated'
+                if state.get('lost_model_status', 0) and action == 'model_status':
+                    state['lost_model_status'] -= 1
+                    self.send_response(503);self.end_headers();self.wfile.write(b'{"error":"unavailable"}');return
             elif action=='claim':
                 step_id=request['step_id']
                 definition=json.dumps({k:request[k] for k in ['name','version','effect','encoding','input']},sort_keys=True)
@@ -501,7 +541,7 @@ def test_checkpoint_failure_never_commits_step_result(journal_socket):
 def test_checkpoint_polling_allows_session_renewal(journal_socket):
     from nodus.agent_runtime import run
     _, state = journal_socket
-    state.update(recovery_policy='checkpoint-v1', checkpoint_id='cp_initial', session_seconds=.9, pending_polls=5)
+    state.update(recovery_policy='checkpoint-v1', checkpoint_id='cp_initial', session_seconds=.9, pending_polls=5, status_wait_max_ms=4000)
     def main(event):
         return {'offset': 7}
     assert run(main, run_id='cycle-42', version='1') == {'offset': 7}
@@ -509,6 +549,27 @@ def test_checkpoint_polling_allows_session_renewal(journal_socket):
     polls = [body for action, body in state['requests'] if action == 'checkpoint_status']
     assert len(polls) == 6
     assert len({body['checkpoint_id'] for body in polls}) == 1
+    assert all('wait_ms' not in body and 'known_status' not in body for body in polls)
+
+
+@pytest.mark.parametrize('capability', [None, 4000, 2000, True, '4000', 4001, -1])
+def test_checkpoint_wait_negotiates_without_changing_legacy_requests(journal_socket, capability):
+    from nodus.agent_runtime import run
+    _, state = journal_socket
+    state.update(recovery_policy='checkpoint-v1', checkpoint_id='cp_initial', pending_polls=1)
+    if capability is not None:
+        state['status_wait_max_ms'] = capability
+    def main(event):
+        return {'offset': 7}
+    assert run(main, run_id='cycle-42', version='1') == {'offset': 7}
+    polls = [body for action, body in state['requests'] if action == 'checkpoint_status']
+    assert len(polls) == 2
+    for body in polls:
+        if type(capability) is int and 0 < capability <= 4000:
+            assert body['wait_ms'] == capability
+            assert body['known_status'] == 'pending'
+        else:
+            assert set(body) == {'run_id', 'session_token', 'epoch', 'checkpoint_id'}
 
 
 def test_caught_checkpoint_failure_cannot_commit_dirty_later_state(journal_socket):

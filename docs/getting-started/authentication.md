@@ -21,7 +21,7 @@ Custom or older servers may not support every feature. See
 [backend compatibility](../operations/errors.md#backend-compatibility).
 
 New accounts start with $30 in credits and can run workloads without adding a
-payment method. Available credits and configured spending limits determine
+payment method. Available credits determine
 whether a run can start. Check your balance in
 [Billing](https://console.nodus-compute.ai/?view=billing). Shared workspace
 members use the team's credits and administrator-controlled limits. Adding an

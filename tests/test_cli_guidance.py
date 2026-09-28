@@ -82,3 +82,31 @@ def test_status_reports_whole_node_hourly_price():
                                cost_now_usd=0, stages=[], raw={})
     assert dict(workload_rows(workload))['Node hourly price'] == '$16.0000/hour'
     assert any('8 × H100 (80 GB per GPU)' in line for line in cli._fmt_route(route))
+
+@pytest.mark.parametrize("command", [["--plain", "status", "wl_bill"], ["--plain", "list"]])
+def test_terminal_workload_cli_waits_for_final_cost(command, monkeypatch, capsys):
+    import httpx
+    import nodus
+
+    finalized = False
+
+    def factory(**kwargs):
+        def handler(request):
+            body = {"id": "wl_bill", "status": "completed", "spend_usd": 0.20,
+                    "meter": {"settled_usd": 0.20, "accruing_usd": 0.10,
+                              "charge_state": "final" if finalized else "estimated"}}
+            if finalized:
+                body["meter"]["final_charge_usd"] = 1.25
+            return httpx.Response(200, json={"workloads": [body]} if request.url.path == "/v1/workloads" else body)
+        client = nodus.Client(api_key="test", base_url="https://nodus.invalid")
+        client._http = httpx.Client(base_url="https://nodus.invalid", transport=httpx.MockTransport(handler))
+        return client
+
+    monkeypatch.setattr(cli, "Client", factory)
+    assert cli.main(command) == 0
+    pending = capsys.readouterr().out
+    assert "Finalizing cost" in pending and "$0.30" not in pending
+    finalized = True
+    assert cli.main(command) == 0
+    final = capsys.readouterr().out
+    assert "$1.25" in final and "Finalizing" not in final

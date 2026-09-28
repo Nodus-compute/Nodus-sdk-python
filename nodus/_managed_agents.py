@@ -27,20 +27,37 @@ def _event_key(value):
 
 
 def _definition(name, entrypoint, budget, *, template=None, source_asset_id=None, bootstrap=None, setup=None, policy=None,
-                secrets=None, network_permissions=None, requirements=None, min_workers=None, max_workers=None):
+                secrets=None, network_permissions=None, requirements=None, min_workers=None, max_workers=None,
+                assistant_template=None, model=None, model_max_output_tokens=None):
+    if model is not None and (not isinstance(model, str) or not model.startswith('nodus:') or len(model) <= 6):
+        raise ValidationError('Select a public Nodus model from the available catalog')
+    if model is not None:
+        _id(model)
+    if model_max_output_tokens is not None and (model is None or type(model_max_output_tokens) is not int or not 1 <= model_max_output_tokens <= 4096):
+        raise ValidationError('Model output limits require a model and an integer from 1 to 4096')
+    if assistant_template is not None:
+        if assistant_template != 'nodus:claude-assistant-v1' or model is None:
+            raise ValidationError('Choose the supported assistant template and an explicit public model')
+        if entrypoint not in ('agent:main', 'nodus.managed_assistant:main') or any(value is not None for value in (source_asset_id, bootstrap, setup, policy, secrets, network_permissions)):
+            raise ValidationError('The owned assistant uses its installed entrypoint without project setup or credentials')
+        entrypoint = 'nodus.managed_assistant:main'
     if not isinstance(entrypoint, str) or len(entrypoint) > 256 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*", entrypoint):
         raise ValidationError("entrypoint must be module:function")
-    if type(budget) not in (int, float) or not math.isfinite(budget) or budget <= 0 or budget > 1_000_000:
-        raise ValidationError("Managed agents require an explicit positive finite budget")
+    if budget is not None and (type(budget) not in (int, float) or not math.isfinite(budget) or budget < 0):
+        raise ValidationError("Legacy budget must be a finite nonnegative value")
     for value, minimum in ((min_workers, 0), (max_workers, 1)):
         if value is not None and (type(value) is not int or not minimum <= value <= 100):
             raise ValidationError("Invalid worker limit")
     if min_workers is not None and max_workers is not None and min_workers > max_workers:
         raise ValidationError("min_workers cannot exceed max_workers")
-    body = {"name": _id(name), "entrypoint": entrypoint, "budget_usd": budget}
+    body = {"name": _id(name), "entrypoint": entrypoint}
+    if budget is not None:
+        body["budget_usd"] = budget
     for field, value in (("template", template), ("bootstrap", bootstrap), ("secrets", secrets), ("policy", policy),
                          ("network_permissions", network_permissions), ("requirements", requirements),
-                         ("min_workers", min_workers), ("max_workers", max_workers)):
+                         ("min_workers", min_workers), ("max_workers", max_workers),
+                         ("assistant_template", assistant_template), ("model", model),
+                         ("model_max_output_tokens", model_max_output_tokens)):
         if value is not None:
             body[field] = value
     if setup is not None:
@@ -75,7 +92,8 @@ class _Handle:
         fields = {"name", "status", "current_revision", "budget_usd", "cost_usd", "reserved_usd", "min_workers", "max_workers",
                   "workers", "queued", "startup", "created_at", "updated_at", "url", "agent_id", "revision", "session", "reason", "input", "result",
                   "deadline", "next_wake_at", "sandbox_id", "exec_id", "attempt", "segment",
-                  "recovery_policy", "checkpoint_id", "checkpoint_status", "checkpoint_error", "last_checkpoint_at"}
+                  "recovery_policy", "checkpoint_id", "checkpoint_status", "checkpoint_error", "last_checkpoint_at",
+                  "assistant_template", "model", "model_max_output_tokens"}
         if name not in fields:
             raise AttributeError(name)
         return self.raw.get(name)
@@ -85,11 +103,13 @@ class ManagedAgents:
     def __init__(self, client):
         self._client = client
 
-    def create(self, *, name, budget, project=None, entrypoint="agent:main", idempotency_key=None, **options):
-        """Deploy a versioned Python agent under an explicit spending limit."""
+    def create(self, *, name, budget=None, project=None, entrypoint="agent:main", idempotency_key=None, **options):
+        """Deploy a versioned Python agent."""
         key = _key(idempotency_key)
         body = _definition(name, entrypoint, budget, **options)
         if project is not None:
+            if body.get('assistant_template'):
+                raise ValidationError('The owned assistant does not upload a project')
             if "source" in body or "bootstrap" in body:
                 raise ValidationError("Choose a local project or a source attachment")
             body["source"] = {"asset_id": upload_project(self._client, project, ("agent", key))}
@@ -156,7 +176,7 @@ class ManagedAgent(_Handle):
         self.raw = self._client.agents.get(self.id).raw
         return self
 
-    def update(self, *, expected_revision, name, budget, entrypoint="agent:main", idempotency_key=None, **options):
+    def update(self, *, expected_revision, name, budget=None, entrypoint="agent:main", idempotency_key=None, **options):
         """Create a revision only if the observed revision is still current."""
         if type(expected_revision) is not int or expected_revision < 1:
             raise ValidationError("expected_revision must be positive")
@@ -278,10 +298,12 @@ def _listing(response, field, cls, client):
 
 
 class AsyncManagedAgents(ManagedAgents):
-    async def create(self, *, name, budget, project=None, entrypoint="agent:main", idempotency_key=None, **options):
+    async def create(self, *, name, budget=None, project=None, entrypoint="agent:main", idempotency_key=None, **options):
         key = _key(idempotency_key)
         body = _definition(name, entrypoint, budget, **options)
         if project is not None:
+            if body.get('assistant_template'):
+                raise ValidationError('The owned assistant does not upload a project')
             if "source" in body or "bootstrap" in body:
                 raise ValidationError("Choose a local project or a source attachment")
             body["source"] = {"asset_id": await upload_project_async(self._client, project, ("agent", key))}
@@ -338,7 +360,7 @@ class AsyncManagedAgent(ManagedAgent):
         self.raw = (await self._client.agents.get(self.id)).raw
         return self
 
-    async def update(self, *, expected_revision, name, budget, entrypoint="agent:main", idempotency_key=None, **options):
+    async def update(self, *, expected_revision, name, budget=None, entrypoint="agent:main", idempotency_key=None, **options):
         if type(expected_revision) is not int or expected_revision < 1:
             raise ValidationError("expected_revision must be positive")
         body = {"expected_revision": expected_revision, "definition": _definition(name, entrypoint, budget, **options)}

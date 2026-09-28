@@ -29,7 +29,7 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--budget-per-run", type=float, required=True)
+    parser.add_argument("--budget-per-run", type=float, default=None, help="Deprecated compatibility option")
     return asyncio.run(run(parser.parse_args()))
 
 

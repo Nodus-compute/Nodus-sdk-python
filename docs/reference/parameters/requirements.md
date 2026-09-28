@@ -20,7 +20,7 @@ long your program will run. Provide memory only when you know the requirement.
 Optimization tiers are not supported. New workloads use qualified estimates of
 runtime cost when every eligible configuration has comparable measurements.
 Otherwise Nodus orders compatible on-demand configurations by hourly price.
-Spending limits and independent price limits apply in both cases. This does not
+Available credits and independent price limits apply in both cases. This does not
 guarantee the lowest total cost or shortest runtime.
 
 Omit `optimization` in new code. The SDK accepts `automatic`, `lowest_cost`,
@@ -30,7 +30,7 @@ The API records `automatic` for newly accepted workloads. Empty nested values
 remain accepted for compatibility. The flat shortcut does not accept an empty
 string.
 
-GPU, memory, CPU, disk, image compatibility, location and budget requirements
+GPU, memory, CPU, disk, image compatibility, location requirements
 remain mandatory. An explicit GPU model is never replaced by another model.
 Omit `gpu` to allow more compatible models. Accepted names do not establish
 available capacity.
@@ -78,7 +78,6 @@ workload = client.run(
     image="pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime",
     command=["python", "-c", "import torch\nprint(torch.cuda.get_device_name(0))"],
     gpu="H100",
-    budget=5,
 )
 ```
 
@@ -117,8 +116,6 @@ The count does not guarantee NVLink, NVSwitch or pooled device memory.
 values are rejected because the platform cannot yet verify that guarantee.
 Do not submit topology-dependent training until its topology is supported.
 
-The displayed node hourly price covers the whole allocation. Your budget
-covers the run, including all devices, rather than applying separately to
-each GPU. Recovery and saved-run reuse preserve the requested count.
+The displayed node hourly price covers the whole allocation, including all devices. Recovery and saved-run reuse preserve the requested count.
 Nodus preserves your command arguments. Supply your own distributed launcher
 and application configuration, such as `torchrun --nnodes=1 --nproc_per_node=8`.

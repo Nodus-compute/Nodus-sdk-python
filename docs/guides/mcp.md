@@ -32,7 +32,7 @@ It manages the Python runtime and package dependencies for you.
 **1. Sign in once.** Run this in your terminal and complete browser sign-in:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.7.0' nodus login
+uvx --from 'nodus-compute[mcp]==0.9.0' nodus login
 ```
 
 **2. Add Nodus to your MCP client.** In Claude Desktop or Cursor, add this to
@@ -43,7 +43,7 @@ your MCP server configuration and reload the connection:
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.7.0", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.9.0", "nodus-mcp"]
     }
   }
 }
@@ -52,7 +52,7 @@ your MCP server configuration and reload the connection:
 For Codex, run this instead of editing JSON:
 
 ```sh
-codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.7.0' nodus-mcp
+codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.9.0' nodus-mcp
 ```
 
 The server uses your saved sign-in. There is no API key to paste into the
@@ -66,7 +66,7 @@ without starting paid compute. Your local client should discover nine tools.
 Install the MCP extra and reuse your existing Nodus sign-in:
 
 ```sh
-pip install --upgrade 'nodus-compute[mcp]==0.7.0'
+pip install --upgrade 'nodus-compute[mcp]==0.9.0'
 nodus login
 ```
 
@@ -107,7 +107,7 @@ Workload IDs contain only letters, digits, underscores and hyphens. The
 idempotency key is a nonempty printable ASCII string without spaces or line
 breaks. `workload` is the HTTP
 workload request object, not the keyword arguments to Python `client.run()`.
-For example, the HTTP budget field is `outcome.max_cost_usd`, not `budget`.
+Use the HTTP field names shown in the operation schema.
 Use the [OpenAPI contract](../../openapi/openapi.yaml) for the full request
 schema and the [parameter reference](../reference/parameters/index.md) for
 field descriptions.
@@ -123,9 +123,9 @@ The [sandbox guide](agent-sandboxes.md) also covers SDK commands and streaming o
 
 ## Submit and monitor a workload
 
-This example checks the remote GPU and allows up to $1 in workload spending.
-Choose a budget within your authorization before submitting. An accepted
-request does not guarantee completion within that limit.
+This example checks the remote GPU using account funding without a spending
+cap. Authorize the workload before submitting. An accepted request does not
+guarantee completion or a final price.
 
 Call `submit_workload` with:
 
@@ -145,7 +145,6 @@ Call `submit_workload` with:
       "gpu_count": 1
     },
     "outcome": {
-      "max_cost_usd": 1
     }
   }
 }
@@ -243,7 +242,7 @@ your saved SDK credential and its account permissions.
 | Tools | Purpose |
 | --- | --- |
 | `get_sandbox_capabilities`, `list_sandbox_templates` | Discover qualified environments without renting compute |
-| `create_sandbox`, `list_sandboxes`, `get_sandbox` | Create with a spending limit and inspect setup, state and spending |
+| `create_sandbox`, `list_sandboxes`, `get_sandbox` | Create a sandbox and inspect setup, state and spending |
 | `submit_sandbox_command`, `get_sandbox_command`, `get_sandbox_command_output` | Submit a command, read status and retrieve bounded recorded output |
 | `cancel_sandbox_command`, `sleep_sandbox`, `wake_sandbox`, `terminate_sandbox` | Control execution and compute lifecycle |
 | `sandbox_files` | Queue a file list, stat, read or write operation and return its command receipt |
@@ -252,11 +251,9 @@ your saved SDK credential and its account permissions.
 | `signal_agent_run`, `pause_agent`, `resume_agent`, `retry_agent_run`, `cancel_agent_run` | Deliver events and control eligible execution |
 
 Every new mutation requires a caller-chosen `idempotency_key`. Preserve the key
-and exact request when retrying an uncertain response. Creation requests require
-an explicit positive `budget_usd` authorized by the customer. Run submissions use
-the deployment's existing shared budget. Updating a deployment requires an
-`update` object with `expected_revision` and a complete `definition`, including
-its authorized `budget_usd`.
+and exact request when retrying an uncertain response. Updating a deployment requires an
+`update` object with `expected_revision` and a complete `definition`.
+Creation and updates do not require a spending limit.
 
 Creation and submission return acceptance receipts before provisioning or
 execution finishes. Poll the corresponding metadata tools and use the returned
@@ -268,6 +265,31 @@ require sandbox write permission. Metadata and recorded-output tools do not
 wake workers. Customer sandbox tools cannot access managed-agent worker
 sandboxes. Terminating compute does not delete saved projects.
 
+## GPU workspaces
+
+Workspace tools let an agent manage a researcher's GPU machine end to end.
+Hosted connections request the `workspaces:read` and `workspaces:write`
+permissions. Local connections use your saved SDK credential.
+
+| Tools | Purpose |
+| --- | --- |
+| `get_workspace_capabilities`, `list_workspaces`, `get_workspace` | Discover environments and GPU counts, and read state, connections and spending |
+| `create_workspace`, `configure_workspace` | Save a configuration without renting compute, and change it for the next session |
+| `start_workspace`, `stop_workspace` | Rent compute and restore saved files, then save files and release compute |
+| `get_workspace_connection` | A browser URL for the editor or notebook, or SSH details including a VS Code Remote link |
+| `run_in_workspace`, `list_workspace_workloads` | Run a command against the saved project as a workload with its own budget |
+| `list_workspace_sessions`, `schedule_workspace`, `cancel_workspace_schedule` | Read session history and have compute ready by a chosen time |
+
+`create_workspace` takes a `workspace` object with `name`, `gpu`, `gpu_count`
+and `gpu_memory_gb`, plus optional `environment` and `size_gb`, which defaults
+to the deployment's project capacity. Every workspace serves the editor and the
+notebook, and SSH once `ssh_authorized_key` holds a public key. Compute runs
+until `stop_workspace` or until account credit runs out. `stop_workspace`
+needs the `session_id` shown by `get_workspace`.
+`run_in_workspace` takes a `job` with `command` and a required `budget_usd`.
+Starting returns before the tools are ready, so poll `get_workspace` until the
+wanted connection is true before asking for a connection.
+
 ### Local project and file transfers
 
 The local MCP server adds these tools:
@@ -277,6 +299,8 @@ The local MCP server adds these tools:
 | `upload_project` | `project`, `idempotency_key` | Verified immutable `asset_id`, stored `sha256` and original `upload_sha256` |
 | `upload_sandbox_file` | `sandbox_id`, `source`, `path`, `idempotency_key` | Verified remote file or directory upload |
 | `download_sandbox_file` | `sandbox_id`, `path`, `destination`, `idempotency_key` | Verified local file or directory download |
+| `upload_workspace_files` | `workspace_id`, `directory`, `idempotency_key` | Replace a stopped workspace's saved project with a local folder and wait for verification |
+| `download_workspace_files` | `workspace_id`, `destination` | Verified tar archive of the saved project, existing files refused |
 | `get_operation_manifest` | None | Versioned schemas and annotations for explicitly supported local operations |
 
 `upload_project` packages a local folder with the managed-project exclusions,

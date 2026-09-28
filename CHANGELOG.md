@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.9.0
+
+Breaking: workspaces and instances run until you stop them or account credit runs out.
+
+- `client.workspaces.create`, `Workspace.configure`, `client.launch` and their asynchronous counterparts no longer take `max_hours`, `budget_usd`, `editor`, `repository` or `ref`, because the server no longer has those fields. `create` and `launch` raise `TypeError` for them, and `configure` and the MCP `create_workspace` and `configure_workspace` tools refuse them as unknown fields. There is no per-session time or spending limit. `Workspace.run(budget_usd=...)` is unchanged.
+- `size_gb` is optional for `client.workspaces.create`. When it is omitted, the SDK sends no size and the server gives the project its deployment's capacity. The SDK no longer reads `capabilities()` to choose a size, and `client.launch` sends no size.
+- `Workspace.ready` and `wait_until_ready` wait for both the editor and the notebook on a workspace, and for SSH on an instance. `Workspace.tool` is `ssh` for an instance and `editor` for a workspace.
+- The CLI drops `nodus workspace new --max-hours`, `--budget` and `--editor`, and `nodus launch --hours`. `--size-gb` is optional. The MCP `launch_gpu` tool no longer takes `max_hours`.
+- Add `RLEventEmitter` for reporting scored RL attempts from inside a workload. Events the server would reject raise `EventValidationError` before they are written, instead of after a machine is rented.
+- Add `rl=RLSetup(...)` to `run()`. Mode, environment and task-count rules are checked before submission. `extra={"rl": ...}` still works.
+- Add `client.rl.list_environments()`, returning the RL catalog with the examples you can run today and what was measured by running them. `RLExample.run_arguments()` supplies everything `run()` needs.
+- Add `client.rl.run_example(environment_id, example_id, idempotency_key=...)`, which starts a catalog example in one request. Examples now carry an `id` and the `peak_memory_gb` they were measured with, which `run_arguments()` requests.
+- Add `client.rl.summary(workload_id)`, returning each phase's scored attempts, pass rate and mean reward, and whether the baseline and evaluation scores are a like-for-like comparison, as the console's run page shows them. Add `client.rl.get_environment()` and `client.rl.example_workload()`, which returns the workload an example would submit without starting it.
+- `run()` refuses output names the server cannot store. Names must be 1 to 64 lowercase letters, digits, dots, underscores or hyphens, not starting with a dot, a hyphen or `nodus.`. Such names were accepted before and the run's results were refused at upload, after the work had run.
+
+## 0.8.0
+
+- GPU names accept memory and count suffixes, as in `A100-40GB`, `A100-80GB:4` and `H100:2`, for `create` and `run`.
+- `client.workspaces` manages GPU workspaces. `create` returns a `Workspace` handle with `start`, `wait_until_ready`, `connect`, `ssh`, `run`, `upload`, `download`, `configure`, `schedule` and `stop`, with an asynchronous counterpart.
+- Named sandbox storage volumes move to `client.volumes`, including `list`, `list_page` and `iter`. `client.workspaces.list()` now returns GPU workspaces, and `client.workspaces.create(name, size_gb=...)` without a GPU still creates a volume and raises a `FutureWarning`.
+- The local MCP server gains every workspace operation plus `upload_workspace_files` and `download_workspace_files`.
+- `nodus workspace` commands create, start, connect, run, upload, download and stop workspaces from the terminal.
+- `nodus.WorkspaceNotReadyError` names a workspace that is still starting, saving, stopped or missing an SSH key.
+
+## 0.7.2
+
+- Advertise hosted assistant template, model and output limits in MCP creation and update tools.
+- Synchronize the public operation schemas and current installation commands with this release.
+
+## 0.7.1
+
+- Add the hosted Claude assistant template with an explicit budget and model selection on qualified deployments.
+- Add `nodus.agent.model` for durable hosted model calls within recorded steps, with bounded polling and actionable uncertain outcomes.
+- Preserve assistant conversation state through committed checkpoints and reuse recorded model responses after recovery.
+- Bound saved conversation requests and identify partial answers when a model reaches its output limit.
+
 ## 0.7.0
 
 - Add qualified tools-template sandbox creation, immutable project upload, verified file transfers, setup progress and explicit sleep or wake. These capabilities require deployment qualification and account admission.

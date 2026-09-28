@@ -1,37 +1,46 @@
-# Budgets and observed cost
+# Observed cost and billing
 
-`budget` is an optional hard spending limit for one workload. Available team
-credits and any configured account spending limit also apply. Without `budget`,
-there is no separate limit for that run. Not every account has a monthly cap.
-You do not need to provide an expected runtime.
+Nodus records usage as your work runs. Ordinary workloads, sandboxes and
+benchmarks use account funding without per-run spending caps. Payment
+requirements and available team credits apply. Explicit managed fleet budgets
+and accepted per-attempt allocations remain enforced.
 
-Nodus starts work when the available spending allowance covers the selected
-capacity's initial billing window. It checks the remaining allowance as work
-continues and stops when more spending cannot be authorized. Acceptance does
-not promise completion within your budget.
+Nodus checks that available credits cover the selected capacity's initial
+billing window. It renews funding as work continues. Work can stop when the
+account cannot fund additional usage. An accepted request does not guarantee
+completion or a final price.
 
 | Value | Meaning |
 |---|---|
-| `budget` | Optional hard limit in USD for one workload |
-| Account spend cap | Shared monthly limit, when configured |
 | Available credits | Team credit balance after charges and pending reservations |
-| `workload.cost_now_usd` | Current settled and accruing customer cost |
+| `workload.cost_now_usd` | Current estimate while pending, then the fixed lifetime compute charge |
 | `workload.spend_usd` | Settled workload charges |
 | `workload.meter.as_of` | Timestamp of the live meter |
+| `workload.meter.charge_state` | `estimated` while metered costs are pending, then `final` |
+| `workload.meter.final_charge_usd` | Immutable aggregate lifetime compute charge, absent while pending |
 | `ledger.charged_usd` | Settled customer charge |
-| `ledger.settlement.balance_usd` | Accounting balance, not workload price |
+| `ledger.settlement.balance_usd` | Compatibility field fixed at zero |
 
-The meter also separates compute charges from platform fees. Read
-`compute_settled_usd` and `platform_fee_settled_usd` for settled components,
-and `compute_accruing_usd` and `platform_fee_accruing_usd` for current accrual.
-`subscription_settled_usd` is an account-level component and is zero for a
-workload. These fields default to zero when an older server omits them.
-Continue using the aggregate meter values for totals.
+The meter separates compute, platform fees, storage, model and subscription
+charges. Use its aggregate totals to follow spending. Stopping compute and
+final settlement can take time. Pending usage retains its credit reservation
+until accounting is complete.
 
-Stopping and settlement can take time. The final customer charge stays within
-the authorized allowance. Lowering a limit does not refund charges already
-incurred or remove an existing authorization. It prevents further authorization
-when no headroom remains.
+Run completion and cost finalization are separate. A completed metered run can
+remain `estimated` while required cost records are unavailable. Show
+**Finalizing cost** during this period. Once `charge_state` is `final`, use
+`final_charge_usd` for its fixed lifetime compute amount. The ordinary workload meter
+totals cover the current billing month. Later accounting updates do not change
+the final compute charge.
+
+Retaining files can continue to incur usage charges after compute stops. These
+charges are excluded from `final_charge_usd`. Period and account totals, the
+ledger and usage invoices can include retained-file usage without changing
+the fixed compute charge.
+
+Sandbox handles expose `charge_state` and `final_charge_usd` directly.
+`sandbox.cost_usd` remains the recorded charge and can be zero while finalizing.
+Older billing contracts and servers can omit the additive finality fields.
 
 ```python
 workload = client.get(workload_id)
@@ -40,10 +49,9 @@ ledger = workload.ledger()
 print(ledger.charged_usd, ledger.settlement.status)
 ```
 
-Route estimates are planning information, not a final bill or a required
-customer input. Use the meter while running and the ledger after settlement.
-Completion and resource cleanup can happen before financial settlement.
-During the credit pilot, pending usage continues to reserve credits until
-final accounting is available. A zero settled charge does not mean a free run.
-`BudgetExceededError` includes available account headroom when the server can
-provide it. Review the workload budget, credit balance, or account limit before retrying.
+Route estimates are planning information. Use the live meter while running and
+the ledger after settlement. Legacy `budget`, `budget_usd` and
+`outcome.max_cost_usd` fields on ordinary workload and sandbox submissions are
+accepted for compatibility and do not set a spending limit. Explicit managed
+fleet and attempt allocations still apply. Cancel work or stop unused compute
+when you are finished.

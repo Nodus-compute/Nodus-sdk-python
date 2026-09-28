@@ -1,7 +1,7 @@
 # Submission parameters
 
 Choose the environment and command for your code, then set any GPU, memory,
-budget, and recovery requirements. `Client.run()` and `AsyncClient.run()` accept
+and recovery requirements. `Client.run()` and `AsyncClient.run()` accept
 the same named arguments. The table covers every explicit submission argument
 and links to its accepted values, defaults, and examples.
 
@@ -17,7 +17,7 @@ are not sent, except the default image and continuity policy.
 | `optimization` | `requirements.optimization` | `"automatic"`, `"lowest_cost"`, `"lower_cost"`, `"balanced"`, `"faster"`, `"fastest"`. Compatibility only, omitted by default. No preference effect on new runs. [Optimization](requirements.md#optimization) |
 | `model`, `compute_class`, `peak_memory_gb` | `requirements.*` | [Resources](requirements.md) |
 | `requirements` | `requirements` | [Resources](requirements.md) |
-| `budget`, `finish_by` | `outcome.max_cost_usd`, `outcome.complete_by` | [Budget and deadline](outcome.md) |
+| `finish_by` | `outcome.complete_by` | [Completion deadline](outcome.md) |
 | `continuity` | `continuity` | [Recovery](continuity.md) |
 | `connections`, `sweep_id` | Same top-level keys | [Live connections](../../guides/connections.md#attach-live-wandb-to-a-run) |
 | `data_regions`, `policy` | `policy.data_regions`, `policy` | [Policy](policy.md) |

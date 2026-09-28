@@ -28,7 +28,7 @@ catch {{
 }}
 exit 0
 """
-    result = subprocess.run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", driver],
-                            env=env, capture_output=True, text=True, timeout=30)
+    result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", driver],
+                            env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert "PROFILE_ROOT=" + str(profile / ".nodus") in result.stdout

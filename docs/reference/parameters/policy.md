@@ -22,7 +22,6 @@ workload = client.run(
     image="pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime",
     command=["python", "-c", "print('regional workload')"],
     data_regions=[],
-    budget=5,
 )
 ```
 

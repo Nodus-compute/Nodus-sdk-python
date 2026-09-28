@@ -13,6 +13,8 @@ Prefer a `with` block. Otherwise call `close()`.
 | `operations` | [Typed version 1 workload and draft operations with contract discovery](../../guides/operations.md) |
 | `pools` | [Measure customer-owned GPU hosts, review forecasts, and configure Route](../../guides/pools.md) |
 | `sandboxes` | [Create, reconnect to, list, and control agent sandboxes](../../guides/agent-sandboxes.md) |
+| `workspaces` | [Create, start, connect to, run jobs in, and stop GPU workspaces](../../workspaces.md) |
+| `volumes` | [Named storage volumes that sandboxes mount](../../workspaces.md#storage-volumes-for-sandboxes) |
 | `get(id)` | Refreshed `Workload` |
 | `list(limit=50, offset=0, status=None, scope=None)` | One page of workloads |
 | `list_page(limit=50, offset=0, status=None, scope=None)` | `(workloads, next_offset)` |
@@ -51,7 +53,7 @@ terminates on exit. Call `close()` to release only the local HTTP client while
 keeping the remote sandbox alive.
 
 `client.sandboxes.create(...)` accepts an image, resource requirements, a
-budget, network policy, lifecycle, reservation, and continuity settings. It
+network policy, lifecycle, reservation, and continuity settings. It
 returns an accepted `Sandbox` handle. Read `sandbox.state` or call
 `sandbox.refresh()` before assuming the environment is ready.
 
@@ -81,6 +83,12 @@ with `refresh()` and `wait()` update it in place. Useful attributes are `id`, `s
 `succeeded`, `is_terminal`, `route`, `stages`, `meter`, `cost_now_usd`, `links`, and `raw`.
 Each `WorkloadLink` has `kind` and `url`. Captured wandb links are available before completion.
 Unknown server enum values remain strings for forward compatibility.
+
+Completion does not imply that metered costs are final. While
+`meter.charge_state` is `estimated`, `cost_now_usd` is an estimate. When the
+state becomes `final`, `meter.final_charge_usd` and `cost_now_usd` return the
+same immutable lifetime compute total. Ongoing retained-file usage is excluded.
+See [observed cost and billing](../../concepts/costs.md).
 
 `workload.download(destination=None)` downloads all published customer outputs,
 including automatically collected folder archives when no files were declared,
@@ -124,7 +132,7 @@ to overwrite existing files. Use a new destination directory for another copy.
 | `ManifestFile` | `uri`, `sha256`, `bytes`, `media`, `is_tar` |
 | `Output` | `name`, `stage_id`, `sha256`, `bytes`, `download` |
 | `Route` | `sku`, `compute_class`, `fit_class`, `region`, `memory_gb`, `resources`, prices and estimated cost |
-| `Meter` | `settled_usd`, `accruing_usd`, `total_now_usd`, `accruing_rate_usd_hour`, `as_of`, `compute_settled_usd`, `platform_fee_settled_usd`, `subscription_settled_usd`, `compute_accruing_usd`, `platform_fee_accruing_usd` |
+| `Meter` | `settled_usd`, `accruing_usd`, `total_now_usd`, `accruing_rate_usd_hour`, `as_of`, `charge_state`, `final_charge_usd`, `compute_settled_usd`, `platform_fee_settled_usd`, `subscription_settled_usd`, `compute_accruing_usd`, `platform_fee_accruing_usd` |
 | `Ledger` | `entries`, `charged_usd`, `settlement` |
 
 `Event` has `type` and `payload`, not a `message` attribute. Output download
@@ -150,7 +158,7 @@ import nodus
 requirements = nodus.Requirements(compute_class="accelerator", peak_memory_gb=24)
 source = nodus.Source(image="pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime", command=["python", "-c", "print(1)"])
 stage = nodus.StageSpec(id="example", source=source)
-# Supply requirements= and stages=[stage] to client.run(..., budget=5).
+# Supply requirements= and stages=[stage] to client.run(...).
 ```
 
 They do not add runtime validation or defaults. Existing plain dictionaries remain

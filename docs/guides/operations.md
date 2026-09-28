@@ -9,7 +9,7 @@ methods with `await`. This interface requires a server that exposes
 `/v1/operations/v1`.
 
 Prepare a customer workload request with your image, command, resources and an
-explicit `outcome.max_cost_usd`. Call `operations.validate(workload)` to check
+resource requirements. Call `operations.validate(workload)` to check
 the request without starting compute. Submit it with
 `operations.submit(workload, idempotency_key="your-stable-run-key")` when you
 intend to start paid execution.
@@ -53,7 +53,7 @@ your active team. A key without a member identity receives HTTP 403.
 
 `get_run_draft()` returns `revision`, partial `values` and `updated_at`.
 `RunDraftValues` describes the saved fields. An empty form has revision zero,
-empty values and no update time. The server does not invent a budget.
+empty values and no update time.
 
 Pass a `RunDraftPatch` and the revision you read to `update_run_draft()`.
 Supported fields are `name`, `command`, `image`, `gpu`, `gpu_count`, `memory_gb`,
@@ -74,7 +74,7 @@ scope and supported transports. These describe capabilities. Authorization is
 enforced when an operation runs.
 
 The typed methods call canonical IDs such as `workloads.submit` through the
-version 1 interface. The server owns argument and budget validation. The SDK
+version 1 interface. The server owns argument validation. The SDK
 adds response types, retry handling and checks for invalid submission receipts.
 An uncertain submission error retains the supplied key in
 `error.payload["idempotency_key"]`.

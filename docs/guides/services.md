@@ -1,16 +1,15 @@
 # HTTP agent services
 
 A service is a sandbox with one managed server command. It uses the sandbox
-budget, lifetime and hourly meter. The server binds a loopback HTTP port inside
+lifetime and hourly meter. The server binds a loopback HTTP port inside
 the sandbox. Nodus forwards authenticated requests over the runtime relay.
 There is no inbound guest networking.
 
 After authenticating, replace the image below with your qualified server image
-and choose a budget. The example budget is illustrative:
+and review its resource requirements:
 
 ```python
 image = "your-account/inference:qualified"
-budget_usd = 5
 with nodus.Client() as client:
     box = client.sandboxes.create(
         image=image,
@@ -19,7 +18,6 @@ with nodus.Client() as client:
             "port": 8080,
             "health_path": "/health",
         },
-        budget=budget_usd,
         lifecycle={"max_lifetime_s": 90000, "idle_timeout_s": 1800},
         idempotency_key="inference-service-deployment-001",
     )

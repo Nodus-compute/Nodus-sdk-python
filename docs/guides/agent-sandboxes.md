@@ -33,7 +33,6 @@ import nodus
 with nodus.Client() as client:
     sandbox = client.sandboxes.create(
         project=".",
-        budget=5,
         idempotency_key="project-session-001",
     )
     print(sandbox.id, sandbox.url)
@@ -50,9 +49,7 @@ with nodus.Client() as client:
     sandbox.sleep(idempotency_key="project-sleep-001")
 ```
 
-The $5 spending limit is explicit. Change it to your authorized amount. The
-SDK supplies no budget when you omit one, and managed creation refuses a missing
-budget. `project` uploads the local folder as an immutable archive. Known
+Creation does not require a budget. `project` uploads the local folder as an immutable archive. Known
 credential files, dependency folders, caches and recovery state are excluded from this managed
 upload. Symlinks and special files are rejected. Local project packaging and file
 transfers use secure directory handles on Linux, macOS and local Windows NTFS
@@ -95,8 +92,7 @@ work that can release compute while waiting, see [managed agents](managed-agents
 
 ## Custom images
 
-Create a sandbox with a container image, resource requirements, and customer
-spending limit. New sandboxes use the server's CPU default unless accelerator
+Create a sandbox with a container image and resource requirements. New sandboxes use the server's CPU default unless accelerator
 resources are requested. These examples require a deployment with CPU sandbox preview enabled.
 They do not establish generally available CPU workload execution. Use a
 published image with an explicit non-root `USER`, a writable working directory
@@ -122,7 +118,6 @@ sandbox = client.sandboxes.create(
         "vcpus": 2,
         "disk_gb": 10,
     },
-    budget=5,
     lifecycle={
         "idle_timeout_s": 300,
         "max_lifetime_s": 3600,
@@ -140,14 +135,14 @@ print(sandbox.id, sandbox.state, sandbox.cost_usd)
 Creating a sandbox is a paid operation when Nodus starts infrastructure. The
 control plane requires available credits and enough account headroom. A payment
 method is optional when credits cover the work. The
-sandbox budget limits its customer-funded usage. Acceptance can precede
+sandbox records its customer-funded usage. Acceptance can precede
 readiness. Calling `exec` waits for the environment and then runs the command,
 so application code does not need a readiness loop.
 
 Pass `cache_image=True` when creating a sandbox to allow verified image layers
 to be reused within your team and execution region. Cache storage shares the
 workspace size and count limits. Retention charges stay with the first sandbox
-that cached the layer, under its existing budget, even after it terminates.
+that cached the layer, subject to available credits, even after it terminates.
 Storage billing remains disabled until a rate is configured. Unavailable or
 corrupt cache entries fall back to the pinned image registry content.
 
@@ -271,7 +266,6 @@ with nodus.Sandbox(
     name="research-agent",
     image="ghcr.io/your-org/research-agent:1",
     requirements={"vcpus": 2, "peak_memory_gb": 4, "disk_gb": 10},
-    budget=5,
 ) as sandbox:
     process = sandbox.exec("python agent.py")
     for frame in process.iter_output():
@@ -299,7 +293,7 @@ See [CLI retry guidance](../reference/cli.md#agent-sandboxes) for
 recovering an uncertain request without submitting duplicate work.
 
 ```bash
-nodus sandbox new ghcr.io/your-org/research-agent:1 --name research-agent --budget 5
+nodus sandbox new ghcr.io/your-org/research-agent:1 --name research-agent
 nodus sandbox ls
 nodus sandbox exec NAME_OR_ID "python agent.py"
 nodus sandbox logs NAME_OR_ID EXEC_ID
@@ -327,7 +321,7 @@ nodus sandbox new \
   --name research-agent \
   --github-repo your-org/private-agent \
   --github-ref main \
-  --budget 5
+
 ```
 
 `--github-ref` is optional. The CLI adds the required GitHub network permission.
@@ -349,7 +343,6 @@ async def main():
         sandbox = await client.sandboxes.create(
             image="ghcr.io/your-org/research-agent:1",
             requirements={"vcpus": 2, "peak_memory_gb": 4, "disk_gb": 10},
-            budget=5,
         )
         execution = await sandbox.exec(["python", "agent.py"])
         async for frame in execution.iter_output():
@@ -379,6 +372,6 @@ Set `stuck_after_s=60` when creating a sandbox to request an alert after an
 active command has produced no output for one minute. The default is 30 minutes.
 This no-output signal also applies to quiet servers and does not stop execution.
 The account webhook and `box.events()` receive `sandbox.stuck`,
-`sandbox.spend_rate`, and `sandbox.budget_warning` events. Spend-rate alerts use
-the existing billing rate and budget, and repeat only after the qualifying rate
+and `sandbox.spend_rate` events. Spend-rate alerts use
+the existing billing rate and repeat only after the qualifying rate
 at least doubles.

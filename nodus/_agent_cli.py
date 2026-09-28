@@ -18,7 +18,7 @@ def add_parser(commands, positive_cost, page_limit):
     add_source_arguments(deploy, project_help="project directory, defaults to the current directory")
     deploy.add_argument("--entrypoint", default="agent:main")
     deploy.add_argument("--setup", help="dependency setup command saved with the agent revision")
-    deploy.add_argument("--budget", type=positive_cost, required=True)
+    deploy.add_argument("--budget", type=positive_cost, default=None, help="deprecated compatibility field")
     deploy.add_argument("--max-workers", type=int)
     deploy.add_argument("--min-workers", type=int)
     deploy.add_argument("--secret", action="append")

@@ -7,9 +7,9 @@ For interactive agents, create a durable sandbox and execute multiple commands
 with streamed output and stdin.
 Nodus uses qualified estimates of runtime cost when every eligible configuration
 has comparable measurements. Otherwise it orders compatible on-demand
-configurations by hourly price. Spending limits and independent price limits
+configurations by hourly price. Available credits and independent price limits
 apply in both cases.
-Set a workload budget to limit spending. Optimization tiers are not supported.
+Optimization tiers are not supported.
 
 Install [nodus-compute from PyPI](https://pypi.org/project/nodus-compute/)
 with Python 3.10 or newer, then sign in to get started.
@@ -23,7 +23,7 @@ and a connection check that does not start paid compute.
 Follow the [coding agent guide](guides/agents.md) to prepare workloads, observe
 their progress, and collect results. Use the [parameter reference](reference/parameters/index.md)
 for supported arguments and the [OpenAPI specification](../openapi/openapi.yaml)
-for HTTP schemas. Set a budget, keep the workload ID, and check `succeeded` after
+for HTTP schemas. Keep the workload ID, and check `succeeded` after
 waiting. An accepted workload is not necessarily a completed workload.
 
 ## Get started
@@ -38,8 +38,10 @@ waiting. An accepted workload is not necessarily a completed workload.
 - [Attach code and datasets](guides/assets.md)
 - [Manage external data connections](guides/connections.md)
 - [Train or fine-tune a model](guides/gpu-workloads.md)
+- [Run reinforcement learning (RL)](guides/rl-runs.md), from a one-call example or your own code
 - [Run from a workload file](getting-started/workload-files.md)
 - [Run an agent sandbox](guides/agent-sandboxes.md)
+- [Open a GPU workspace in VS Code, JupyterLab or SSH](workspaces.md)
 - [Deploy a managed durable agent](guides/managed-agents.md)
 - [Run from GitHub Actions and automation tools](guides/automation.md)
 - [Connect MCP tools](guides/mcp.md)

@@ -15,7 +15,7 @@
 Run training, fine-tuning, and batch experiments
 when your local machine lacks the GPU memory or capacity they need. Provide a
 container image and resource requirements. Nodus matches the work to available
-GPU capacity. Add a budget to set a spending limit.
+GPU capacity. Follow usage through the live meter and billing history.
 
 Agent sandbox previews run tools in a separate environment. New
 sandboxes in SDK 0.5.3 and later use the server's CPU default unless accelerator
@@ -36,7 +36,7 @@ nodus login
 
 Get [nodus-compute on PyPI](https://pypi.org/project/nodus-compute/).
 Requires Python 3.10 or newer. Upgrading an existing installation? Use
-`pip install --upgrade nodus-compute`. These docs cover SDK 0.7.0.
+`pip install --upgrade nodus-compute`. These docs cover SDK 0.9.0.
 
 Your browser opens Nodus sign-in. Sign in and approve the code matching your
 terminal. You can then close the tab. The terminal finishes automatically and
@@ -57,7 +57,7 @@ a shared workspace, its administrator manages the payment method.
 ## 2. Run your first workload
 
 This GPU smoke test prints the available GPU name. No local script is uploaded.
-It submits paid compute with a $5 workload budget. Available capacity and account
+It submits paid compute without a workload spending cap. Available capacity and account
 limits still determine admission.
 
 Save this as `first_workload.py`:
@@ -75,7 +75,6 @@ with nodus.Client() as client:
             "assert torch.cuda.is_available()\n"
             "print(torch.cuda.get_device_name(0))",
         ],
-        budget=5,
     )
     print("Workload:", workload.id)
     done = workload.wait()
@@ -114,7 +113,6 @@ with nodus.Sandbox(
     name="research-agent",
     image="ghcr.io/your-org/research-agent:1",
     requirements={"vcpus": 2, "peak_memory_gb": 4, "disk_gb": 10},
-    budget=5,
 ) as sandbox:
     print("Sandbox:", sandbox.id)
     process = sandbox.exec("python -c \"print('agent tool finished')\"")
@@ -127,7 +125,7 @@ with nodus.Sandbox(
 ```
 
 Creating a sandbox can start paid infrastructure. Nodus checks the account
-payment method, account headroom, and sandbox budget before billable placement.
+payment method and available credits before billable placement.
 Calling `nodus.Sandbox(name="research-agent")` reconnects to the named sandbox.
 See the [sandbox guide](https://nodus-compute.ai/docs/guides/agent-sandboxes/).
 
@@ -139,12 +137,90 @@ for `NAME_OR_ID`. Use the returned ID with older releases. See
 before retrying a request whose outcome is uncertain.
 
 ```bash
-nodus sandbox new ghcr.io/your-org/research-agent:1 --name research-agent --budget 5
+nodus sandbox new ghcr.io/your-org/research-agent:1 --name research-agent
 nodus sandbox ls
 nodus sandbox exec NAME_OR_ID "python -c 'print(2 + 2)'"
 nodus sandbox cost NAME_OR_ID
 nodus sandbox rm NAME_OR_ID
 ```
+
+## Open a GPU workspace
+
+A workspace is a saved project plus a GPU machine with VS Code, JupyterLab and
+SSH. Create it once, start compute when you need it, and stop when done.
+Compute runs until you stop it or your account credit runs out:
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    ws = client.workspaces.create("kernel-lab", gpu="H100")
+    try:
+        ws.start().wait_until_ready()
+        print(ws.connect("editor")["url"])
+    finally:
+        ws.stop()
+```
+
+See [GPU workspaces](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/workspaces.md) for uploads, SSH, background jobs
+and the `nodus workspace` commands.
+
+## Launch a GPU
+
+`launch` rents one GPU machine, waits until SSH accepts connections and returns
+its handle. It admits your `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or
+`id_rsa.pub` to that machine only, unless you pass `ssh_key`. With no local key
+it waits for SSH only when your team has saved keys. Otherwise it returns once
+compute is requested, and SSH works after you save a key.
+The machine runs until you stop it or your account credit runs out.
+Local disk is not kept after it stops. Pass `keep_files=True` to save project
+files as a workspace instead.
+
+```python
+import nodus
+
+with nodus.Client() as client:
+    gpu = client.launch("H100", wait=False)
+    try:
+        gpu.wait_until_ready()
+        print(gpu.ssh()["command"])
+    finally:
+        gpu.stop()
+```
+
+From the terminal:
+
+```bash
+nodus launch --gpu H100
+nodus ps
+nodus ssh NAME_OR_ID
+nodus stop NAME_OR_ID
+```
+
+`nodus ssh` opens the session with your OpenSSH client. Add `--print` to see
+the command and config entry instead.
+If the wait times out, the machine keeps running and the error names its ID.
+`nodus ps` shows running instances, workspaces and training, including
+machines launched with `keep_files=True`. In Python, call
+`client.compute.list(include_workspaces=True)`. Both need a Nodus server that
+provides the Compute list.
+
+### SSH keys
+
+Keys you save are admitted by every machine your team runs, including ones
+already running, within a few seconds. Keys are saved only when you add
+them. `launch` never saves one.
+
+```bash
+nodus ssh-key add
+nodus ssh-key ls
+nodus ssh-key rm FINGERPRINT
+```
+
+`nodus ssh-key add` reads `~/.ssh/id_ed25519.pub` unless you pass a path.
+Add `--generate` to create that key with `ssh-keygen` when you have none.
+In Python, use `client.ssh_keys.add(public_key)`, `list()` and
+`remove(fingerprint)`. Only public keys are accepted.
 
 ## Prefer the terminal?
 
@@ -153,9 +229,9 @@ nodus init
 nodus run
 ```
 
-`init` creates `nodus.toml` with the GPU smoke test and a $5 budget. Review the
+`init` creates `nodus.toml` with the GPU smoke test. Review the
 file, then `run` submits it and waits for completion. Edit the image, command,
-and budget to run your own workload. See [workload files](https://nodus-compute.ai/docs/getting-started/workload-files/).
+to run your own workload. See [workload files](https://nodus-compute.ai/docs/getting-started/workload-files/).
 
 ```bash
 nodus status WORKLOAD_ID
@@ -167,7 +243,7 @@ nodus cancel WORKLOAD_ID
 
 Nodus uses qualified estimates of runtime cost when every eligible configuration
 has comparable measurements. Otherwise it orders compatible on-demand
-configurations by hourly price. Spending limits and independent price limits
+configurations by hourly price. Available credits and independent price limits
 apply in both cases. This does not guarantee the lowest total cost or shortest
 runtime. Optimization tiers are not supported.
 Existing optimization arguments remain accepted for backward compatibility
@@ -176,7 +252,7 @@ but have no preference effect on new runs.
 Set `gpu="H100"` to require a GPU model, or omit it to let Nodus choose.
 No runtime estimate is needed. See [resource options](https://nodus-compute.ai/docs/reference/parameters/requirements/).
 
-GPU enforcement, live logs, login verification, and spending limits require a
+GPU enforcement, live logs and login verification require a
 compatible Nodus backend. Installing the SDK alone does not enable these server
 features. See [backend compatibility](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/operations/errors.md#backend-compatibility) before relying on them with a custom or older deployment.
 
@@ -203,11 +279,11 @@ See [RELEASING.md](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/R
 
 ## Benchmark a workload
 
-`client.benchmark()` accepts an API workload payload, `gpu_families`, `batch_sizes`, `regions`, `repetitions`, an explicit `budget`, and an explicit `idempotency_key`. Reuse the same key after an uncertain response. Both synchronous and asynchronous clients return the server report.
+`client.benchmark()` accepts an API workload payload, `gpu_families`, `batch_sizes`, `regions`, `repetitions`, and an explicit `idempotency_key`. Reuse the same key after an uncertain response. Both synchronous and asynchronous clients return the server report.
 
 The server divides one total cap into fixed cell allocations. Unused allocations are not redistributed. Use `{{batch_size}}` in a command argument when varying batch size. Inspect the returned workload IDs, posted ledger costs and measurements with `client.get_benchmark(id)`.
 
-`nodus benchmark run request.json --idempotency-key customer-attempt` accepts the API JSON shape with `workload`, `matrix` and `budget_usd`. `nodus benchmark get bm_ID` prints the report. These commands require a backend with the benchmark API.
+`nodus benchmark run request.json --idempotency-key customer-attempt` accepts the API JSON shape with `workload` and `matrix`. `nodus benchmark get bm_ID` prints the report. These commands require a backend with the benchmark API.
 
 See [durable steps](https://github.com/nodus-compute/Nodus-sdk-python/blob/main/docs/durable-steps.md) for serial recorded-result replay on deployments with the capability enabled.
 
@@ -289,7 +365,7 @@ to add the MCP tools and setup guidance together.
 Sign in once, then connect Claude, Cursor, Codex or another MCP client:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.7.0' nodus login
+uvx --from 'nodus-compute[mcp]==0.9.0' nodus login
 ```
 
 ```json
@@ -297,7 +373,7 @@ uvx --from 'nodus-compute[mcp]==0.7.0' nodus login
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.7.0", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.9.0", "nodus-mcp"]
     }
   }
 }

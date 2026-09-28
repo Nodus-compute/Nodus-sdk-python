@@ -177,8 +177,8 @@ def _create_payload(
     if project is not None and (template is None or source_asset_id is not None or bootstrap is not None):
         raise ValidationError("project requires a managed template and cannot combine source or bootstrap")
     selected_budget = budget if budget is not None else (outcome or {}).get("max_cost_usd")
-    if template is not None and (type(selected_budget) not in (int, float) or not math.isfinite(selected_budget) or selected_budget <= 0):
-        raise ValidationError("Managed sandboxes require an explicit positive finite budget")
+    if selected_budget is not None and (type(selected_budget) not in (int, float) or not math.isfinite(selected_budget) or selected_budget < 0):
+        raise ValidationError("Legacy budget must be a finite nonnegative value")
     if stuck_after_s is not None and (type(stuck_after_s) is not int or not 30 <= stuck_after_s <= 604800):
         raise ValidationError("stuck_after_s must be an integer from 30 through 604800")
     if type(cache_image) is not bool or (cache_image and image is None):
@@ -342,6 +342,8 @@ class _SandboxState:
     state: Any
     envelope: dict[str, Any]
     cost_usd: float
+    charge_state: str
+    final_charge_usd: float | None
     url: str
     created_at: datetime | None
     updated_at: datetime | None
@@ -354,6 +356,8 @@ class _SandboxState:
         self.state = None
         self.envelope = {}
         self.cost_usd = 0.0
+        self.charge_state = ""
+        self.final_charge_usd = None
         self.url = ""
         self.created_at = None
         self.updated_at = None
@@ -381,6 +385,8 @@ class _SandboxState:
             self.envelope = _obj(body.get("envelope"))
         if "cost_usd" in body:
             self.cost_usd = _num(body.get("cost_usd"))
+        self.charge_state = _text(body.get("charge_state"))
+        self.final_charge_usd = _num(body.get("final_charge_usd"), None)
         if "url" in body:
             self.url = _text(body.get("url"))
         for name in ("created_at", "updated_at", "last_activity_at", "terminal_at"):
@@ -660,12 +666,12 @@ class Sandbox(_SandboxState):
         workspace: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ):
-        if client is None and image is None and not name and template is None and project is None and source_asset_id is None and budget is None and not outcome:
-            raise ValidationError("Provide image or name, or an explicit budget for a managed sandbox")
         self._client = client
         self._owned_client = client is None
         self._init_state(sandbox_id)
         if client is None:
+            if budget is None and not any((image, template, project, name, source_asset_id, from_snapshot)):
+                raise ValidationError("Provide an image or name, or select a template or project for the sandbox.")
             from . import Client
 
             self._client = Client()
@@ -693,6 +699,8 @@ class Sandbox(_SandboxState):
                 "state": getattr(created.state, "value", created.state),
                 "envelope": created.envelope,
                 "cost_usd": created.cost_usd,
+                "charge_state": created.charge_state,
+                "final_charge_usd": created.final_charge_usd,
                 "failure": created.failure,
                 "network_usage": created.network_usage,
                 "url": created.url,

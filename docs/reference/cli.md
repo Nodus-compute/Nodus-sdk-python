@@ -32,7 +32,7 @@ Personal history requires a member-associated login. Shared keys can use team hi
 
 `submit` also defaults to `nodus.toml` when no path is given.
 `list --limit N` accepts 1 through 100.
-Set your image, command, budget, and advanced options in a
+Set your image, command and advanced options in a
 [workload file](../getting-started/workload-files.md).
 
 ## Monitor and collect results
@@ -60,6 +60,29 @@ If submission ends with an uncertain outcome, the CLI prints a recovery key.
 Add that `idempotency_key` to the same workload file before retrying. Keep its
 other settings unchanged to avoid submitting duplicate work.
 
+## GPU workspaces
+
+| Command | What it does |
+|---|---|
+| `nodus workspace new NAME --gpu H100` | Save a workspace configuration and print its ID without renting compute |
+| `nodus workspace new NAME --cpus 4 --memory-gb 16` | Save a CPU-only workspace |
+| `nodus workspace ls` | Show workspace IDs, names, states, the ready tool and session cost |
+| `nodus workspace get NAME_OR_ID` | Print the full workspace view as JSON |
+| `nodus workspace start NAME_OR_ID --wait` | Rent compute, restore saved files and wait until the editor and notebook are ready |
+| `nodus workspace connect NAME_OR_ID --tool notebook` | Print a browser URL for the editor or notebook |
+| `nodus workspace ssh NAME_OR_ID` | Print the SSH command, an ssh_config entry and a VS Code Remote link |
+| `nodus workspace run NAME_OR_ID "python train.py" --budget 5` | Run a command against the saved project as a workload and print its ID |
+| `nodus workspace jobs NAME_OR_ID` | List workloads submitted from the workspace |
+| `nodus workspace upload NAME_OR_ID ./project` | Replace the saved project while stopped and wait for verification |
+| `nodus workspace download NAME_OR_ID ./saved.tar` | Save the project files to a verified tar archive |
+| `nodus workspace stop NAME_OR_ID --wait` | Save files, release compute and wait until stopped |
+
+`--budget` for `run` is required. `new` accepts `--size-gb` for saved project
+storage, defaulting to the deployment's capacity, `--disk-gb` for runtime disk
+and `--ssh-key` for a public key. Compute runs until you stop it or your
+account credit runs out. Mutations accept
+`--idempotency-key` for retrying an uncertain response with the same identity.
+
 ## Agent sandboxes
 
 SDK 0.5.1 accepts active names or exact sandbox IDs for the commands below.
@@ -67,10 +90,10 @@ Older releases require IDs for sandbox commands.
 
 | Command | What it does |
 |---|---|
-| `nodus sandbox new IMAGE --name NAME --budget USD` | Admit a sandbox and print its ID while startup continues |
-| `nodus sandbox new --project . --budget USD` | Upload a project and use the qualified managed tools template |
-| `nodus sandbox new --github-repo OWNER/REPO --budget USD` | Use a repository accessible through your connected GitHub account |
-| `nodus sandbox new --source-asset-id ID --budget USD` | Reuse an immutable uploaded project |
+| `nodus sandbox new IMAGE --name NAME` | Admit a sandbox and print its ID while startup continues |
+| `nodus sandbox new --project .` | Upload a project and use the qualified managed tools template |
+| `nodus sandbox new --github-repo OWNER/REPO` | Use a repository accessible through your connected GitHub account |
+| `nodus sandbox new --source-asset-id ID` | Reuse an immutable uploaded project |
 | `nodus sandbox ls` | Show sandbox IDs, names, states and costs |
 | `nodus sandbox detail NAME_OR_ID` | Inspect the sandbox and its admitted settings |
 | `nodus sandbox exec NAME_OR_ID COMMAND` | Run a command and stream its output |

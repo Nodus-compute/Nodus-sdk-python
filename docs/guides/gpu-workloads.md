@@ -15,7 +15,6 @@ with nodus.Client() as client:
             "print(torch.cuda.get_device_name(0))",
         ],
         peak_memory_gb=24,
-        budget=5,
     )
     print(workload.id)
     done = workload.wait()
@@ -23,7 +22,7 @@ with nodus.Client() as client:
         raise RuntimeError("GPU smoke test did not complete successfully")
 ```
 
-The budget is illustrative, not a price guarantee. A feasible route still needs
+A feasible route needs
 to fit your account, region policy, and available capacity.
 
 For training, [build an image](containers-and-scripts.md) containing your code,
@@ -38,7 +37,6 @@ with nodus.Client() as client:
         command=["python", "/app/train.py", "--epochs", "3"],
         model="LoRA-fine-tune",
         peak_memory_gb=24,
-        budget=25,
     )
     print(workload.id)
     done = workload.wait()
@@ -71,13 +69,12 @@ with nodus.Client() as client:
         gpu="H100",
         gpu_count=8,
         peak_memory_gb=80,
-        budget=100,
     )
     print(workload.id)
 ```
 
 This example requires eight H100s on one machine with at least 80 GB per GPU.
-The budget is illustrative and applies to the whole run. Capacity is not
+Capacity is not
 guaranteed. Eight devices do not imply NVLink, NVSwitch or pooled memory.
 Nodus preserves the distributed command and does not rewrite your training
 arguments. See [resource requirements](../reference/parameters/requirements.md)

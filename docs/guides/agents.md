@@ -30,8 +30,7 @@ including when using starter credits. For unattended automation, supply
 
 ## Calculate on a GPU and download JSON
 
-This example submits paid compute with a $1 workload budget. Review that budget
-against the user's authorization before running it. The calculation is small,
+This example submits paid compute after the user authorizes the work. The calculation is small,
 but provisioning and execution can still incur charges or fail to find capacity.
 
 Save as `gpu_result.py`. Run one copy at a time in a dedicated directory. The
@@ -69,7 +68,6 @@ else:
         "image": "pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime",
         "command": ["python", "-u", "-c", program],
         "outputs": {"result": "result.json"},
-        "budget": 1,
         "idempotency_key": str(uuid.uuid4()),
     }}
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -121,11 +119,10 @@ If submission has an uncertain outcome, reuse the exact saved request and
 `idempotency_key`. Changing the payload under that key is a conflict. Do not
 create a fresh key just because a request timed out. Keep `gpu-run.json` until
 the run is accounted for. To intentionally start different work, use a new
-directory and review its budget. See [CI and safe retries](ci-and-idempotency.md).
+directory and review the work you intend to run. See [CI and safe retries](ci-and-idempotency.md).
 
-`budget` limits this workload's spending. It is separate from the local wait
-timeout and account spending limits. Do not increase it or launch additional
-runs beyond the user's scope without authorization.
+Customer budgets do not limit spending. The local wait timeout only limits observation.
+Do not launch additional runs beyond the user's authorized scope.
 
 ## Choose resources deliberately
 
@@ -139,7 +136,7 @@ Optimization tiers are not supported. Omit
 but have no preference effect on new runs. Nodus uses qualified estimates of
 runtime cost when every eligible configuration has comparable measurements.
 Otherwise it orders compatible on-demand configurations by hourly price.
-Spending limits and independent price limits apply in both cases. Your explicit
+Available credits and independent price limits apply in both cases. Your explicit
 GPU and resource requirements remain mandatory. This does not guarantee the
 lowest total cost or shortest runtime. Consult the
 [GPU models and resource options](../reference/parameters/requirements.md)
@@ -151,7 +148,7 @@ image that supports the selected hardware.
 | Task | What to add | Practical benefit |
 |---|---|---|
 | Fine-tuning or evaluation | [Code and dataset assets](assets.md), required packages, declared metrics and checkpoints | Run your existing program with remote GPU memory and retrieve its artifacts |
-| Parameter experiments | [Async submissions](async-sweeps.md) with a separate key and budget for each run | Manage independent experiments from one process, subject to capacity and authorized total spend |
+| Parameter experiments | [Async submissions](async-sweeps.md) with a separate key for each run | Manage independent experiments from one process, subject to capacity and authorized total spend |
 | Processing pipelines | [Explicit stages](multi-stage-workloads.md) and file handoffs | Express dependencies and collect named outputs from each step |
 | Repeatable automation | [Workload files](../getting-started/workload-files.md) and [CI retry keys](ci-and-idempotency.md) | Keep the reviewed request reproducible across agents and job restarts |
 
