@@ -37,7 +37,19 @@ from pathlib import Path
 from ._freeze import WorkloadFreeze
 from ._outputs import download_path, verified_file, output_destinations
 from ._assets import Asset, Assets, AsyncAssets
+from ._rl_setup import RLSetup
+from ._rl_events import (
+    EpisodeScore,
+    EventValidationError,
+    RawTraceFields,
+    RLEventEmitter,
+)
 from ._rl import (
+    RLComparison,
+    RLEnvironment,
+    RLExample,
+    RLPhaseSummary,
+    RLSummary,
     AsyncRL, RL, RLRecipe, RLRunPreview, RLEvent, RLEventRow, RLEventPage,
     RLGradingReceipt, RLGradingResults,
 )
@@ -130,6 +142,16 @@ __all__ = [
     "AsyncRL",
     "RLRecipe",
     "RLRunPreview",
+    "RLSetup",
+    "RLComparison",
+    "RLEnvironment",
+    "RLExample",
+    "RLPhaseSummary",
+    "RLSummary",
+    "RLEventEmitter",
+    "EpisodeScore",
+    "RawTraceFields",
+    "EventValidationError",
     "RLEvent",
     "RLEventRow",
     "RLEventPage",
@@ -878,6 +900,7 @@ class Client(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "Workload":
@@ -924,6 +947,7 @@ class Client(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )
@@ -1623,6 +1647,7 @@ class AsyncClient(_Transport):
         requirements: Requirements | dict[str, Any] | None = None,
         placement: Placement | dict[str, Any] | None = None,
         idempotency_key: str | None = None,
+        rl: "RLSetup | dict[str, Any] | None" = None,
         extra: dict[str, Any] | None = None,
         **unknown: Any,
     ) -> "AsyncWorkload":
@@ -1651,6 +1676,7 @@ class AsyncClient(_Transport):
             policy=policy,
             requirements=requirements,
             placement=placement,
+            rl=rl,
             extra=extra,
             **unknown,
         )

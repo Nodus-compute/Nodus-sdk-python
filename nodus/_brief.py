@@ -23,6 +23,7 @@ import warnings
 from datetime import datetime, timezone
 from typing import Any
 
+from ._rl_setup import rl_payload
 from .types import WorkloadStatus
 from ._connections import _live_refs, _group
 from ._outputs import portable_output_name
@@ -185,6 +186,7 @@ def build_payload(
     stages: list[dict[str, Any]] | None = None,
     framework: str | None = None,
     policy: dict[str, Any] | None = None,
+    rl: Any = None,
     extra: dict[str, Any] | None = None,
     **unknown: Any,
 ) -> dict[str, Any]:
@@ -330,6 +332,12 @@ def build_payload(
             raise ValueError(UNSUPPORTED["expected_runtime_hours"])
         if "requirements" in stage:
             stage["requirements"] = validate_requirements(stage["requirements"])
+    if rl is not None:
+        # extra is merged earlier, so without this check one of the two would
+        # silently win.
+        if "rl" in payload:
+            raise ValueError("Pass RL settings once: use rl= or extra={'rl': ...}, not both")
+        payload["rl"] = rl_payload(rl)
     _warn_about_the_money(payload)
     return payload
 
@@ -489,8 +497,13 @@ def _validate_outputs(outputs: dict[str, str | OutputSpec] | None) -> None:
                     raise ValueError("Outputs in one stage must use distinct sink tables.")
                 targets.add(target)
             path = path["path"]
-        if not portable_output_name(name):
-            raise ValueError("Output names must be portable file names using letters, digits, dots, underscores or hyphens.")
+        # The server stores results after the work has run, under this rule,
+        # and refuses other names at submission. Portability is for downloads.
+        if (not isinstance(name, str) or not re.fullmatch(r"[a-z0-9_][a-z0-9._-]{0,63}", name)
+                or name.startswith("nodus.") or not portable_output_name(name)):
+            raise ValueError(
+                "Output names must be 1 to 64 lowercase letters, digits, dots, underscores or hyphens, "
+                "not starting with a dot or hyphen or with nodus.")
         if (not isinstance(path, str) or not path or "\\" in path or ":" in path
                 or any(ord(c) < 32 for c in path) or PurePosixPath(path).is_absolute()
                 or any(part in ("", ".", "..") for part in path.split("/"))):

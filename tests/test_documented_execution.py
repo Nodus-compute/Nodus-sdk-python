@@ -26,6 +26,8 @@ import pytest
 from test_agent_steps import journal_socket
 
 ROOT = Path(__file__).parents[1]
+RL_SUMMARY = json.loads((Path(__file__).parent / "fixtures" / "rl-summary.json").read_text())
+RL_CATALOG = json.loads((Path(__file__).parent / "fixtures" / "rl-environments.json").read_text())
 DATA = b'{"sum": 6, "sum_of_squares": 385, "gpu": "Synthetic GPU"}\n'
 DIGEST = hashlib.sha256(DATA).hexdigest()
 
@@ -156,6 +158,10 @@ def docs_api(monkeypatch):
                                               "format": "parquet", "row_count": 10, "bytes": 256, "created_at": "2026-09-19T00:00:00Z"}})
             if path == "/v1/assets":
                 return self.reply({"assets": [], "upload_idempotency": True, "max_import_bytes": 1048576})
+            if path == "/v1/rl-environments":
+                return self.reply(RL_CATALOG)
+            if path == "/v1/workloads/wl_docs/rl-summary":
+                return self.reply(RL_SUMMARY)
             if path == "/v1/workloads":
                 return self.reply({"workloads": [row]})
             if path == "/v1/workloads/wl_docs":
@@ -333,6 +339,10 @@ def docs_api(monkeypatch):
                 if payload != {"mode": "execute", "host_id": "host_docs"}:
                     return self.reply({"error": "invalid_enrollment"}, 400)
                 return self.reply({"id": "pet_docs", "mode": "execute", "token": "synthetic-token", "expires_at": "2026-09-18T12:00:00Z"}, 201)
+            if path == "/v1/rl-environments/gsm8k/examples/gsm8k-trained/runs":
+                if not self.headers.get("Idempotency-Key") or set(payload or {}) - {"name"}:
+                    return self.reply({"error": "invalid_json"}, 400)
+                return self.reply({"workload_id": "wl_docs", "status": "accepted", "revision": 1}, 202)
             if path == "/v1/workloads":
                 submissions.append(payload)
                 if not self.headers.get("Idempotency-Key"):
