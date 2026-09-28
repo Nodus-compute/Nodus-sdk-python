@@ -3862,7 +3862,18 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Combined verified logical saved-file payload, excluding metadata, requests and retained recovery copies."
+            "description": "Verified saved-file payload covered by the current policy. Earlier research storage is reported separately in legacy_retained_bytes."
+          },
+          "legacy_retained_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Saved research payload retaining earlier pricing, excluded from the current policy allowance."
+          },
+          "legacy_charged_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Lifetime posted research storage charges under the earlier policy."
           },
           "billable_bytes": {
             "type": "integer",
@@ -3878,7 +3889,7 @@
           "charged_usd": {
             "type": "number",
             "minimum": 0,
-            "description": "Lifetime posted account saved-file charges, separate from compute."
+            "description": "Lifetime posted storage charges under the current policy, separate from compute and legacy_charged_usd."
           },
           "status": {
             "type": "string",
