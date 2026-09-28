@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "nodus-compute[mcp]==0.9.0",
+        "nodus-compute[mcp]==0.10.0",
         "nodus-mcp"
       ]
     }

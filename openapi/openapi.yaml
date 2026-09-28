@@ -9700,7 +9700,8 @@
           "assistant_template": {
             "type": "string",
             "enum": [
-              "nodus:claude-assistant-v1"
+              "nodus:claude-assistant-v1",
+              "nodus:claude-assistant-v2"
             ],
             "description": "Qualified built-in assistant from assistant_templates in the managed model catalog. Supplies its installed entrypoint and environment. No project, setup command or provider credential is required."
           },
@@ -9883,7 +9884,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "const": "nodus:claude-assistant-v1"
+            "enum": ["nodus:claude-assistant-v1", "nodus:claude-assistant-v2"]
           },
           "label": {
             "type": "string"
@@ -10630,7 +10631,8 @@
           "assistant_template": {
             "type": "string",
             "enum": [
-              "nodus:claude-assistant-v1"
+              "nodus:claude-assistant-v1",
+              "nodus:claude-assistant-v2"
             ],
             "description": "Qualified built-in assistant from assistant_templates in the managed model catalog. Supplies its installed entrypoint and environment. No project, setup command or provider credential is required."
           },
