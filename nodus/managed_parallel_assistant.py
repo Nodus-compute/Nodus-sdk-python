@@ -74,8 +74,8 @@ def _plan(task, workers):
     response = _agent.model(messages, call_id='plan', max_output_tokens=_output_limit(), system=system)
     try:
         text = _text(response).strip()
-        lines = text.splitlines()
-        if len(lines) >= 3 and lines[0] in ('```json', '```') and lines[-1].strip() == '```':
+        lines = text.split('\n')
+        if len(lines) >= 3 and lines[0].strip() in ('```json', '```') and lines[-1].strip() == '```':
             text = '\n'.join(lines[1:-1])
         plan = json.loads(text)
         if not isinstance(plan, dict) or set(plan) != {'answer', 'tasks'}:

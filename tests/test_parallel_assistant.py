@@ -178,10 +178,15 @@ def test_completion_pages_keep_finish_order_across_parent_recovery(team):
     assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 6
 
 
-def test_greeting_answers_without_starting_a_child(team):
+@pytest.mark.parametrize('wrapper,answer', [
+    ('{}', 'Hi!'),
+    ('```json \t\n{}\n```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
+    ('```\r\n{}\r\n```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
+])
+def test_greeting_answers_without_starting_a_child(team, wrapper, answer):
     state, drive, children, _, messages, _ = team
-    state['plan'] = {'answer': 'Hi!', 'tasks': []}
-    assert drive(task='hi')['text'] == 'Hi!'
+    state['plan_text'] = wrapper.format(json.dumps({'answer': answer, 'tasks': []}, ensure_ascii=False))
+    assert drive(task='hi')['text'] == answer
     assert not children and not messages
     assert len(state['model_effects']) == 1
 
