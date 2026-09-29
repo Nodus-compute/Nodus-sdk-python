@@ -222,6 +222,20 @@ def test_unknown_planner_reply_never_starts_a_repair_or_child(team):
     assert {r['call_id'] for action, r in state['requests'] if action == 'model_begin'} == {'plan'}
 
 
+@pytest.mark.parametrize('content', [[], [{'type': 'text', 'text': '  '}],
+                                     [{'type': 'thinking', 'thinking': 'No completed text'}]])
+def test_unreadable_completed_plan_never_starts_a_repair_or_child(team, content):
+    state, drive, children, _, _, db = team
+    state['plan_replies'] = {'plan': {'model': 'nodus:claude-test', 'content': content,
+        'stop_reason': 'end_turn', 'usage': {'input_tokens': 20, 'output_tokens': 8}}}
+    for _ in range(2):
+        with pytest.raises(nodus.StepOutcomeUnknown):
+            drive()
+    assert not children
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 1
+    assert {r['call_id'] for action, r in state['requests'] if action == 'model_begin'} == {'plan'}
+
+
 def test_lost_repair_acknowledgement_reuses_both_accepted_calls(team):
     state, drive, children, _, _, db = team
     answer = state['model_response']

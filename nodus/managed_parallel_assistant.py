@@ -115,7 +115,7 @@ def _plan(task, workers):
             return {'messages': messages, 'tasks': [], 'direct': _result(response)}
         try:
             answer, tasks = _parse_plan(response, workers)
-        except (ValueError, TypeError, StepOutcomeUnknown):
+        except (ValueError, TypeError):
             continue
         return {'messages': messages, 'tasks': tasks, 'direct': _result(response, answer)}
     raise StepOutcomeUnknown('The assistant could not produce a valid plan after two corrections')

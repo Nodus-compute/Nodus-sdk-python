@@ -10,11 +10,11 @@ from test_agent_steps import journal_socket
 from nodus.agent_runtime import run
 
 
-def model_entrypoint():
+def model_entrypoint(**options):
     @nodus.step(name='model-answer', version='1', effect='pure')
     def answer(task):
         return nodus.agent.model([{'role': 'user', 'content': task}], call_id='answer',
-                                model='nodus:claude-test', max_output_tokens=128)
+                                model='nodus:claude-test', max_output_tokens=128, **options)
     def main(event):
         return answer(event['task'], _step_id='answer')
     return main
@@ -49,6 +49,42 @@ def test_hosted_model_response_replays_after_driver_loses_all_acknowledgements(j
     assert len(state['model_effects']) == 1
     claims = [body['claim_token'] for action, body in state['requests'] if action == 'model_begin']
     assert len(set(claims)) == 2
+
+
+def test_response_schema_survives_lost_acknowledgement_and_replay(journal_socket):
+    _, state = journal_socket
+    schema = {'type': 'object', 'properties': {'ready': {'type': 'boolean'}},
+              'required': ['ready'], 'additionalProperties': False}
+    state.update(input={'task': 'Is the report ready?'}, lost_model_status=3,
+                 recovery_policy='checkpoint-v1', checkpoint_id='cp_saved')
+    main = model_entrypoint(response_schema=schema)
+    with pytest.raises(nodus.StepOutcomeUnknown):
+        run(main, run_id='cycle-42', version='1')
+    assert run(main, run_id='cycle-42', version='1')['content'][0]['text'] == 'Saved answer'
+    requests = [body for action, body in state['requests'] if action == 'model_begin']
+    assert len(requests) == 2
+    for body in requests:
+        assert body['input']['output_config'] == {'format': {'type': 'json_schema', 'schema': schema}}
+    assert requests[0]['input'] == requests[1]['input']
+    assert len(state['model_effects']) == 1
+
+
+@pytest.mark.parametrize('schema', [[], {'type': 'array'}, {'type': 'object'},
+                                    {'type': 'object', 'additionalProperties': True}])
+def test_invalid_response_schema_rejects_before_hosted_call(journal_socket, schema):
+    _, state = journal_socket
+    state['input'] = {'task': 'Do not dispatch invalid schemas'}
+    @nodus.step(name='reject-invalid-schema', version='1', effect='pure')
+    def reject(task):
+        with pytest.raises(nodus.ValidationError, match='schema'):
+            nodus.agent.model([{'role': 'user', 'content': task}], call_id='answer',
+                              model='nodus:claude-test', max_output_tokens=128, response_schema=schema)
+        return {'rejected': True}
+    def main(event):
+        return reject(event['task'], _step_id='answer')
+    result = run(main, run_id='cycle-42', version='1')
+    assert result == {'rejected': True}
+    assert not any(action == 'model_begin' for action, _ in state['requests'])
 
 
 @pytest.mark.parametrize('journal_ack_lost', [False, True])
