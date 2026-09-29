@@ -182,6 +182,7 @@ def test_completion_pages_keep_finish_order_across_parent_recovery(team):
     ('{}', 'Hi!'),
     ('```json \t\n{}\n```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
     ('```\r\n{}\r\n```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
+    ('```json\r{}\r```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
 ])
 def test_greeting_answers_without_starting_a_child(team, wrapper, answer):
     state, drive, children, _, messages, _ = team
