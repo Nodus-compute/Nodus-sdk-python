@@ -24,7 +24,7 @@ def text_messages(messages):
             raise ValidationError('Hosted messages require a user or assistant role and nonempty text content')
 
 
-def request(messages, *, call_id, max_output_tokens, model=None, system=None):
+def request(messages, *, call_id, max_output_tokens, model=None, system=None, response_schema=None):
     session, scope = _agent._current.get(), _agent._step_authority.get()
     if not _agent._managed.get() or session is None or scope is None:
         raise ValidationError('Hosted model access requires an executing managed step')
@@ -41,6 +41,11 @@ def request(messages, *, call_id, max_output_tokens, model=None, system=None):
     payload = {'model': model, 'messages': messages, 'max_tokens': max_output_tokens}
     if system is not None:
         payload['system'] = system
+    if response_schema is not None:
+        if (not isinstance(response_schema, dict) or response_schema.get('type') != 'object'
+                or response_schema.get('additionalProperties') is not False):
+            raise ValidationError('Hosted response_schema requires an object JSON schema with additionalProperties false')
+        payload['output_config'] = {'format': {'type': 'json_schema', 'schema': response_schema}}
     raw = base64.b64decode(_agent.encode(payload))
     if len(raw) > _MAX_INPUT:
         raise ValidationError('Hosted model input exceeds 128 KiB')
