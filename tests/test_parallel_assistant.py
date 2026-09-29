@@ -109,6 +109,7 @@ def team(journal_socket, monkeypatch, tmp_path):
     def response(request):
         if request['call_id'] == 'plan':
             content = json.dumps(state.get('plan', {'answer': '', 'tasks': ['Evaluate latency', 'Evaluate reliability']}))
+            content = state.get('plan_text', state.get('plan_wrapper', '{}').format(content))
         elif request['run_id'] == 'parent':
             content = 'Combined latency and reliability findings'
         else:
@@ -136,8 +137,10 @@ def team(journal_socket, monkeypatch, tmp_path):
     return state, drive, children, results, messages, db
 
 
-def test_normal_request_starts_children_before_join_and_combines_their_peer_findings(team, tmp_path):
+@pytest.mark.parametrize('wrapper', ['{}', '```json\n{}\n```', '```\n{}\n```', ' ```json\r\n{}\r\n```\n'])
+def test_normal_request_starts_children_before_join_and_combines_their_peer_findings(team, tmp_path, wrapper):
     state, drive, children, results, messages, db = team
+    state['plan_wrapper'] = wrapper
     assert drive() is None
     assert len(children) == 2
     operations = [action for action, _ in state['requests']]
@@ -175,10 +178,16 @@ def test_completion_pages_keep_finish_order_across_parent_recovery(team):
     assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 6
 
 
-def test_greeting_answers_without_starting_a_child(team):
+@pytest.mark.parametrize('wrapper,answer', [
+    ('{}', 'Hi!'),
+    ('```json \t\n{}\n```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
+    ('```\r\n{}\r\n```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
+    ('```json\r{}\r```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
+])
+def test_greeting_answers_without_starting_a_child(team, wrapper, answer):
     state, drive, children, _, messages, _ = team
-    state['plan'] = {'answer': 'Hi!', 'tasks': []}
-    assert drive(task='hi')['text'] == 'Hi!'
+    state['plan_text'] = wrapper.format(json.dumps({'answer': answer, 'tasks': []}, ensure_ascii=False))
+    assert drive(task='hi')['text'] == answer
     assert not children and not messages
     assert len(state['model_effects']) == 1
 
@@ -191,6 +200,23 @@ def test_greeting_answers_without_starting_a_child(team):
 def test_unusable_plan_never_spawns_or_reissues_its_paid_call(team, plan):
     state, drive, children, _, _, db = team
     state['plan'] = plan
+    for _ in range(2):
+        with pytest.raises(nodus.StepOutcomeUnknown):
+            drive()
+    assert not children
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 1
+
+
+@pytest.mark.parametrize('wrapper', [
+    'Here is the plan:\n```json\n{}\n```',
+    '```json\n{}\n```\nAnother answer',
+    '```json\n{}',
+    '```python\n{}\n```',
+    '```json\n{}\n```\n```json\n{{"answer":"other","tasks":[]}}\n```',
+])
+def test_ambiguous_or_incomplete_fences_never_spawn_or_recharge(team, wrapper):
+    state, drive, children, _, _, db = team
+    state['plan_wrapper'] = wrapper
     for _ in range(2):
         with pytest.raises(nodus.StepOutcomeUnknown):
             drive()
