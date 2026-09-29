@@ -64,6 +64,7 @@ def _plan(task, workers):
         'For greetings and simple questions answer directly without specialists. '
         'Return only JSON with exactly these fields: "answer" and "tasks". For parallel work, "answer" '
         'is an empty string and "tasks" is a list of distinct, self-contained instructions. Each task must '
+        'describe work to perform without supplying conclusions or numerical answers to repeat. Each task must '
         'be at most 8192 UTF-8 bytes and the complete task list must fit 16 KiB of JSON. '
         'For a direct answer, "answer" is the complete answer and "tasks" is []. '
         'The specialists can reason about supplied information. Do not claim access to tools or data they do not have.'
@@ -72,7 +73,11 @@ def _plan(task, workers):
         messages = _messages(_conversation(directory), task, system)
     response = _agent.model(messages, call_id='plan', max_output_tokens=_output_limit(), system=system)
     try:
-        plan = json.loads(_text(response))
+        text = _text(response).strip()
+        lines = text.splitlines()
+        if len(lines) >= 3 and lines[0] in ('```json', '```') and lines[-1].strip() == '```':
+            text = '\n'.join(lines[1:-1])
+        plan = json.loads(text)
         if not isinstance(plan, dict) or set(plan) != {'answer', 'tasks'}:
             raise ValueError('plan shape')
         answer, tasks = plan['answer'], plan['tasks']
