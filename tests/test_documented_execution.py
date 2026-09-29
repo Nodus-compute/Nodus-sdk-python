@@ -216,6 +216,11 @@ def docs_api(monkeypatch):
                 return self.reply({"error": "unauthorized"}, 401)
             if path == "/v1/connections/conn_docs":
                 return self.reply(b"", 204)
+            if path == "/v1/research-workspaces/ws_docs":
+                assert self.headers.get("Idempotency-Key") and workspace_state["state"] == "stopped"
+                assert int(self.headers.get("Content-Length", 0)) == 0
+                return self.reply({"id": "ws_docs", "name": "kernel-lab", "deleted": True,
+                                   "deleted_at": "2026-09-28T10:00:00Z"})
             if path == "/v1/research-workspaces/ws_docs/files":
                 payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
                 assert payload == {"storage_revision": 1}
@@ -457,6 +462,9 @@ def test_python_documentation_executes(path, number, body, docs_api, tmp_path, m
         with tarfile.open(tmp_path / "saved-project.tar") as saved:
             assert saved.extractfile("result.json").read() == DATA
         assert ("DELETE", "/v1/research-workspaces/ws_docs/files") in docs_api[1]
+    if path.name == "workspaces.md" and number == 3:
+        assert namespace["receipt"]["deleted"] is True
+        assert ("DELETE", "/v1/research-workspaces/ws_docs") in docs_api[1]
     # Compile embedded Python argv too, without pretending it ran on a GPU.
     for payload in docs_api[2]:
         sources = [payload.get("source", {})] + [s.get("source", {}) for s in payload.get("stages", [])]

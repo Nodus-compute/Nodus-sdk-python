@@ -131,6 +131,18 @@ expected results.
 
 ## Hosted Claude assistant
 
+SDK 0.10.0 also supports `nodus:claude-assistant-v2` when the account's model
+catalog advertises it. This template automatically delegates useful independent
+work without requiring a request for parallel agents. Specialists exchange and
+assess findings before the coordinator returns one combined answer. Greetings
+and simple questions can answer directly. It accepts one nonempty `task` string
+in at most 32 KiB of JSON. The result includes the contributing `children` run
+IDs. Worker capacity, account funding and accepted explicit limits still apply.
+If the coordinator exhausts recovery while starting its team, Nodus requests
+cancellation of admitted specialists. Uncertain results remain available for
+inspection instead of being reported as a completed answer.
+The version 1 template keeps its single-assistant behavior.
+
 Hosted model methods require SDK 0.7.1 or later. Accounts admitted to hosted
 model access can deploy the installed text assistant
 without uploading a project or providing a model API key. Pass an enabled public

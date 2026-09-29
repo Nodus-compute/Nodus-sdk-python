@@ -29,6 +29,21 @@ def test_owned_assistant_deployment_uses_accepted_model_without_project_upload()
     assert requests[0].headers['Idempotency-Key'] == 'reports-deployment'
 
 
+def test_automatic_assistant_uses_versioned_entrypoint_without_invented_limits():
+    requests = []
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(202, json={'id': 'ag_team', 'status': 'active',
+            'assistant_template': 'nodus:claude-assistant-v2', 'model': 'nodus:claude-test'})
+    with client_for(handle) as client:
+        client.agents.create(name='reports', assistant_template='nodus:claude-assistant-v2',
+                             model='nodus:claude-test', idempotency_key='reports-team')
+    assert len(requests) == 1
+    assert json.loads(requests[0].content) == {'name': 'reports',
+        'entrypoint': 'nodus.managed_parallel_assistant:main',
+        'assistant_template': 'nodus:claude-assistant-v2', 'model': 'nodus:claude-test'}
+
+
 @pytest.mark.parametrize('options', [
     {'model': None}, {'model': 'private-provider-model'}, {'model_max_output_tokens': True},
     {'model_max_output_tokens': 4097}, {'project': '.'}, {'entrypoint': 'customer:main'},

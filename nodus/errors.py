@@ -22,7 +22,7 @@ __all__ = [
     "NodusError",
     "WorkspaceNotReadyError",
     "StepOutcomeUnknown", "StepDefinitionConflict", "StepResultExpired", "StepFailed",
-    "AgentChildrenUnavailable", "AgentBrokerUnavailable", "AgentMessagesUnavailable", "BrokerRefused",
+    "AgentChildrenUnavailable", "AgentBrokerUnavailable", "AgentMessagesUnavailable", "AgentMessageRecipientUnavailable", "BrokerRefused",
     "ConfigurationError",
     "AuthenticationError",
     "NotFoundError",
@@ -367,6 +367,7 @@ def error_from_response(
         cls = APIError
     elif status_code == 409 and isinstance(code, str) and code in {
         "workspace_not_ready", "workspace_starting", "workspace_saving", "workspace_ssh_key_required",
+        "workspace_active", "workspace_transfer_pending",
     }:
         cls = WorkspaceNotReadyError
     elif status_code == 409 and code == "asset_in_use":
@@ -414,6 +415,10 @@ class AgentChildrenUnavailable(NodusError):
 
 class AgentMessagesUnavailable(NodusError):
     """The assigned group or runtime has not enabled durable peer messages."""
+
+
+class AgentMessageRecipientUnavailable(NodusError):
+    """The recipient cannot accept this message and no new send was recorded."""
 
 
 class AgentBrokerUnavailable(NodusError):

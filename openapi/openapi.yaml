@@ -3543,7 +3543,8 @@
             "format": "int64",
             "description": "Maximum saved-project payload bytes supported by workspace source preparation. The full-capacity path supports 10,000,000,000 bytes with separate bounded archive metadata. Ordinary asset import limits are unchanged."
           },
-          "account_funded_sessions": {"type": "boolean", "description": "Whether sessions use account funding without a per-session spending cap. Account credit and spending controls apply, and a session runs until it is stopped. Older servers may omit this capability, which clients must treat as false."}
+          "account_funded_sessions": {"type": "boolean", "description": "Whether sessions use account funding without a per-session spending cap. Account credit and spending controls apply, and a session runs until it is stopped. Older servers may omit this capability, which clients must treat as false."},
+          "deletion_available": {"type": "boolean", "description": "Whether stopped workspace and instance deletion is supported. Clients treat an omitted capability as false. Deletion can be available while new compute launches are disabled."}
         }
       },
       "WorkspaceWorkloadRequest": {
@@ -8907,6 +8908,28 @@
         ],
         "type": "object"
       },
+      "OperationWorkspacesDeleteArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[!-~]{1,200}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
       "OperationWorkspacesStopArguments": {
         "additionalProperties": false,
         "properties": {
@@ -9286,6 +9309,9 @@
           },
           {
             "$ref": "#/components/schemas/OperationWorkspacesStartArguments"
+          },
+          {
+            "$ref": "#/components/schemas/OperationWorkspacesDeleteArguments"
           },
           {
             "$ref": "#/components/schemas/OperationWorkspacesStopArguments"
@@ -9715,7 +9741,8 @@
           "assistant_template": {
             "type": "string",
             "enum": [
-              "nodus:claude-assistant-v1"
+              "nodus:claude-assistant-v1",
+              "nodus:claude-assistant-v2"
             ],
             "description": "Qualified built-in assistant from assistant_templates in the managed model catalog. Supplies its installed entrypoint and environment. No project, setup command or provider credential is required."
           },
@@ -9898,7 +9925,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "const": "nodus:claude-assistant-v1"
+            "enum": ["nodus:claude-assistant-v1", "nodus:claude-assistant-v2"]
           },
           "label": {
             "type": "string"
@@ -10645,7 +10672,8 @@
           "assistant_template": {
             "type": "string",
             "enum": [
-              "nodus:claude-assistant-v1"
+              "nodus:claude-assistant-v1",
+              "nodus:claude-assistant-v2"
             ],
             "description": "Qualified built-in assistant from assistant_templates in the managed model catalog. Supplies its installed entrypoint and environment. No project, setup command or provider credential is required."
           },
@@ -18613,6 +18641,107 @@
       }
     },
     "/v1/research-workspaces/{id}": {
+      "delete": {
+        "operationId": "deleteResearchWorkspace",
+        "summary": "Delete a stopped workspace and its saved files",
+        "tags": [
+          "Research workspaces"
+        ],
+        "description": "Requires stopped or failed compute with confirmed release and no pending file upload. Cancels a pending schedule, stops storage billing for the current saved files and releases the name and team workspace slot. Past sessions, charges and admitted workloads remain. Files pinned by an existing export or workload remain until their ownership ends. Reuse the same Idempotency-Key after an uncertain response.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Saved workspace identifier."
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Stable retry key for this exact deletion."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace deleted or original deletion replayed",
+            "headers": {
+              "Idempotent-Replayed": {
+                "description": "true when this is the saved response for the same retry key.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "deleted",
+                    "deleted_at"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "deleted_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace is unknown, belongs to another team or was deleted with a different retry key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "workspace_active requires compute to stop and saving to finish. workspace_transfer_pending requires the pending upload to finish or be discarded. idempotency_conflict requires the original request and key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, rate limits, invalid retry keys and transient errors apply.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "operationId": "updateResearchWorkspaceConfiguration",
         "summary": "Change settings for the next workspace session",
@@ -22415,32 +22544,8 @@
           }
         },
         "responses": {
-          "200": {
-            "description": "Model response received and its verified usage charge committed.",
-            "headers": {
-              "X-Nodus-Request-ID": {
-                "description": "Durable request receipt ID, returned after reservation is accepted.",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Nodus-Price-Version": {
-                "description": "Immutable customer price version used for this request.",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManagedModelCompletionResponse"
-                }
-              }
-            }
-          },
           "400": {
-            "description": "Missing or invalid stable idempotency key, unsupported request format, or request outside the bounded nonstreaming text/function-tool contract.",
+            "description": "Missing or invalid stable idempotency key, unsupported request format, or an invalid JSON object.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22451,16 +22556,6 @@
           },
           "401": {
             "description": "A valid Nodus API key or console session is required.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "402": {
-            "description": "Insufficient unreserved prepaid credits or account spending allowance. No new model request is dispatched.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22480,7 +22575,7 @@
             }
           },
           "404": {
-            "description": "Model is not in this account’s qualified catalog or uses a different protocol.",
+            "description": "No matching historical receipt was found and this route does not accept new model calls. Use a catalog-qualified Messages model through /v1/managed-models/messages for new work.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22490,7 +22585,7 @@
             }
           },
           "409": {
-            "description": "Previously accepted request returns its durable receipt without another model call or answer replay. A conflicting key, request or price version returns an ordinary error.",
+            "description": "The original key and body recover the previously accepted receipt without another model call or answer replay. Reusing the key with a different body or protocol returns an idempotency conflict.",
             "headers": {
               "X-Nodus-Request-ID": {
                 "description": "Durable request receipt ID, returned after reservation is accepted.",
@@ -22540,18 +22635,8 @@
               }
             }
           },
-          "502": {
-            "description": "Definitive rejection posts no model charge and releases the reservation. A missing response or uncertain usage returns model_outcome_unknown and keeps its reservation. Inspect the receipt and preserve the request identity.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
           "503": {
-            "description": "Model access or accounting admission is unavailable, or model_accounting_pending means a received response could not be durably settled. Inspect an accepted request receipt before retrying.",
+            "description": "Receipt lookup is temporarily unavailable, or no matching historical receipt exists and managed model access is not enabled for this account. Preserve the original request identity when retrying receipt recovery.",
             "content": {
               "application/json": {
                 "schema": {

@@ -8,6 +8,7 @@ import re
 import time
 import uuid
 import warnings
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,19 @@ def _key(value: str) -> str:
 
 def _fresh_key() -> str:
     return f"nodus-{uuid.uuid4()}"
+
+
+def _receipt_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)", value,
+        flags=re.ASCII,
+    ) is None:
+        return False
+    try:
+        datetime.fromisoformat(value[:19])
+    except ValueError:
+        return False
+    return True
 
 
 _GPU_SHORTHAND = re.compile(r"^(?P<model>.*?)(?:[-_ ]?(?P<memory>\d{1,4})\s*GB?)?(?::(?P<count>\d+))?$", re.IGNORECASE)
@@ -286,6 +300,7 @@ class _WorkspaceState:
     pending_upload: dict[str, Any] | None
     wake_plan: dict[str, Any] | None
     raw: dict[str, Any]
+    deleted: bool
 
     def _init_state(self, workspace_id: str) -> None:
         self.id = workspace_id
@@ -302,6 +317,7 @@ class _WorkspaceState:
         self.pending_upload = None
         self.wake_plan = None
         self.raw = {}
+        self.deleted = False
 
     def _absorb(self, view: Any) -> None:
         if not isinstance(view, dict) or not isinstance(view.get("id"), str) or not isinstance(view.get("state"), str) \
@@ -408,6 +424,15 @@ class _WorkspaceState:
         return {"configuration_revision": self.configuration_revision,
                 "configuration": {field: value for field, value in merged.items() if value is not None}}
 
+    def _confirm_deleted(self, receipt: Any) -> dict[str, Any]:
+        """The server's receipt for deleting this workspace. Anything else leaves the outcome unknown."""
+        if (not isinstance(receipt, dict) or receipt.get("id") != self.id or receipt.get("deleted") is not True
+                or not isinstance(receipt.get("name"), str) or not receipt["name"].strip()
+                or not _receipt_timestamp(receipt.get("deleted_at"))):
+            raise APIError("Workspace delete response is invalid", body=receipt if isinstance(receipt, dict) else None)
+        self.deleted = True
+        return receipt
+
     def _replace_revision(self) -> int | None:
         return self.storage_revision or None
 
@@ -431,6 +456,8 @@ class Workspace(_WorkspaceState):
         self._init_state(_path(workspace_id).rsplit("/", 1)[1] if workspace_id else "")
 
     def _path(self, suffix: str = "") -> str:
+        if self.deleted:
+            raise NotFoundError(f"Workspace {self.id} was deleted.", status_code=404)
         return _path(self.id) + suffix
 
     def refresh(self) -> "Workspace":
@@ -556,6 +583,17 @@ class Workspace(_WorkspaceState):
         return self._client._request("DELETE", self._path("/files"),
                                      json={"storage_revision": self.storage_revision}, max_retries=0)
 
+    def delete(self, *, idempotency_key: str | None = None) -> dict[str, Any]:
+        """Delete this stopped workspace and its saved files. This cannot be undone.
+
+        Past sessions and charges stay in Billing. Afterwards this handle raises ``NotFoundError``.
+        """
+        key = _key(_fresh_key() if idempotency_key is None else idempotency_key)
+        try:
+            return self._confirm_deleted(self._client._request("DELETE", self._path(), idempotency_key=key))
+        except NodusError as error:
+            raise self._with_key(error, key) from None
+
     def configure(self, **changes: Any) -> "Workspace":
         """Change saved configuration fields, such as gpu_count=2, for the next session."""
         if not self.configuration_revision:
@@ -584,6 +622,8 @@ class AsyncWorkspace(_WorkspaceState):
         self._init_state(_path(workspace_id).rsplit("/", 1)[1] if workspace_id else "")
 
     def _path(self, suffix: str = "") -> str:
+        if self.deleted:
+            raise NotFoundError(f"Workspace {self.id} was deleted.", status_code=404)
         return _path(self.id) + suffix
 
     async def refresh(self) -> "AsyncWorkspace":
@@ -697,6 +737,14 @@ class AsyncWorkspace(_WorkspaceState):
         return await self._client._request("DELETE", self._path("/files"),
                                            json={"storage_revision": self.storage_revision}, max_retries=0)
 
+    async def delete(self, *, idempotency_key: str | None = None) -> dict[str, Any]:
+        """Delete this stopped workspace and its saved files permanently, preserving Billing history."""
+        key = _key(_fresh_key() if idempotency_key is None else idempotency_key)
+        try:
+            return self._confirm_deleted(await self._client._request("DELETE", self._path(), idempotency_key=key))
+        except NodusError as error:
+            raise self._with_key(error, key) from None
+
     async def configure(self, **changes: Any) -> "AsyncWorkspace":
         if not self.configuration_revision:
             await self.refresh()
@@ -767,6 +815,10 @@ class Workspaces:
         from ._workspace_files import revision
         return self._client._request("DELETE", _path(workspace_id) + "/files",
                                      json={"storage_revision": revision(storage_revision)}, max_retries=0)
+
+    def delete(self, workspace_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
+        """Delete a stopped workspace and its saved files by ID. This cannot be undone."""
+        return Workspace(self._client, workspace_id).delete(idempotency_key=idempotency_key)
 
     def export_files(self, workspace_id: str, destination: str | os.PathLike[str], *,
                      storage_revision: int, overwrite: bool = False) -> Path:
@@ -860,6 +912,10 @@ class AsyncWorkspaces:
         from ._workspace_files import revision
         return await self._client._request("DELETE", _path(workspace_id) + "/files",
                                            json={"storage_revision": revision(storage_revision)}, max_retries=0)
+
+    async def delete(self, workspace_id: str, *, idempotency_key: str | None = None) -> dict[str, Any]:
+        """Delete a stopped workspace and its saved files by ID. This cannot be undone."""
+        return await AsyncWorkspace(self._client, workspace_id).delete(idempotency_key=idempotency_key)
 
     async def export_files(self, workspace_id: str, destination: str | os.PathLike[str], *,
                            storage_revision: int, overwrite: bool = False) -> Path:

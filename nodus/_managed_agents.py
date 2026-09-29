@@ -36,11 +36,13 @@ def _definition(name, entrypoint, budget, *, template=None, source_asset_id=None
     if model_max_output_tokens is not None and (model is None or type(model_max_output_tokens) is not int or not 1 <= model_max_output_tokens <= 4096):
         raise ValidationError('Model output limits require a model and an integer from 1 to 4096')
     if assistant_template is not None:
-        if assistant_template != 'nodus:claude-assistant-v1' or model is None:
+        entrypoints = {'nodus:claude-assistant-v1': 'nodus.managed_assistant:main',
+                       'nodus:claude-assistant-v2': 'nodus.managed_parallel_assistant:main'}
+        if not isinstance(assistant_template, str) or assistant_template not in entrypoints or model is None:
             raise ValidationError('Choose the supported assistant template and an explicit public model')
-        if entrypoint not in ('agent:main', 'nodus.managed_assistant:main') or any(value is not None for value in (source_asset_id, bootstrap, setup, policy, secrets, network_permissions)):
+        if entrypoint not in ('agent:main', entrypoints[assistant_template]) or any(value is not None for value in (source_asset_id, bootstrap, setup, policy, secrets, network_permissions)):
             raise ValidationError('The owned assistant uses its installed entrypoint without project setup or credentials')
-        entrypoint = 'nodus.managed_assistant:main'
+        entrypoint = entrypoints[assistant_template]
     if not isinstance(entrypoint, str) or len(entrypoint) > 256 or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*", entrypoint):
         raise ValidationError("entrypoint must be module:function")
     if budget is not None and (type(budget) not in (int, float) or not math.isfinite(budget) or budget < 0):

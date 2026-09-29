@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0
+
+- Add the qualified `nodus:claude-assistant-v2` template. Ordinary text requests delegate useful independent work to specialists, exchange findings and save one combined answer. Greetings can answer directly. The model catalog determines availability.
+- Preserve paid call, child and message identities across recovery. A refused specialist assignment requests cancellation of the accepted team without starting replacement work.
+- Add `AgentMessageRecipientUnavailable` for a definitive refused peer send. Other uncertain journal outcomes continue to prevent further effects in that runtime session.
+
+- Add `Workspace.delete()` and `client.workspaces.delete(workspace_id)`, including asynchronous forms, to permanently delete an unused workspace or instance and its saved files while keeping Billing history. Delete requests preserve their idempotency key through retries and expose it after an uncertain response.
+- Add `nodus workspace delete NAME_OR_ID` with confirmation by typing its name and `--yes` for scripts. Add the destructive MCP tool `delete_workspace`, which requires confirmation before use.
+- Raise `WorkspaceNotReadyError` when active compute or a pending upload blocks workspace deletion.
+
 ## 0.9.0
 
 Breaking: workspaces and instances run until you stop them or account credit runs out.
