@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0
+
+- Use the selected catalog model maximum when an assistant output limit is omitted. Explicit smaller limits remain supported.
+- Retrieve large hosted model replies in verified pages under the original paid call identity, using the polling allowance supplied by the server.
+- Preserve complete assistant answers and add synchronous and asynchronous `ManagedRun.answer()` retrieval for retained results.
+- Accept text answers accompanied by model reasoning blocks.
+
 ## 0.10.0
 
 - Add the qualified `nodus:claude-assistant-v2` template. Ordinary text requests delegate useful independent work to specialists, exchange findings and save one combined answer. Greetings can answer directly. The model catalog determines availability.

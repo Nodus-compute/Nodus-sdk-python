@@ -9714,9 +9714,7 @@
           "model_max_output_tokens": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 4096,
-            "default": 1024,
-            "description": "Per-call output bound for hosted model access. Must fit the selected model qualification."
+            "description": "Per-call output bound for hosted model access. Omission uses the selected model maximum from the current catalog. An explicit value must fit that model. Accepted revisions retain their resolved limit."
           }
         },
         "allOf": [
@@ -9899,11 +9897,17 @@
               "type": "string"
             },
             "minItems": 1,
-            "description": "Models qualified for this installed assistant and its default output bound."
+            "description": "Models qualified for this installed assistant."
+          },
+          "default_output_tokens_by_model": {
+            "type": "object",
+            "additionalProperties": {"type": "integer", "minimum": 1},
+            "description": "Default output allowance for each available catalog model."
           },
           "default_output_tokens": {
             "type": "integer",
-            "const": 1024
+            "minimum": 1,
+            "description": "Largest default among available models. Use default_output_tokens_by_model for a selected model."
           }
         },
         "description": "An assistant qualified for the account and the exact tools image. Empty discovery prevents launching into incompatible runtimes."
@@ -10645,9 +10649,7 @@
           "model_max_output_tokens": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 4096,
-            "default": 1024,
-            "description": "Per-call output bound for hosted model access. Must fit the selected model qualification."
+            "description": "Per-call output bound for hosted model access. Omission uses the selected model maximum from the current catalog. An explicit value must fit that model. Accepted revisions retain their resolved limit."
           }
         },
         "required": [
@@ -12042,7 +12044,8 @@
                 "type": "string"
               },
               "model_max_output_tokens": {
-                "type": "integer"
+                "type": "integer",
+                "description": "Per-call output bound for hosted model access. Omission uses the selected model maximum from the current catalog. An explicit value must fit that model. Accepted revisions retain their resolved limit."
               },
               "name": {
                 "type": "string"
@@ -12288,7 +12291,8 @@
                     "type": "string"
                   },
                   "model_max_output_tokens": {
-                    "type": "integer"
+                    "type": "integer",
+                    "description": "Per-call output bound for hosted model access. Omission uses the selected model maximum from the current catalog. An explicit value must fit that model. Accepted revisions retain their resolved limit."
                   },
                   "name": {
                     "type": "string"
@@ -22931,6 +22935,65 @@
             }
           }
         }
+      }
+    },
+    "/v1/agents/{id}/runs/{run_id}/answer": {
+      "get": {
+        "operationId": "getManagedRunAnswer",
+        "summary": "Read the complete saved assistant answer",
+        "tags": [
+          "Managed agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Complete saved answer text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "text"
+                  ],
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Operation refused with a diagnostic and next action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxError"
+                }
+              }
+            }
+          }
+        },
+        "description": "Returns the complete text from an owned run result, including an answer stored outside the inline preview. The result must remain within its retention period. This read never executes the model again."
       }
     },
     "/v1/agents/{id}/runs/{run_id}": {

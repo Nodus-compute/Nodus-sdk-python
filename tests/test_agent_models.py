@@ -1,6 +1,7 @@
 """Hosted calls retain one paid identity across driver and acknowledgement loss."""
 
 import json
+import hashlib
 from types import SimpleNamespace
 
 import nodus
@@ -8,6 +9,73 @@ import pytest
 
 from test_agent_steps import journal_socket
 from nodus.agent_runtime import run
+
+
+def test_provider_maximum_and_large_reply_survive_paged_replay(journal_socket):
+    _, state = journal_socket
+    text = 'Complete multilingual answer 漢字 é.\n' * 18000
+    state.update(input={'task': 'Keep every byte'}, paged_model_response=True,
+                 model_response={'model': 'nodus:claude-test', 'content': [{'type': 'text', 'text': text}],
+                                 'stop_reason': 'end_turn', 'usage': {'input_tokens': 10, 'output_tokens': 64000}})
+
+    @nodus.step(name='large-answer', version='1', effect='pure')
+    def answer():
+        response = nodus.agent.model([{'role': 'user', 'content': 'Keep every byte'}], call_id='answer',
+                                    model='nodus:claude-test', max_output_tokens=64000)
+        return {'sha256': hashlib.sha256(response['content'][0]['text'].encode()).hexdigest()}
+
+    def main(event):
+        return answer(_step_id='answer')
+
+    expected = {'sha256': hashlib.sha256(text.encode()).hexdigest()}
+    assert run(main, run_id='cycle-42', version='1') == expected
+    assert run(main, run_id='cycle-42', version='1') == expected
+    assert len(state['model_effects']) == 1
+    offsets = [body['response_offset'] for action, body in state['requests']
+               if action == 'model_status' and body.get('response_offset')]
+    assert offsets == [262144, 524288]
+
+
+def test_owned_assistant_keeps_full_large_answer_in_blob(journal_socket, tmp_path, monkeypatch):
+    from nodus.managed_assistant import main
+    _, state = journal_socket
+    directory = tmp_path / 'state'
+    directory.mkdir()
+    monkeypatch.setenv('NODUS_CHECKPOINT_DIR', str(directory))
+    monkeypatch.setenv('NODUS_AGENT_MODEL', 'nodus:claude-test')
+    monkeypatch.setenv('NODUS_AGENT_MODEL_MAX_OUTPUT_TOKENS', '64000')
+    text = 'Large complete answer 漢字.\n' * 18000
+    state.update(input={'task': 'Keep the full result'}, recovery_policy='checkpoint-v1',
+                 paged_model_response=True, model_response={'model': 'nodus:claude-test',
+                 'content': [{'type': 'text', 'text': text}], 'stop_reason': 'end_turn',
+                 'usage': {'input_tokens': 10, 'output_tokens': 64000}})
+    result = run(main, run_id='cycle-42', version='1')
+    assert result['truncated'] is False
+    assert result['answer_blob']['sha256'] == hashlib.sha256(text.encode()).hexdigest()
+    assert result['answer_blob']['bytes'] == len(text.encode())
+    assert result['text'] and text.startswith(result['text'])
+    assert json.loads((directory / 'conversation.json').read_bytes())['messages'][-1]['content'] == text
+    assert run(main, run_id='cycle-42', version='1') == result
+    assert len(state['model_effects']) == 1
+
+
+@pytest.mark.parametrize('kind', ['thinking', 'redacted_thinking'])
+def test_owned_assistant_accepts_reasoning_model_final_text(journal_socket, tmp_path, monkeypatch, kind):
+    from nodus.managed_assistant import main
+    _, state = journal_socket
+    directory = tmp_path / 'state'
+    directory.mkdir()
+    monkeypatch.setenv('NODUS_CHECKPOINT_DIR', str(directory))
+    monkeypatch.setenv('NODUS_AGENT_MODEL', 'nodus:claude-test')
+    monkeypatch.setenv('NODUS_AGENT_MODEL_MAX_OUTPUT_TOKENS', '128000')
+    thinking = {'type': 'thinking', 'thinking': 'Private reasoning', 'signature': 'opaque'} if kind == 'thinking' else {'type': kind, 'data': 'opaque'}
+    state.update(input={'task': 'Compare the evidence'}, model_response={'model': 'nodus:claude-test',
+                 'content': [thinking, {'type': 'text', 'text': 'Complete final answer'}],
+                 'stop_reason': 'end_turn', 'usage': {'input_tokens': 10, 'output_tokens': 500}})
+    result = run(main, run_id='cycle-42', version='1')
+    assert result['text'] == 'Complete final answer'
+    assert result['usage']['output_tokens'] == 500
+    assert 'Private reasoning' not in json.dumps(result)
 
 
 def model_entrypoint(**options):
@@ -289,7 +357,7 @@ def test_hosted_model_requires_executing_managed_step():
 
 
 @pytest.mark.parametrize('options', [
-    {'max_output_tokens': True}, {'max_output_tokens': 4097},
+    {'max_output_tokens': True}, {'max_output_tokens': 0},
     {'model': 'https://outside.invalid'}, {'messages': [{'role': 'user', 'content': {'url': 'file:///secret'}}]},
     {'messages': [{'role': 'user', 'content': 'x' * (128 << 10)}]},
 ])
