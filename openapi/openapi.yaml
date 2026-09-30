@@ -1317,8 +1317,63 @@
           "distribution": {
             "$ref": "#/components/schemas/TrainingDistribution",
             "description": "Explicit framework and process topology. Submissions containing this field currently return distributed_training_unavailable before allocation."
+          },
+          "total_gpu_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2048,
+            "description": "Exact total GPUs requested across an allocation. Cannot be combined with node_count or gpu_count. Omission preserves existing per-machine sizing. This expresses resource demand without selecting a supplier or changing the training command. Multi-GPU total requests currently return distributed_training_unavailable before allocation. The schema maximum is not a production capacity guarantee."
           }
-        }
+        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "total_gpu_count"
+              ],
+              "anyOf": [
+                {
+                  "required": [
+                    "node_count"
+                  ]
+                },
+                {
+                  "required": [
+                    "gpu_count"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "not": {
+                "required": [
+                  "total_gpu_count"
+                ],
+                "properties": {
+                  "total_gpu_count": {
+                    "minimum": 2
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "distribution": {
+                  "required": [
+                    "processes_per_node"
+                  ],
+                  "properties": {
+                    "processes_per_node": {
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
       },
       "ResourceAttributes": {
         "type": "object",
@@ -9377,8 +9432,22 @@
           },
           "patch": {
             "additionalProperties": false,
-            "maxProperties": 12,
+            "maxProperties": 13,
             "minProperties": 1,
+            "not": {
+              "properties": {
+                "gpu_count": {
+                  "type": "integer"
+                },
+                "total_gpu_count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "gpu_count",
+                "total_gpu_count"
+              ]
+            },
             "properties": {
               "checkpoint_paths": {
                 "anyOf": [
@@ -9527,6 +9596,19 @@
                   }
                 ]
               },
+              "total_gpu_count": {
+                "anyOf": [
+                  {
+                    "description": "Total GPUs across the allocation. Clear gpu_count when setting this field. Saving this preference does not establish available capacity.",
+                    "maximum": 2048,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "vcpus": {
                 "anyOf": [
                   {
@@ -9627,8 +9709,23 @@
             "maxItems": 32,
             "type": "array",
             "uniqueItems": true
+          },
+          "total_gpu_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2048
           }
-        }
+        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "gpu_count",
+                "total_gpu_count"
+              ]
+            }
+          }
+        ]
       },
       "RunDraft": {
         "type": "object",
@@ -14807,8 +14904,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "framework",
-          "processes_per_node"
+          "framework"
         ],
         "properties": {
           "mode": {
@@ -14833,8 +14929,9 @@
           },
           "processes_per_node": {
             "type": "integer",
-            "minimum": 1,
-            "maximum": 64
+            "minimum": 0,
+            "maximum": 64,
+            "description": "Processes per machine. Positive for explicit node topology. Zero or omission is allowed only with total_gpu_count greater than one and is resolved before allocation."
           },
           "geography": {
             "type": "string",

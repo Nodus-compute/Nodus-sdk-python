@@ -176,6 +176,7 @@ def build_payload(
     optimization: str | None = None,
     gpu: str | None = None,
     gpu_count: int | None = None,
+    total_gpu_count: int | None = None,
     gpu_interconnect: str | None = None,
     budget: float | None = None,
     finish_by: datetime | str | None = None,
@@ -222,6 +223,8 @@ def build_payload(
         req.setdefault("gpu", gpu)
     if gpu_count is not None:
         req.setdefault("gpu_count", gpu_count)
+    if total_gpu_count is not None:
+        req.setdefault("total_gpu_count", total_gpu_count)
     if gpu_interconnect is not None:
         req.setdefault("gpu_interconnect", gpu_interconnect)
     req = validate_requirements(req)
@@ -389,6 +392,14 @@ def validate_requirements(requirements: dict[str, Any]) -> dict[str, Any]:
             finite = False
         if not finite or (value <= 0 if field == "peak_memory_gb" else value < 0):
             raise ValueError(message)
+    if "total_gpu_count" in result:
+        value = result["total_gpu_count"]
+        if type(value) is not int or not 1 <= value <= 2048:
+            raise ValueError("total_gpu_count must be an integer between 1 and 2048")
+        if any(result.get(field) is not None for field in ("gpu_count", "node_count")):
+            raise ValueError("total_gpu_count cannot be combined with gpu_count or node_count")
+        if result.get("compute_class") == "vm":
+            raise ValueError("total_gpu_count requires accelerator compute")
     if "gpu_count" in result:
         value = result["gpu_count"]
         if type(value) is not int or value not in (1, 2, 4, 8):

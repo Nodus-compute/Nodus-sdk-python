@@ -384,8 +384,22 @@
           },
           "patch": {
             "additionalProperties": false,
-            "maxProperties": 12,
+            "maxProperties": 13,
             "minProperties": 1,
+            "not": {
+              "properties": {
+                "gpu_count": {
+                  "type": "integer"
+                },
+                "total_gpu_count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "gpu_count",
+                "total_gpu_count"
+              ]
+            },
             "properties": {
               "checkpoint_paths": {
                 "anyOf": [
@@ -528,6 +542,19 @@
                     },
                     "maxItems": 8,
                     "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "total_gpu_count": {
+                "anyOf": [
+                  {
+                    "description": "Total GPUs across the allocation. Clear gpu_count when setting this field. Saving this preference does not establish available capacity.",
+                    "maximum": 2048,
+                    "minimum": 1,
+                    "type": "integer"
                   },
                   {
                     "type": "null"

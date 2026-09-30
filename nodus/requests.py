@@ -31,6 +31,9 @@ class Requirements(TypedDict, total=False):
 
     Memory is in GB and dataset size in bytes. All fields
     are optional. Omitted compute class defaults to accelerator on the API.
+    ``gpu_count`` selects GPUs per machine. ``total_gpu_count`` requests the
+    total with automatic allocation, subject to server admission support.
+    These two count fields cannot be combined.
     """
 
     model: str
@@ -38,6 +41,7 @@ class Requirements(TypedDict, total=False):
     dataset_bytes: int
     gpu: str
     gpu_count: Literal[1, 2, 4, 8]
+    total_gpu_count: int
     gpu_interconnect: Literal["any"]
     peak_memory_gb: float
     optimization: Literal["", "automatic", "lowest_cost", "lower_cost", "balanced", "faster", "fastest"]
