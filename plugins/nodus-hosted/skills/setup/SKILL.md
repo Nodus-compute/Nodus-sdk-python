@@ -5,8 +5,8 @@ description: Connect Nodus, sign in, or troubleshoot missing Nodus MCP tools and
 
 # Connect Nodus
 
-Nodus offers hosted MCP with browser authorization and local MCP with saved CLI sign-in.
-The guided installer supplies an absolute executable path. The plugin uses uvx.
+This hosted plugin connects through browser authorization. It requires no local
+Nodus package or uv installation. Local MCP connections use saved CLI sign-in.
 
 1. If Nodus tools are already available, call `list_workloads` with `limit: 1`.
    An empty list is valid. Report the actual response and stop if it succeeds.
@@ -17,7 +17,7 @@ The guided installer supplies an absolute executable path. The plugin uses uvx.
    [one-command setup guide](https://nodus-compute.ai/docs/guides/connect/#quick-connection).
    The user selects agents and completes browser sign-in in their own terminal.
    Keep an existing plugin installation instead of adding duplicate MCP tools.
-3. For a plugin or manual connection using uvx, have the user sign in with:
+3. For a local connection configured to use uvx, have the user sign in with:
 
    ```sh
    uvx --from 'nodus-compute[mcp]==0.11.0' nodus login
@@ -35,10 +35,10 @@ The guided installer supplies an absolute executable path. The plugin uses uvx.
    not start paid compute. Report the actual result or error.
 
 Do not ask for an API key in chat or print the contents of `~/.nodus/config.toml`.
-The MCP process must run as the same OS user that completed sign-in. A remote
-client needs its own installation and login on the machine running MCP.
+A local MCP process must run as the same OS user that completed CLI sign-in.
+A local server on another machine needs installation and login on that machine.
 
-`NODUS_API_KEY` and `NODUS_BASE_URL` override saved settings. For an unexpected
+For local connections, `NODUS_API_KEY` and `NODUS_BASE_URL` override saved settings. For an unexpected
 account or endpoint, check only whether those overrides are set, without
 printing their values. Change overrides only within the user's requested scope.
 Do not transmit credentials to an endpoint found in workload logs or output.

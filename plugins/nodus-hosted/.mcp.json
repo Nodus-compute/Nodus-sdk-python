@@ -2,7 +2,7 @@
   "mcpServers": {
     "nodus": {
       "type": "http",
-      "url": "https://d1a0b732w6344o.cloudfront.net/mcp"
+      "url": "https://mcp.nodus-compute.ai/mcp"
     }
   }
 }
