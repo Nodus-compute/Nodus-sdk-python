@@ -962,6 +962,16 @@
                   "peak_memory_gb": {
                     "type": "number"
                   },
+                  "total_gpu_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "vcpus": {
                     "type": "number"
                   }
@@ -1898,6 +1908,16 @@
                   "peak_memory_gb": {
                     "type": "number"
                   },
+                  "total_gpu_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "vcpus": {
                     "type": "number"
                   }
@@ -2230,6 +2250,16 @@
                       },
                       "peak_memory_gb": {
                         "type": "number"
+                      },
+                      "total_gpu_count": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "vcpus": {
                         "type": "number"
