@@ -174,7 +174,10 @@ Give each new task a unique idempotency key. Reuse that key only when retrying
 the same task.
 
 The assistant returns `text`, `model`, `stop_reason`, `truncated` and reported
-`usage` in the run result. `truncated` is true when the model reaches its output
+`usage` in the run result. Large answers include an `answer_blob` reference and
+a text preview. With SDK 0.11.0 or later, `run.answer()` retrieves the complete
+saved text. Use `await run.answer()` with an asynchronous run. Retrieval does
+not call the model again and is available while the result is retained. `truncated` is true when the model reaches its output
 limit. The partial answer is saved and charged once. Submit a follow-up task to
 continue when needed. The assistant does not automatically continue a truncated final answer.
 It saves recent conversation history in `NODUS_CHECKPOINT_DIR`. Reusing the
@@ -188,9 +191,12 @@ the journal commits its answer. It does not restore arbitrary process memory.
 
 Compute, model and retained storage charges
 are separate and use the available account credits. The controller
-supplies the accepted model and output limit. You can set
-`model_max_output_tokens` explicitly at deployment, up to 4096 and the enabled
-model's limit. The SDK does not supply a missing limit or calculate charges.
+supplies the accepted model and output limit. When `model_max_output_tokens`
+is omitted, the server uses the selected catalog model's supported maximum.
+You can specify a smaller limit at deployment. A routed model uses the maximum
+of its selected underlying model without exceeding an explicit caller limit.
+Existing accepted revisions retain their limit. The SDK does not supply a
+missing limit or calculate charges.
 
 Custom managed entrypoints can call `nodus.agent.model(messages, call_id=...,
 max_output_tokens=...)` inside a decorated step. Messages contain `role` and text
@@ -198,7 +204,10 @@ max_output_tokens=...)` inside a decorated step. Messages contain `role` and tex
 deployment's accepted model unless `model` is explicitly supplied. The server
 requires that explicit model to match the accepted deployment. Keep each call ID
 and request stable across retries. Request inputs are bounded to 128 KiB and
-responses to 256 KiB.
+responses to 8 MiB on qualified runtimes with SDK 0.11.0 or later. The SDK
+retrieves and verifies large responses in pages under the same paid request
+identity. The server supplies the polling allowance for the accepted model
+limit. Older runtimes retain their advertised capabilities.
 On a deployment with structured response support, `response_schema` requests
 JSON matching an object schema with `additionalProperties` set to `false`.
 The schema is part of the accepted request and must stay identical on replay.

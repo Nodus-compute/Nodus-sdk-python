@@ -12,6 +12,7 @@ def test_step_requires_explicit_stable_identity_before_invocation():
     assert calls==[]
 
 import base64
+import hashlib
 from datetime import datetime, timedelta, timezone
 import http.server
 import json
@@ -106,6 +107,15 @@ def journal_socket(tmp_path,monkeypatch):
                 result = {'receipt': {'id': row[1], 'model': json.loads(row[0])['model'], 'state': row[2], 'charge_micros': 17 if row[2] == 'succeeded' else 0}}
                 if row[2] == 'succeeded':
                     result['response'] = json.loads(row[3])
+                    if state.get('paged_model_response'):
+                        raw = json.dumps(result.pop('response'), ensure_ascii=False, separators=(',', ':')).encode()
+                        offset = request.get('response_offset', 0)
+                        chunk = raw[offset:offset + (256 << 10)]
+                        result['response_page'] = {'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw),
+                                                   'offset': offset, 'data': base64.b64encode(chunk).decode(),
+                                                   'eof': offset + len(chunk) == len(raw)}
+                        if state.get('corrupt_model_page') and offset:
+                            result['response_page']['sha256'] = 'a' * 64
                 if state.get('change_model_identity') and action == 'model_status':
                     result['receipt']['id'] = 'mdl_unrelated'
                 if state.get('lost_model_status', 0) and action == 'model_status':

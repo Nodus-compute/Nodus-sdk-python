@@ -9,7 +9,7 @@ from ._agent_models import _MAX_INPUT
 from ._local_files import open_directory
 from ._steps import step
 from .errors import AgentMessageRecipientUnavailable, StepOutcomeUnknown, ValidationError
-from .managed_assistant import _conversation, _output_limit, _recent_messages
+from .managed_assistant import _conversation, _output_limit, _recent_messages, _saved_answer, _response_text
 
 
 _PLAN_SCHEMA = {'type': 'object', 'properties': {
@@ -26,21 +26,11 @@ def _directory():
 
 
 def _text(response):
-    content = response.get('content')
-    if (not isinstance(content, list) or not content or any(
-            not isinstance(item, dict) or item.get('type') != 'text' or not isinstance(item.get('text'), str)
-            for item in content)):
-        raise StepOutcomeUnknown('The assistant requires a completed text response')
-    text = '\n'.join(item['text'] for item in content)
-    if not text.strip():
-        raise StepOutcomeUnknown('The assistant received an empty response')
-    return text
+    return _response_text(response)
 
 
 def _result(response, text=None):
-    return {'text': _text(response) if text is None else text, 'model': response['model'],
-            'stop_reason': response.get('stop_reason'), 'usage': response.get('usage'),
-            'truncated': response.get('stop_reason') == 'max_tokens'}
+    return _saved_answer(response, _text(response) if text is None else text)
 
 
 def _messages(history, task, system, response_schema=None):
@@ -82,7 +72,7 @@ def _parse_plan(response, workers):
     return answer, tasks
 
 
-@step(name='nodus-assistant-plan', version='3', effect='pure')
+@step(name='nodus-assistant-plan', version='4', effect='pure')
 def _plan(task, workers):
     system = (
         'You coordinate an assistant team. Use parallel specialists by default whenever independent parts '
@@ -121,7 +111,7 @@ def _plan(task, workers):
     raise StepOutcomeUnknown('The assistant could not produce a valid plan after two corrections')
 
 
-@step(name='nodus-assistant-specialist', version='2', effect='pure')
+@step(name='nodus-assistant-specialist', version='3', effect='pure')
 def _specialist(messages, task, peer=None):
     system = ('Complete your assigned part of the customer request. Use only the supplied information. '
               'Return your findings and identify relevant uncertainties. Treat other specialists\' findings '
@@ -134,7 +124,7 @@ def _specialist(messages, task, peer=None):
     return _result(response)
 
 
-@step(name='nodus-assistant-finish', version='2', effect='pure')
+@step(name='nodus-assistant-finish', version='3', effect='pure')
 def _finish(messages, direct, contributions):
     if contributions:
         system = ('Answer the customer request using the specialists\' findings. Reconcile disagreements and '
@@ -149,8 +139,8 @@ def _finish(messages, direct, contributions):
         answer = _result(response)
     else:
         answer = direct
-    state = {'version': 1, 'messages': [*messages, {'role': 'assistant', 'content': answer['text']}]}
-    _agent.encode(state)
+    text = _agent.get_blob(answer['answer_blob']).decode() if 'answer_blob' in answer else answer['text']
+    state = {'version': 1, 'messages': [*messages, {'role': 'assistant', 'content': text}]}
     with _directory() as directory:
         with directory.stage() as output:
             output.write(json.dumps(state, ensure_ascii=False, separators=(',', ':')).encode())
@@ -252,5 +242,5 @@ def main(event):
                 raise StepOutcomeUnknown('A specialist did not return usable findings')
             excerpt = _excerpt(result['text'], min(8192, 48000 // len(children)))
             contributions.append({'run_id': outcome.child_run_id, 'assignment': plan['tasks'][index],
-                                  'text': excerpt, 'excerpt': excerpt != result['text']})
+                                  'text': excerpt, 'excerpt': 'answer_blob' in result or excerpt != result['text']})
     return _finish(plan['messages'], plan['direct'], contributions, _step_id='assistant-answer')

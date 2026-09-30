@@ -28,6 +28,30 @@ def client_for(handler):
     return client
 
 
+def test_managed_run_downloads_complete_answer_from_its_owned_route():
+    from nodus._managed_agents import ManagedRun
+    text = 'Complete saved answer 漢字.\n' * 15000
+    def handle(request):
+        assert request.method == 'GET'
+        assert request.url.path == '/v1/agents/ag_one/runs/run_one/answer'
+        return httpx.Response(200, json={'text': text})
+    with client_for(handle) as client:
+        result = ManagedRun(client, {'id': 'run_one', 'agent_id': 'ag_one'})
+        assert result.answer() == text
+
+
+def test_async_managed_run_downloads_complete_answer():
+    from nodus._managed_agents import AsyncManagedRun
+    async def exercise():
+        async with nodus.AsyncClient(api_key='test', base_url='https://nodus.invalid') as client:
+            await client._http.aclose()
+            client._http = httpx.AsyncClient(base_url='https://nodus.invalid', transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={'text': 'Complete answer'})))
+            result = AsyncManagedRun(client, {'id': 'run_one', 'agent_id': 'ag_one'})
+            assert await result.answer() == 'Complete answer'
+    asyncio.run(exercise())
+
+
 def test_default_template_never_invents_budget_or_changes_name_only_reconnect():
     bodies = []
     def handle(request):

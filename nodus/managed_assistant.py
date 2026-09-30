@@ -1,6 +1,5 @@
 """Owned text assistant that saves conversation state with its journaled answer."""
 
-import base64
 import json
 import os
 from pathlib import Path
@@ -13,6 +12,26 @@ from .errors import ValidationError, StepOutcomeUnknown
 
 
 _STATE_FILE = 'conversation.json'
+_MAX_CONVERSATION = 16 << 20
+
+
+def _response_text(response):
+    content = response.get('content')
+    if not isinstance(content, list) or not content:
+        raise StepOutcomeUnknown('The assistant requires a completed text response')
+    parts = []
+    for item in content:
+        if not isinstance(item, dict):
+            raise StepOutcomeUnknown('The assistant received an invalid content block')
+        if item.get('type') in ('thinking', 'redacted_thinking'):
+            continue
+        if item.get('type') != 'text' or not isinstance(item.get('text'), str):
+            raise StepOutcomeUnknown('The assistant requires a completed text response')
+        parts.append(item['text'])
+    text = '\n'.join(parts)
+    if not text.strip():
+        raise StepOutcomeUnknown('The assistant received an empty response')
+    return text
 
 
 def _output_limit():
@@ -25,10 +44,12 @@ def _output_limit():
 def _conversation(directory):
     try:
         with directory.open_read(_STATE_FILE) as source:
-            raw = source.read(_agent._MAX + 1)
+            raw = source.read(_MAX_CONVERSATION + 1)
     except FileNotFoundError:
         return []
-    state = _agent.decode(base64.b64encode(raw).decode('ascii'))
+    if len(raw) > _MAX_CONVERSATION:
+        raise ValidationError('Saved assistant conversation exceeds the supported size')
+    state = json.loads(raw)
     if not isinstance(state, dict) or set(state) != {'version', 'messages'} or type(state['version']) is not int or state['version'] != 1:
         raise ValidationError('Saved assistant conversation has an unsupported format')
     text_messages(state['messages'])
@@ -53,7 +74,7 @@ def _recent_messages(history, task, limit):
 
 
 # This step replays the broker's durable response. It never retries a provider API.
-@step(name='nodus-assistant-answer', version='1', effect='pure')
+@step(name='nodus-assistant-answer', version='2', effect='pure')
 def _answer(task):
     path = os.environ.get('NODUS_CHECKPOINT_DIR', '')
     if not path or not os.path.isabs(path):
@@ -62,24 +83,25 @@ def _answer(task):
     with open_directory(Path(path)) as directory:
         messages = _recent_messages(_conversation(directory), task, limit)
         response = _agent.model(messages, call_id='answer', max_output_tokens=limit)
-        content = response.get('content')
-        if (not isinstance(content, list) or not content
-                or any(not isinstance(item, dict) or item.get('type') != 'text' or not isinstance(item.get('text'), str) for item in content)):
-            raise StepOutcomeUnknown('The assistant requires a completed text response. Inspect the run before continuing')
-        text = '\n'.join(item['text'] for item in content)
-        if not text:
-            raise StepOutcomeUnknown('The assistant received an empty response. Inspect the run before continuing')
+        text = _response_text(response)
         state = {'version': 1, 'messages': [*messages, {'role': 'assistant', 'content': text}]}
-        _agent.encode(state)
         raw = json.dumps(state, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')
         with directory.stage() as output:
             output.write(raw)
             output.stream.flush()
             os.fsync(output.stream.fileno())
             output.commit(_STATE_FILE)
-    return {'text': text, 'model': response['model'], 'stop_reason': response.get('stop_reason'),
+    return _saved_answer(response, text)
+
+
+def _saved_answer(response, text):
+    result = {'text': text, 'model': response['model'], 'stop_reason': response.get('stop_reason'),
             'truncated': response.get('stop_reason') == 'max_tokens',
             'usage': response.get('usage')}
+    if len(json.dumps(result, ensure_ascii=False).encode()) > 64 << 10:
+        result['answer_blob'] = _agent.put_blob(text.encode())
+        result['text'] = text.encode()[:8192].decode('utf-8', errors='ignore')
+    return result
 
 
 def main(event):
