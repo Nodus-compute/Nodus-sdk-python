@@ -107,9 +107,11 @@ def team(journal_socket, monkeypatch, tmp_path):
         raise AssertionError(action)
 
     def response(request):
-        if request['call_id'] == 'plan':
+        if request['call_id'] == 'plan' or request['call_id'].startswith('plan-repair-'):
             content = json.dumps(state.get('plan', {'answer': '', 'tasks': ['Evaluate latency', 'Evaluate reliability']}))
             content = state.get('plan_text', state.get('plan_wrapper', '{}').format(content))
+            if request['call_id'] in state.get('plan_replies', {}):
+                return state['plan_replies'][request['call_id']]
         elif request['run_id'] == 'parent':
             content = 'Combined latency and reliability findings'
         else:
@@ -178,6 +180,94 @@ def test_completion_pages_keep_finish_order_across_parent_recovery(team):
     assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 6
 
 
+@pytest.mark.parametrize('stop_reason,text', [
+    ('end_turn', '```json\n{"answer":"","tasks":["Capacity","Latency","Operations"]}\n```\nAn invented final answer'),
+    ('max_tokens', '{"answer":"","tasks":["Capacity",'),
+])
+def test_completed_bad_plan_is_corrected_once_before_three_specialists_run(team, stop_reason, text):
+    state, drive, children, results, _, db = team
+    state['plan'] = {'answer': '', 'tasks': ['Capacity', 'Latency', 'Operations']}
+    state['plan_replies'] = {'plan': {'model': 'nodus:claude-test',
+        'content': [{'type': 'text', 'text': text}], 'stop_reason': stop_reason,
+        'usage': {'input_tokens': 20, 'output_tokens': 1024}}}
+    assert drive() is None
+    assert len(children) == 3
+    calls = [r for action, r in state['requests'] if action == 'model_begin' and r['call_id'].startswith('plan')]
+    assert [r['call_id'] for r in calls] == ['plan', 'plan-repair-1']
+    for call in calls:
+        schema = call['input']['output_config']['format']
+        assert schema['type'] == 'json_schema'
+        assert schema['schema']['required'] == ['answer', 'tasks']
+        assert schema['schema']['additionalProperties'] is False
+        assert call['input']['max_tokens'] == 1024
+    assert drive('ar_1') is None
+    assert drive('ar_2')['peer_run_id'] == 'ar_1'
+    assert drive('ar_3')['peer_run_id'] == 'ar_2'
+    assert drive('ar_1')['peer_run_id'] == 'ar_3'
+    assert len(drive()['children']) == 3
+    count = db.execute('SELECT count(*) FROM model_calls').fetchone()[0]
+    assert count == 9
+    assert len(drive()['children']) == 3
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == count
+
+
+def test_unknown_planner_reply_never_starts_a_repair_or_child(team):
+    state, drive, children, _, _, db = team
+    state['model_final_state'] = 'unknown'
+    for _ in range(2):
+        with pytest.raises(nodus.StepOutcomeUnknown):
+            drive()
+    assert not children
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 1
+    assert {r['call_id'] for action, r in state['requests'] if action == 'model_begin'} == {'plan'}
+
+
+@pytest.mark.parametrize('content', [[], [{'type': 'text', 'text': '  '}],
+                                     [{'type': 'thinking', 'thinking': 'No completed text'}]])
+def test_unreadable_completed_plan_never_starts_a_repair_or_child(team, content):
+    state, drive, children, _, _, db = team
+    state['plan_replies'] = {'plan': {'model': 'nodus:claude-test', 'content': content,
+        'stop_reason': 'end_turn', 'usage': {'input_tokens': 20, 'output_tokens': 8}}}
+    for _ in range(2):
+        with pytest.raises(nodus.StepOutcomeUnknown):
+            drive()
+    assert not children
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 1
+    assert {r['call_id'] for action, r in state['requests'] if action == 'model_begin'} == {'plan'}
+
+
+def test_lost_repair_acknowledgement_reuses_both_accepted_calls(team):
+    state, drive, children, _, _, db = team
+    answer = state['model_response']
+
+    def reply(request):
+        if request['call_id'] == 'plan':
+            return {'model': 'nodus:claude-test', 'content': [{'type': 'text', 'text': 'Incomplete plan'}],
+                    'stop_reason': 'end_turn', 'usage': {'input_tokens': 20, 'output_tokens': 3}}
+        if request['call_id'] == 'plan-repair-1':
+            state['lost_model_status'] = 3
+        return answer(request)
+
+    state['model_response'] = reply
+    with pytest.raises(nodus.StepOutcomeUnknown):
+        drive()
+    assert not children
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 2
+    assert drive() is None
+    assert len(children) == 2
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 2
+
+
+def test_planner_refusal_returns_without_repair_or_specialists(team):
+    state, drive, children, _, _, db = team
+    state['plan_replies'] = {'plan': {'model': 'nodus:claude-test',
+        'content': [{'type': 'text', 'text': 'I cannot help with that request.'}],
+        'stop_reason': 'refusal', 'usage': {'input_tokens': 20, 'output_tokens': 8}}}
+    assert drive()['text'] == 'I cannot help with that request.'
+    assert not children
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 1
+
+
 @pytest.mark.parametrize('wrapper,answer', [
     ('{}', 'Hi!'),
     ('```json \t\n{}\n```', 'Hi!\u0085Line two\u2028Line three\u2029Line four'),
@@ -197,14 +287,15 @@ def test_greeting_answers_without_starting_a_child(team, wrapper, answer):
     {'answer': '', 'tasks': ['one', 'two', 'three', 'four', 'five']},
     {'answer': 'already done', 'tasks': ['one', 'two']},
 ])
-def test_unusable_plan_never_spawns_or_reissues_its_paid_call(team, plan):
+def test_unusable_plan_exhausts_bounded_corrections_without_reissuing_paid_calls(team, plan):
     state, drive, children, _, _, db = team
     state['plan'] = plan
     for _ in range(2):
         with pytest.raises(nodus.StepOutcomeUnknown):
             drive()
     assert not children
-    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 1
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 3
+    assert {r['call_id'] for action, r in state['requests'] if action == 'model_begin'} == {'plan', 'plan-repair-1', 'plan-repair-2'}
 
 
 @pytest.mark.parametrize('wrapper', [
@@ -214,14 +305,15 @@ def test_unusable_plan_never_spawns_or_reissues_its_paid_call(team, plan):
     '```python\n{}\n```',
     '```json\n{}\n```\n```json\n{{"answer":"other","tasks":[]}}\n```',
 ])
-def test_ambiguous_or_incomplete_fences_never_spawn_or_recharge(team, wrapper):
+def test_ambiguous_or_incomplete_fences_exhaust_bounded_corrections(team, wrapper):
     state, drive, children, _, _, db = team
     state['plan_wrapper'] = wrapper
     for _ in range(2):
         with pytest.raises(nodus.StepOutcomeUnknown):
             drive()
     assert not children
-    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 1
+    assert db.execute('SELECT count(*) FROM model_calls').fetchone()[0] == 3
+    assert {r['call_id'] for action, r in state['requests'] if action == 'model_begin'} == {'plan', 'plan-repair-1', 'plan-repair-2'}
 
 
 def test_cancelled_specialist_releases_the_peer_wait_instead_of_deadlocking_the_team(team):

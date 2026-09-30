@@ -12,6 +12,12 @@ from .errors import AgentMessageRecipientUnavailable, StepOutcomeUnknown, Valida
 from .managed_assistant import _conversation, _output_limit, _recent_messages
 
 
+_PLAN_SCHEMA = {'type': 'object', 'properties': {
+    'answer': {'type': 'string'},
+    'tasks': {'type': 'array', 'items': {'type': 'string'}},
+}, 'required': ['answer', 'tasks'], 'additionalProperties': False}
+
+
 def _directory():
     path = os.environ.get('NODUS_CHECKPOINT_DIR', '')
     if not path or not os.path.isabs(path):
@@ -37,10 +43,12 @@ def _result(response, text=None):
             'truncated': response.get('stop_reason') == 'max_tokens'}
 
 
-def _messages(history, task, system):
+def _messages(history, task, system, response_schema=None):
     messages = _recent_messages(history, task, _output_limit())
+    extra = {} if response_schema is None else {'output_config': {
+        'format': {'type': 'json_schema', 'schema': response_schema}}}
     while len(json.dumps({'model': os.environ.get('NODUS_AGENT_MODEL'), 'messages': messages,
-                         'max_tokens': _output_limit(), 'system': system},
+                         'max_tokens': _output_limit(), 'system': system, **extra},
                         ensure_ascii=False, separators=(',', ':')).encode()) > _MAX_INPUT:
         if len(messages) <= 1:
             raise ValidationError('Assistant task exceeds the model input limit')
@@ -56,7 +64,25 @@ def _excerpt(text, maximum):
     return text
 
 
-@step(name='nodus-assistant-plan', version='2', effect='pure')
+def _parse_plan(response, workers):
+    text = _text(response).strip()
+    fenced = re.fullmatch(r'```(?:json)?[ \t]*(?:\r\n|\r|\n)(.*)(?:\r\n|\r|\n)[ \t]*```', text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    plan = json.loads(text)
+    if not isinstance(plan, dict) or set(plan) != {'answer', 'tasks'}:
+        raise ValueError('plan shape')
+    answer, tasks = plan['answer'], plan['tasks']
+    if (not isinstance(answer, str) or not isinstance(tasks, list)
+            or not ((not tasks and answer.strip()) or (not answer and 2 <= len(tasks) <= workers))
+            or not all(isinstance(task, str) and task.strip() and len(task.encode()) <= 8192 for task in tasks)
+            or len(json.dumps(tasks, ensure_ascii=False, separators=(',', ':')).encode()) > 16384
+            or len(set(tasks)) != len(tasks) or response.get('stop_reason') != 'end_turn'):
+        raise ValueError('plan bounds')
+    return answer, tasks
+
+
+@step(name='nodus-assistant-plan', version='3', effect='pure')
 def _plan(task, workers):
     system = (
         'You coordinate an assistant team. Use parallel specialists by default whenever independent parts '
@@ -64,33 +90,35 @@ def _plan(task, workers):
         f'Use between 2 and {workers} distinct tasks when useful. If capacity is below 2, answer directly. '
         'For greetings and simple questions answer directly without specialists. '
         'Return only JSON with exactly these fields: "answer" and "tasks". For parallel work, "answer" '
-        'is an empty string and "tasks" is a list of distinct, self-contained instructions. Each task must '
+        'is an empty string and "tasks" is a list of distinct instructions. Every specialist also receives '
+        'the complete original customer request. Keep each instruction below 40 words without repeating that request. Each task must '
         'describe work to perform without supplying conclusions or numerical answers to repeat. Each task must '
         'be at most 8192 UTF-8 bytes and the complete task list must fit 16 KiB of JSON. '
         'For a direct answer, "answer" is the complete answer and "tasks" is []. '
         'The specialists can reason about supplied information. Do not claim access to tools or data they do not have.'
     )
     with _directory() as directory:
-        messages = _messages(_conversation(directory), task, system)
-    response = _agent.model(messages, call_id='plan', max_output_tokens=_output_limit(), system=system)
-    try:
-        text = _text(response).strip()
-        fenced = re.fullmatch(r'```(?:json)?[ \t]*(?:\r\n|\r|\n)(.*)(?:\r\n|\r|\n)[ \t]*```', text, re.DOTALL)
-        if fenced:
-            text = fenced.group(1)
-        plan = json.loads(text)
-        if not isinstance(plan, dict) or set(plan) != {'answer', 'tasks'}:
-            raise ValueError('plan shape')
-        answer, tasks = plan['answer'], plan['tasks']
-        if (not isinstance(answer, str) or not isinstance(tasks, list)
-                or not ((not tasks and answer.strip()) or (not answer and 2 <= len(tasks) <= workers))
-                or not all(isinstance(task, str) and task.strip() and len(task.encode()) <= 8192 for task in tasks)
-                or len(json.dumps(tasks, ensure_ascii=False, separators=(',', ':')).encode()) > 16384
-                or len(set(tasks)) != len(tasks) or response.get('stop_reason') == 'max_tokens'):
-            raise ValueError('plan bounds')
-    except (ValueError, TypeError):
-        raise StepOutcomeUnknown('The assistant plan is incomplete. Inspect this run before retrying') from None
-    return {'messages': messages, 'tasks': tasks, 'direct': _result(response, answer)}
+        history = _conversation(directory)
+    for attempt in range(3):
+        instructions = system
+        if attempt:
+            instructions += (' A completed earlier reply did not satisfy the plan contract. '
+                             'Return only a concise plan matching the schema. Do not append an answer or explanation. '
+                             'Use short assignments, or a brief direct answer for a simple request.')
+        messages = _messages(history, task, instructions, _PLAN_SCHEMA)
+        # Only a completed, readable reply can authorize a correction. Unknown
+        # model outcomes propagate unchanged and retain their paid identity.
+        response = _agent.model(messages, call_id='plan' if not attempt else f'plan-repair-{attempt}',
+                                max_output_tokens=_output_limit(), system=instructions,
+                                response_schema=_PLAN_SCHEMA)
+        if response.get('stop_reason') == 'refusal':
+            return {'messages': messages, 'tasks': [], 'direct': _result(response)}
+        try:
+            answer, tasks = _parse_plan(response, workers)
+        except (ValueError, TypeError):
+            continue
+        return {'messages': messages, 'tasks': tasks, 'direct': _result(response, answer)}
+    raise StepOutcomeUnknown('The assistant could not produce a valid plan after two corrections')
 
 
 @step(name='nodus-assistant-specialist', version='2', effect='pure')

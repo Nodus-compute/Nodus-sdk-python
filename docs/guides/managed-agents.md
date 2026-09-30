@@ -142,6 +142,11 @@ If the coordinator exhausts recovery while starting its team, Nodus requests
 cancellation of admitted specialists. Uncertain results remain available for
 inspection instead of being reported as a completed answer.
 The version 1 template keeps its single-assistant behavior.
+The parallel assistant requests a structured task plan. A completed reply that
+does not satisfy the plan contract can receive up to two corrective model calls
+before any specialists are admitted. Each correction keeps its own stable call
+identity across recovery and respects the deployment's output limit. Unknown
+model outcomes stop for reconciliation without starting a correction.
 
 Hosted model methods require SDK 0.7.1 or later. Accounts admitted to hosted
 model access can deploy the installed text assistant
@@ -171,7 +176,7 @@ the same task.
 The assistant returns `text`, `model`, `stop_reason`, `truncated` and reported
 `usage` in the run result. `truncated` is true when the model reaches its output
 limit. The partial answer is saved and charged once. Submit a follow-up task to
-continue when needed. The assistant does not automatically make another call.
+continue when needed. The assistant does not automatically continue a truncated final answer.
 It saves recent conversation history in `NODUS_CHECKPOINT_DIR`. Reusing the
 session keeps its ordered recent turns. Older complete turns are dropped when
 needed to fit the 128 KiB request and 1024 message limits. The current task is
@@ -194,6 +199,11 @@ deployment's accepted model unless `model` is explicitly supplied. The server
 requires that explicit model to match the accepted deployment. Keep each call ID
 and request stable across retries. Request inputs are bounded to 128 KiB and
 responses to 256 KiB.
+On a deployment with structured response support, `response_schema` requests
+JSON matching an object schema with `additionalProperties` set to `false`.
+The schema is part of the accepted request and must stay identical on replay.
+Applications must still handle refusals, output truncation and semantic limits
+that the schema cannot express.
 
 A pure step may read this durable model response and write application state.
 Reentering that step retrieves the accepted response without making another

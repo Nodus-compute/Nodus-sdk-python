@@ -380,8 +380,9 @@ from ._agent_messages import MessageReceipt, PeerMessage, send_message, receive_
 
 from ._agent_broker import complete_model, read_blob_chunk
 def model(messages: list[dict[str, str]], *, call_id: str, max_output_tokens: int,
-          model: str | None = None, system: str | None = None) -> dict:
+          model: str | None = None, system: str | None = None,
+          response_schema: dict | None = None) -> dict:
     """Read a durable hosted model response under a stable call ID inside a managed step."""
     from ._agent_models import request
     return request(messages, call_id=call_id, max_output_tokens=max_output_tokens,
-                   model=model, system=system)
+                   model=model, system=system, response_schema=response_schema)
