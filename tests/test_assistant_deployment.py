@@ -46,7 +46,7 @@ def test_automatic_assistant_uses_versioned_entrypoint_without_invented_limits()
 
 @pytest.mark.parametrize('options', [
     {'model': None}, {'model': 'private-provider-model'}, {'model_max_output_tokens': True},
-    {'model_max_output_tokens': 4097}, {'project': '.'}, {'entrypoint': 'customer:main'},
+    {'model_max_output_tokens': 0}, {'project': '.'}, {'entrypoint': 'customer:main'},
     {'secrets': {'MODEL_KEY': 'secret'}}, {'network_permissions': ['model-api']},
     {'policy': {}}, {'setup': ['python', 'customer.py']},
 ])

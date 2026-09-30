@@ -33,8 +33,8 @@ def _definition(name, entrypoint, budget, *, template=None, source_asset_id=None
         raise ValidationError('Select a public Nodus model from the available catalog')
     if model is not None:
         _id(model)
-    if model_max_output_tokens is not None and (model is None or type(model_max_output_tokens) is not int or not 1 <= model_max_output_tokens <= 4096):
-        raise ValidationError('Model output limits require a model and an integer from 1 to 4096')
+    if model_max_output_tokens is not None and (model is None or type(model_max_output_tokens) is not int or model_max_output_tokens < 1):
+        raise ValidationError('Model output limits require a model and a positive integer within its catalog limit')
     if assistant_template is not None:
         entrypoints = {'nodus:claude-assistant-v1': 'nodus.managed_assistant:main',
                        'nodus:claude-assistant-v2': 'nodus.managed_parallel_assistant:main'}
@@ -236,6 +236,13 @@ class ManagedRuns:
 
 
 class ManagedRun(_Handle):
+    def answer(self):
+        """Retrieve the complete saved assistant answer, including large results."""
+        result = self._client._request("GET", self._path() + "/answer")
+        if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+            raise ValidationError("The complete saved answer could not be verified")
+        return result["text"]
+
     def retry(self, *, idempotency_key=None):
         """Request another authorized attempt for a run blocked by exhausted retries."""
         path, key = self._path() + "/retry", _key(idempotency_key)
@@ -403,6 +410,13 @@ class AsyncManagedRuns(ManagedRuns):
 
 
 class AsyncManagedRun(ManagedRun):
+    async def answer(self):
+        """Retrieve the complete saved assistant answer, including large results."""
+        result = await self._client._request("GET", self._path() + "/answer")
+        if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+            raise ValidationError("The complete saved answer could not be verified")
+        return result["text"]
+
     async def retry(self, *, idempotency_key=None):
         """Request another authorized attempt for a run blocked by exhausted retries."""
         path, key = self._path() + "/retry", _key(idempotency_key)
