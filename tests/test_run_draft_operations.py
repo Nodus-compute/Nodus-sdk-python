@@ -44,6 +44,8 @@ def test_empty_run_draft_does_not_invent_values(asynchronous):
      {"data_regions": ["é" * 64, *[f"region-{index}" for index in range(31)]]}),
     # The server preserves raw JSON integers that round to a finite float64.
     ({"vcpus": (1 << 1024) - (1 << 971) + 1}, {"vcpus": (1 << 1024) - (1 << 971) + 1}),
+    ({"gpu_count": None, "total_gpu_count": 7}, {"gpu": "H100", "total_gpu_count": 7}),
+    ({"total_gpu_count": None, "gpu_count": 2}, {"gpu": "H100", "gpu_count": 2}),
 ])
 def test_run_draft_patch_preserves_omission_and_null(asynchronous, patch, saved):
     expected = {"expected_revision": 4, "patch": patch}
@@ -123,6 +125,9 @@ def test_invalid_local_run_draft_arguments_never_reach_transport(asynchronous, r
 @pytest.mark.parametrize("values", [
     {"max_cost_usd": "3"}, {"max_cost_usd": None}, {"max_cost_usd": True},
     {"gpu_count": True}, {"gpu_count": 1.5}, {"result_paths": "results"},
+    {"total_gpu_count": True}, {"total_gpu_count": 0}, {"total_gpu_count": 2049},
+    {"total_gpu_count": 1.5}, {"total_gpu_count": "7"}, {"total_gpu_count": None},
+    {"total_gpu_count": 7, "gpu_count": 1},
     {"checkpoint_paths": [None]}, {"name": False}, {"memory_gb": float("inf")},
     {"max_cost_usd": float("nan")},
     {"vcpus": True}, {"vcpus": 0}, {"vcpus": -1}, {"vcpus": "4"}, {"vcpus": None},

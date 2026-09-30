@@ -66,6 +66,7 @@ class RunDraftValues(TypedDict, total=False):
     image: str
     gpu: str
     gpu_count: int
+    total_gpu_count: int
     memory_gb: float
     vcpus: float
     disk_gb: float
@@ -83,6 +84,7 @@ class RunDraftPatch(TypedDict, total=False):
     image: str | None
     gpu: str | None
     gpu_count: int | None
+    total_gpu_count: int | None
     memory_gb: float | None
     vcpus: float | None
     disk_gb: float | None
@@ -218,6 +220,8 @@ def _run_draft(value: Any) -> RunDraft:
             valid = isinstance(saved, str)
         elif name == "gpu_count":
             valid = type(saved) is int
+        elif name == "total_gpu_count":
+            valid = type(saved) is int and 1 <= saved <= 2048 and "gpu_count" not in values
         elif name in ("memory_gb", "max_cost_usd"):
             valid = type(saved) in (int, float) and (type(saved) is int or math.isfinite(saved))
         elif name in ("vcpus", "disk_gb"):
