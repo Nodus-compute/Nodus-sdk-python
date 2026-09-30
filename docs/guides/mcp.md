@@ -32,7 +32,7 @@ It manages the Python runtime and package dependencies for you.
 **1. Sign in once.** Run this in your terminal and complete browser sign-in:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.10.0' nodus login
+uvx --from 'nodus-compute[mcp]==0.11.0' nodus login
 ```
 
 **2. Add Nodus to your MCP client.** In Claude Desktop or Cursor, add this to
@@ -43,7 +43,7 @@ your MCP server configuration and reload the connection:
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.10.0", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.11.0", "nodus-mcp"]
     }
   }
 }
@@ -52,7 +52,7 @@ your MCP server configuration and reload the connection:
 For Codex, run this instead of editing JSON:
 
 ```sh
-codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.10.0' nodus-mcp
+codex mcp add nodus -- uvx --from 'nodus-compute[mcp]==0.11.0' nodus-mcp
 ```
 
 The server uses your saved sign-in. There is no API key to paste into the
@@ -66,7 +66,7 @@ without starting paid compute. Your local client should discover nine tools.
 Install the MCP extra and reuse your existing Nodus sign-in:
 
 ```sh
-pip install --upgrade 'nodus-compute[mcp]==0.10.0'
+pip install --upgrade 'nodus-compute[mcp]==0.11.0'
 nodus login
 ```
 
