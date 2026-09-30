@@ -20,9 +20,17 @@ def portable_output_name(name: str) -> bool:
             and name.split(".")[0].upper() not in reserved)
 
 
+def valid_member_id(member_id: object) -> str:
+    """Validate the shared query and output-inventory member identity."""
+    if isinstance(member_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", member_id):
+        return member_id
+    raise ValidationError("member_id must be a Nodus distributed member identifier")
+
+
 def output_destinations(root: Path, outputs: list) -> list[tuple[object, Path]]:
     """Plan portable file names without trusting remote paths or overwriting files."""
     seen = set()
+    directories = set()
     planned = []
     for output in outputs:
         for name in (output.stage_id, *output.name.split("/")):
@@ -30,17 +38,20 @@ def output_destinations(root: Path, outputs: list) -> list[tuple[object, Path]]:
                 raise ValidationError("Output stage and file names must be portable single path components.")
         directory = root / output.stage_id
         if output.member_id:
-            if not re.fullmatch(r"[A-Za-z0-9._:-]{1,256}", output.member_id) or output.member_id in (".", ".."):
-                raise ValidationError("Invalid output member identity.")
+            valid_member_id(output.member_id)
             directory = directory / ("member-" + quote(output.member_id, safe=""))
         destination = directory / output.name
-        key = str(destination).casefold()
-        if key in seen:
+        key = tuple(part.casefold() for part in destination.parts)
+        parents = {key[:length] for length in range(1, len(key))}
+        if key in seen or key in directories or parents & seen:
             raise ValidationError("Output names collide on the local filesystem.")
         seen.add(key)
+        directories.update(parents)
         for part in (destination, *destination.parents):
             if part.is_symlink():
                 raise ValidationError("Download destinations cannot contain symbolic links.")
+        if any(part.exists() and not part.is_dir() for part in destination.parents):
+            raise ValidationError("An output parent is not a directory. Choose a new download directory.")
         if destination.exists():
             raise ValidationError("An output file already exists. Choose a new download directory.")
         planned.append((output, destination))

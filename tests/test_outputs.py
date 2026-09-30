@@ -322,3 +322,62 @@ def test_distributed_download_rejects_symlinked_nested_output(tmp_path):
     output = nodus.Output.from_dict(dict(ROW, member_id='dg:0', name='shards/model.bin'))
     with pytest.raises(nodus.NodusError, match='symbolic'):
         output_destinations(root, [output])
+
+
+@pytest.mark.parametrize('asynchronous', [False, True])
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('rows', [
+    [dict(ROW, name='a'), dict(ROW, name='a/b')],
+    [dict(ROW, name='member-x'), dict(ROW, name='model', member_id='x')],
+    [dict(ROW, name='MEMBER-X'), dict(ROW, name='model', member_id='x')],
+])
+def test_output_file_directory_overlap_fails_before_download(asynchronous, reverse, rows, tmp_path):
+    destination = tmp_path / 'download'
+    def handler(req):
+        if req.url.path.endswith('/outputs'):
+            return httpx.Response(200, json={'outputs': list(reversed(rows)) if reverse else rows})
+        pytest.fail('overlapping inventory started downloading output bytes')
+    def action(client):
+        workload = nodus.AsyncWorkload(client) if asynchronous else nodus.Workload(client)
+        workload.id = 'wl_test'
+        return workload.download(destination)
+    with pytest.raises(nodus.ValidationError, match='collide'):
+        exercise(handler, asynchronous, action)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize('asynchronous', [False, True])
+@pytest.mark.parametrize('member', ['_member', '.member', 'x' * 201])
+def test_invalid_member_in_inventory_fails_before_any_download(asynchronous, member, tmp_path):
+    destination = tmp_path / 'download'
+    def handler(req):
+        if req.url.path.endswith('/outputs'):
+            return httpx.Response(200, json={'outputs': [ROW, dict(ROW, member_id=member)]})
+        pytest.fail('invalid inventory started downloading output bytes')
+    def action(client):
+        workload = nodus.AsyncWorkload(client) if asynchronous else nodus.Workload(client)
+        workload.id = 'wl_test'
+        return workload.download(destination)
+    with pytest.raises(nodus.ValidationError, match='member'):
+        exercise(handler, asynchronous, action)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize('asynchronous', [False, True])
+def test_existing_file_in_output_parent_fails_before_any_download(asynchronous, tmp_path):
+    destination = tmp_path / 'download'
+    blocked = destination / 'train' / 'blocked'
+    blocked.parent.mkdir(parents=True)
+    blocked.write_bytes(b'customer file')
+    def handler(req):
+        if req.url.path.endswith('/outputs'):
+            return httpx.Response(200, json={'outputs': [dict(ROW, name='good'), dict(ROW, name='blocked/weights')]})
+        pytest.fail('blocked destination started downloading output bytes')
+    def action(client):
+        workload = nodus.AsyncWorkload(client) if asynchronous else nodus.Workload(client)
+        workload.id = 'wl_test'
+        return workload.download(destination)
+    with pytest.raises(nodus.ValidationError, match='directory'):
+        exercise(handler, asynchronous, action)
+    assert blocked.read_bytes() == b'customer file'
+    assert list(blocked.parent.iterdir()) == [blocked]

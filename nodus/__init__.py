@@ -35,7 +35,7 @@ from typing import Any, AsyncIterator, Iterator, Callable
 from pathlib import Path
 
 from ._freeze import WorkloadFreeze
-from ._outputs import download_path, verified_file, output_destinations
+from ._outputs import download_path, verified_file, output_destinations, valid_member_id as _valid_member_id
 from ._assets import Asset, Assets, AsyncAssets
 from ._rl_setup import RLSetup
 from ._rl_events import (
@@ -508,13 +508,6 @@ def _valid_id(workload_id: Any) -> str:
         "underscores and hyphens. It becomes one segment of /v1/workloads/{id}, "
         "where a slash or a dot segment addresses a different endpoint entirely."
     )
-
-
-def _valid_member_id(member_id: Any) -> str:
-    """A Nodus member identifier carried in a query parameter, never a path."""
-    if isinstance(member_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", member_id):
-        return member_id
-    raise ValidationError("member_id must be a Nodus distributed member identifier")
 
 
 def _valid_idempotency_key(key: str) -> str:
