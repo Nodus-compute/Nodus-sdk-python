@@ -12044,7 +12044,8 @@
                 "type": "string"
               },
               "model_max_output_tokens": {
-                "type": "integer"
+                "type": "integer",
+                "description": "Per-call output bound for hosted model access. Omission uses the selected model maximum from the current catalog. An explicit value must fit that model. Accepted revisions retain their resolved limit."
               },
               "name": {
                 "type": "string"
@@ -12290,7 +12291,8 @@
                     "type": "string"
                   },
                   "model_max_output_tokens": {
-                    "type": "integer"
+                    "type": "integer",
+                    "description": "Per-call output bound for hosted model access. Omission uses the selected model maximum from the current catalog. An explicit value must fit that model. Accepted revisions retain their resolved limit."
                   },
                   "name": {
                     "type": "string"

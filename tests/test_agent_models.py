@@ -11,10 +11,11 @@ from test_agent_steps import journal_socket
 from nodus.agent_runtime import run
 
 
-def test_provider_maximum_and_large_reply_survive_paged_replay(journal_socket):
+@pytest.mark.parametrize("corrupt_page", [False, True])
+def test_provider_maximum_and_large_reply_survive_paged_replay(journal_socket, corrupt_page):
     _, state = journal_socket
     text = 'Complete multilingual answer 漢字 é.\n' * 18000
-    state.update(input={'task': 'Keep every byte'}, paged_model_response=True,
+    state.update(input={'task': 'Keep every byte'}, paged_model_response=True, corrupt_model_page=corrupt_page,
                  model_response={'model': 'nodus:claude-test', 'content': [{'type': 'text', 'text': text}],
                                  'stop_reason': 'end_turn', 'usage': {'input_tokens': 10, 'output_tokens': 64000}})
 
@@ -28,12 +29,17 @@ def test_provider_maximum_and_large_reply_survive_paged_replay(journal_socket):
         return answer(_step_id='answer')
 
     expected = {'sha256': hashlib.sha256(text.encode()).hexdigest()}
+    if corrupt_page:
+        with pytest.raises(nodus.StepOutcomeUnknown):
+            run(main, run_id='cycle-42', version='1')
+        assert state['result'] is None and len(state['model_effects']) == 1
+        state['corrupt_model_page'] = False
     assert run(main, run_id='cycle-42', version='1') == expected
     assert run(main, run_id='cycle-42', version='1') == expected
     assert len(state['model_effects']) == 1
     offsets = [body['response_offset'] for action, body in state['requests']
                if action == 'model_status' and body.get('response_offset')]
-    assert offsets == [262144, 524288]
+    assert offsets == ([262144] if corrupt_page else []) + [262144, 524288]
 
 
 def test_owned_assistant_keeps_full_large_answer_in_blob(journal_socket, tmp_path, monkeypatch):
