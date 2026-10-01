@@ -4540,14 +4540,14 @@
           },
           "accepted_route_rate_version": {
             "type": "string",
-            "description": "Cloud-connected pools accept byoc-free-v1 at zero. Other pools require explicit route-platform-v1 consent on each enable request."
+            "description": "Cloud-connected pools accept byoc-free-v1 at zero. Other customer-owned pools require explicit private-supplier-cost-v2 consent on each enable request."
           },
           "accepted_route_rate_micros": {
             "type": "integer",
             "format": "int64",
             "minimum": 0,
             "maximum": 9223372036854775807,
-            "description": "Zero for free cloud-connected pools. Other pools require explicit 20000 USD micros per active customer device-hour on each enable request."
+            "description": "Zero for customer-owned pools. Non-cloud pools require explicit zero with private-supplier-cost-v2 on each enable request. Existing reservations retain their accepted terms."
           },
           "wait_policy": {
             "type": "string",
@@ -4593,7 +4593,7 @@
         },
         "additionalProperties": false,
         "minProperties": 1,
-        "description": "Change Predict separately from other settings. Cloud-connected pools use free Predict and accept byoc-free-v1 with accepted_predict_monthly_micros 0. Other pools require explicit accepted_predict_rate_version predict-account-monthly-v1 and accepted_predict_monthly_micros 99000000 when enabling. Disabling requires only predict_enabled false and stops future refresh and renewal after the last enabled pool is disabled. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, and owned cost. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and reject paid consent. Other pools require explicit route-platform-v1 consent at 20000 USD micros per active customer device-hour, including optimize and apply. Free cloud Predict and Route requests may omit consent fields, though explicit byoc-free-v1 and zero are also accepted. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
+        "description": "Change Predict separately from other settings. Customer-owned pools have no fixed Predict fee and accept byoc-free-v1 with accepted_predict_monthly_micros 0. The API also permits omitted consent for these free Predict terms. Historical charges remain readable. Disabling requires only predict_enabled false and stops future refresh. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, and owned cost. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and may omit consent. Other customer-owned pools require explicit private-supplier-cost-v2 consent at zero fixed platform rate. Cloud provider charges and separately authorized market capacity remain separate. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
       },
       "PoolEnrollmentTokenRequest": {
         "type": "object",
@@ -5122,7 +5122,7 @@
           "paid_current_period",
           "enabled_pool_count"
         ],
-        "description": "Cloud-connected pools report byoc-free-v1, monthly_micros 0 and paid_current_period false, including while active. Other pools use fixed USD 99 per account per UTC calendar month, independent of device and pool count. The first paid activation charges the full current month. paid_current_period means funded by credits or accepted postpaid receivable, not that a postpaid invoice has been paid."
+        "description": "Customer-owned pools report byoc-free-v1 and monthly_micros 0, including while active. Free activation and refresh create no subscription charge. paid_current_period normally remains false. For non-cloud pools it records any retained historical funding for the current month, including credits or an accepted postpaid receivable. It does not assert that a postpaid invoice has been paid. Historical charges retain their original rate version and amount."
       },
       "PoolForecastBand": {
         "type": "object",
