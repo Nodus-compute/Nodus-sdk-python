@@ -9,7 +9,7 @@ from test_pools import POOL, exercise
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("version,rate,include_version", [("route-platform-v1", 20000, True), ("route-platform-v1", 20000, False), ("byoc-free-v1", 0, True)])
+@pytest.mark.parametrize("version,rate,include_version", [("route-platform-v1", 20000, True), ("route-platform-v1", 20000, False), ("byoc-free-v1", 0, True), ("private-supplier-cost-v2", 0, True)])
 def test_route_activation_and_zero_settings(asynchronous, version, rate, include_version):
     payload = {"route_enabled": True, "accepted_route_rate_version": version,
                "accepted_route_rate_micros": rate, "wait_policy": "never", "wait_alpha": 0,
@@ -48,6 +48,10 @@ def test_invalid_route_settings_never_reach_network(asynchronous, settings):
 @pytest.mark.parametrize("enabled,consent", [(True, {}), (True, {"accepted_rate_version":"old", "accepted_rate_micros":20000}),
     (True, {"accepted_rate_version":"byoc-free-v1", "accepted_rate_micros":20000}),
     (True, {"accepted_rate_version":"byoc-free-v1", "accepted_rate_micros":False}),
+    (True, {"accepted_rate_version":"private-supplier-cost-v2", "accepted_rate_micros":20000}),
+    (True, {"accepted_rate_version":"private-supplier-cost-v2", "accepted_rate_micros":-1}),
+    (True, {"accepted_rate_version":"unknown", "accepted_rate_micros":0}),
+    (True, {"accepted_rate_version":"private-supplier-cost-v2", "accepted_rate_micros":False}),
     (False,{"accepted_rate_version":"route-platform-v1"}), (1,{})])
 def test_route_consent_is_explicit(asynchronous, enabled, consent):
     with pytest.raises(nodus.ValidationError):
@@ -56,7 +60,7 @@ def test_route_consent_is_explicit(asynchronous, enabled, consent):
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("version,rate", [("route-platform-v1", 20000), ("byoc-free-v1", 0)])
+@pytest.mark.parametrize("version,rate", [("route-platform-v1", 20000), ("byoc-free-v1", 0), ("private-supplier-cost-v2", 0)])
 @pytest.mark.parametrize("wrong", [{"id":"pool_other"}, {"route_enabled": False}, {"platform_rate_micros":1}, {"platform_rate_micros":False}, {"route_price_version":"other"}])
 def test_route_response_cannot_confirm_another_pool_or_rate(asynchronous, version, rate, wrong):
     with pytest.raises(nodus.APIError):

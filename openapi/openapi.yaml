@@ -1122,6 +1122,11 @@
             "default": 0,
             "description": "Settled managed model charges in this billing period in an account meter. Already included in settled_usd. Zero in workload and workspace compute-session meters."
           },
+          "shared_settled_usd": {
+            "type": "number",
+            "default": 0,
+            "description": "Settled shared service charges in this billing period in an account meter. Already included in settled_usd. Zero in workload and workspace compute-session meters."
+          },
           "compute_accruing_usd": {
             "type": "number",
             "default": 0,
@@ -3903,6 +3908,7 @@
           "subscription_settled_usd": {"type": "number", "description": "Zero for workspace compute sessions."},
           "storage_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Saved-file charges belong to the account meter."},
           "model_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Managed model charges belong to the account meter."},
+          "shared_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Shared service charges belong to the account meter."},
           "compute_accruing_usd": {"type": "number"},
           "platform_fee_accruing_usd": {"type": "number"},
           "final_charge_usd": {"type": "number", "minimum": 0, "description": "Immutable aggregate lifetime compute charge once the session has stopped and all required compute cost records are complete. Excludes saved-file storage, which can continue to incur separate usage charges. Omitted while finalizing."},
@@ -3930,7 +3936,7 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Shared free allowance across eligible workspaces. The account policy includes 10,000,000,000 bytes."
+            "description": "Current shared free allowance across eligible saved files. An active storage promotion may provide an allowance."
           },
           "retained_bytes": {
             "type": "integer",
@@ -3958,7 +3964,11 @@
           "rate_usd_gb_month": {
             "type": "number",
             "minimum": 0,
-            "description": "Server-reported USD rate per decimal GB-month. The account policy uses 0.015 and includes requests."
+            "description": "Server-reported fixed USD rate per decimal GB-month when applicable. For measured-cost pricing, use pricing_basis and posted charges. A zero rate does not indicate free storage."
+          },
+          "pricing_basis": {
+            "type": "string",
+            "description": "Billing basis for storage charges when the policy does not use a fixed monthly rate."
           },
           "charged_usd": {
             "type": "number",
@@ -3979,7 +3989,7 @@
             "format": "date-time"
           }
         },
-        "description": "Account-wide saved-file usage and posted charges. Account-policy overage is prorated continuously by logical payload bytes and time over a fixed 30-day month. This uses the R2 Standard unit rate without reproducing its daily-peak invoice. Unfunded retention is not backcharged. File export and deletion remain available with stopped compute."
+        "description": "Account-wide saved-file usage and posted charges. The current measured-cost policy reports its pricing basis and posted charges. Earlier fixed-rate policies report their applicable monthly rate separately. Use server-reported charges instead of deriving a bill from the current byte count. File export and deletion remain available with stopped compute."
       },
       "ResearchWorkspaceFileRevision": {
         "type": "object",
@@ -4539,14 +4549,14 @@
           },
           "accepted_route_rate_version": {
             "type": "string",
-            "description": "Cloud-connected pools accept byoc-free-v1 at zero. Other pools require explicit route-platform-v1 consent on each enable request."
+            "description": "Cloud-connected pools accept byoc-free-v1 at zero. Other customer-owned pools require explicit private-supplier-cost-v2 consent on each enable request."
           },
           "accepted_route_rate_micros": {
             "type": "integer",
             "format": "int64",
             "minimum": 0,
             "maximum": 9223372036854775807,
-            "description": "Zero for free cloud-connected pools. Other pools require explicit 20000 USD micros per active customer device-hour on each enable request."
+            "description": "Zero for customer-owned pools. Non-cloud pools require explicit zero with private-supplier-cost-v2 on each enable request. Existing reservations retain their accepted terms."
           },
           "wait_policy": {
             "type": "string",
@@ -4592,7 +4602,7 @@
         },
         "additionalProperties": false,
         "minProperties": 1,
-        "description": "Change Predict separately from other settings. Cloud-connected pools use free Predict and accept byoc-free-v1 with accepted_predict_monthly_micros 0. Other pools require explicit accepted_predict_rate_version predict-account-monthly-v1 and accepted_predict_monthly_micros 99000000 when enabling. Disabling requires only predict_enabled false and stops future refresh and renewal after the last enabled pool is disabled. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, and owned cost. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and reject paid consent. Other pools require explicit route-platform-v1 consent at 20000 USD micros per active customer device-hour, including optimize and apply. Free cloud Predict and Route requests may omit consent fields, though explicit byoc-free-v1 and zero are also accepted. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
+        "description": "Change Predict separately from other settings. Customer-owned pools have no fixed Predict fee and accept byoc-free-v1 with accepted_predict_monthly_micros 0. The API also permits omitted consent for these free Predict terms. Historical charges remain readable. Disabling requires only predict_enabled false and stops future refresh. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, and owned cost. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and may omit consent. Other customer-owned pools require explicit private-supplier-cost-v2 consent at zero fixed platform rate. Cloud provider charges and separately authorized market capacity remain separate. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
       },
       "PoolEnrollmentTokenRequest": {
         "type": "object",
@@ -5121,7 +5131,7 @@
           "paid_current_period",
           "enabled_pool_count"
         ],
-        "description": "Cloud-connected pools report byoc-free-v1, monthly_micros 0 and paid_current_period false, including while active. Other pools use fixed USD 99 per account per UTC calendar month, independent of device and pool count. The first paid activation charges the full current month. paid_current_period means funded by credits or accepted postpaid receivable, not that a postpaid invoice has been paid."
+        "description": "Customer-owned pools report byoc-free-v1 and monthly_micros 0, including while active. Free activation and refresh create no subscription charge. paid_current_period normally remains false. For non-cloud pools it records any retained historical funding for the current month, including credits or an accepted postpaid receivable. It does not assert that a postpaid invoice has been paid. Historical charges retain their original rate version and amount."
       },
       "PoolForecastBand": {
         "type": "object",
@@ -9925,7 +9935,7 @@
             "description": "Customer price for one-hour cache creation. Omission means this bucket is not qualified."
           }
         },
-        "description": "Published customer rates already include the service markup. One USD micro is 0.000001 USD. Each token belongs to one billing bucket. Charges round upward to integer USD micros after summing usage at these rates."
+        "description": "Published customer rates include the 12.5 percent service markup and round upward for display. One USD micro is 0.000001 USD. Each token belongs to one billing bucket. Actual charges apply the markup to the aggregate selected model supplier cost and round upward once. When rates_are_maximum is true, rates are the maximum across eligible models and the actual charge may be lower."
       },
       "ManagedModelPublic": {
         "type": "object",
@@ -9964,6 +9974,10 @@
           },
           "rates": {
             "$ref": "#/components/schemas/ManagedModelRates"
+          },
+          "rates_are_maximum": {
+            "type": "boolean",
+            "description": "When true, published rates are maximum customer rates across eligible models. Actual charges use the selected model supplier cost plus 12.5 percent."
           },
           "max_output_tokens": {
             "type": "integer",
@@ -14620,7 +14634,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "All unsettled assigned attempts, including draining and uncertain allocations. Must be at least max_active and at most the deployment worker limit."
+            "description": "Allocations awaiting confirmed physical cleanup, including provisioning, draining and uncertain resources. Pending accounting retains spending reservations after physical capacity is released. Must be at least max_active and at most the deployment worker limit."
           },
           "max_pending": {
             "type": "integer",
@@ -14782,7 +14796,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "All unsettled assigned attempts, including draining and uncertain allocations. Must be at least max_active and at most the deployment worker limit."
+            "description": "Allocations awaiting confirmed physical cleanup, including provisioning, draining and uncertain resources. Pending accounting retains spending reservations after physical capacity is released. Must be at least max_active and at most the deployment worker limit."
           },
           "max_pending": {
             "type": "integer",

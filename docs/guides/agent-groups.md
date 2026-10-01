@@ -197,13 +197,17 @@ acted on the message. Group message limits are separate from compute budgets.
 | --- | --- |
 | `max_pending` | All nonterminal tasks, including active, waiting and blocked work |
 | `max_active` | Attempts authorized for execution in admitting, starting or running state, including retained waiting workers |
-| `max_held` | Every unsettled allocation, including draining and uncertain attempts |
+| `max_held` | Allocations awaiting confirmed physical cleanup, including provisioning, draining and uncertain resources |
 | `max_retained_runs` | Runs whose payloads have not expired, including completed and cancelled tasks |
 | Existing workspace limits | Held or saved workspaces and their configured byte limits |
 
 `active_authorized_attempts` can be compared with `max_active`.
-`allocations.cleanup_pending_attempts` can be compared with `max_held`.
-These are control-plane authorization and liability counts. They do not measure
+`allocations.open_attempts` and `allocations.cleanup_pending_attempts` can
+exceed `max_held` while accounting remains pending after confirmed physical
+cleanup. Unresolved creation, live resources and active leases continue to
+consume capacity until cleanup is confirmed. Pending bills retain spending
+reservations without consuming a worker slot. These are authorization and
+liability counts. They do not measure
 productive model activity or prove that each runtime is healthy.
 
 Pending defaults to 1,000 per group, bounded by account entitlement up to 10,000.
