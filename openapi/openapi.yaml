@@ -14250,7 +14250,13 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Credit Nodus may still spend, in US micro-dollars."
+            "description": "Credit Nodus may still spend, in US micro-dollars, after open holds."
+          },
+          "reserved_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Credit held for launches and running hours that are not yet metered, in US micro-dollars."
           },
           "expires_at": {
             "type": "string",
@@ -14271,6 +14277,7 @@
           "connection_id",
           "status",
           "remaining_micros",
+          "reserved_micros",
           "provider_source"
         ]
       },
