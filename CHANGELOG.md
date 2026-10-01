@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3
+
+- Accept explicit current customer-owned Route terms while preserving exact rate acknowledgement.
+- Document free Predict entitlements and retained historical charges separately from Route pricing.
+
 ## 0.7.2
 
 - Advertise hosted assistant template, model and output limits in MCP creation and update tools.

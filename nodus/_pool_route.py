@@ -36,8 +36,8 @@ def route_patch(enabled: bool, version: str | None, rate: int | None, settings: 
     if type(enabled) is not bool:
         raise ValidationError("enabled must be a boolean")
     if enabled:
-        if type(rate) is not int or (version, rate) not in (("route-platform-v1", 20000), ("byoc-free-v1", 0)):
-            raise ValidationError("Accept the pool's Route terms explicitly: route-platform-v1 at 20000 USD micros per device-hour, or byoc-free-v1 at zero for a cloud-connected pool")
+        if type(rate) is not int or (version, rate) not in (("route-platform-v1", 20000), ("byoc-free-v1", 0), ("private-supplier-cost-v2", 0)):
+            raise ValidationError("Accept the pool's Route terms explicitly: route-platform-v1 at 20000 USD micros per device-hour, byoc-free-v1 at zero for a cloud-connected pool, or private-supplier-cost-v2 at zero for customer-owned capacity")
         return {**settings, "route_enabled": True, "accepted_route_rate_version": version, "accepted_route_rate_micros": rate}
     if version is not None or rate is not None:
         raise ValidationError("Rate consent applies only when enabling Route")

@@ -50,7 +50,7 @@ def _time(value: Any, *, hour: bool = False) -> datetime:
 
 @dataclass(frozen=True)
 class PredictSubscription:
-    """Server-reported Predict terms, including free cloud-connected pools."""
+    """Server-reported Predict terms, including free customer-owned pools."""
 
     status: str
     rate_version: str

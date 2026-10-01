@@ -161,10 +161,10 @@ def docs_api(monkeypatch):
                 return self.reply({"error": "unauthorized"}, 401)
             if path != "/v1/pools/pool_docs":
                 return self.reply({"error": "not_found"}, 404)
-            if payload.get("route_enabled") is True and (payload.get("accepted_route_rate_version") != "route-platform-v1" or payload.get("accepted_route_rate_micros") != 20000):
+            if payload.get("route_enabled") is True and (payload.get("accepted_route_rate_version") != "private-supplier-cost-v2" or payload.get("accepted_route_rate_micros") != 0):
                 return self.reply({"error": "route_rate_consent"}, 409)
             return self.reply({"id": "pool_docs", "name": "Research", "kind": "hosts", "state": "active",
-                "route_enabled": True, "platform_rate_micros": 20000, "route_price_version": "route-platform-v1", **payload})
+                "route_enabled": True, "platform_rate_micros": 0, "route_price_version": "private-supplier-cost-v2", **payload})
 
         def do_POST(self):
             path = urlsplit(self.path).path
