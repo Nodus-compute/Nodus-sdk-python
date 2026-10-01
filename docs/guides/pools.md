@@ -84,22 +84,16 @@ A burst crossing a window boundary leaves cost unknown instead of prorating it.
 
 ## Forecasts and advisory recommendations
 
-Observe measurements remain free. Cloud-connected BYOCompute pools also have
-free Predict and Route under `byoc-free-v1`. Their subscription reports
-`monthly_micros: 0` and `paid_current_period: false`, even when active. This
-does not change a paid subscription covering other pools in the account.
-For a cloud-connected pool, supply `byoc-free-v1` and zero to
-`set_predict` or `set_route` when enabling. The equivalent CLI flags are
-`--accept-rate-version byoc-free-v1` with `--accept-monthly-micros 0` for
-Predict or `--accept-rate-micros 0` for Route. Cloud provider charges and
-separately authorized market capacity still apply.
+Observe measurements and Predict have no fixed subscription fee for
+customer-owned pools. Predict reports `byoc-free-v1` with `monthly_micros: 0`.
+An active subscription normally has `paid_current_period: false`. Retained
+historical funding can make that field true and does not mean an external
+invoice was paid. Existing charges remain in billing history.
 
-For other pools, Predict costs **$99 per account per UTC
-calendar month**, with no additional pool or device fee. The first activation
-charges the full current month without proration. Enabling another pool in an
-already-active period adds no charge. An active period can reflect an accepted
-postpaid charge and does not mean an invoice has been paid. Disable Predict on every pool to stop
-future renewal. Disabling does not refund the current period.
+Cloud-connected BYOCompute pools use free Route under `byoc-free-v1`.
+Other customer-owned pools use `private-supplier-cost-v2` with no fixed
+platform fee. Cloud provider charges and separately authorized market
+capacity still apply. Route terms remain separate from Predict terms.
 
 Read `client.pools.forecast(pool_id, horizon=7)` or use
 `nodus pools forecast POOL_ID --horizon 7 --json` to inspect the server's
@@ -134,13 +128,13 @@ that a whole day falls inside it.
 Enable Predict only after reviewing the returned price. Python callers use
 `set_predict(pool_id, True, accepted_rate_version=...,
 accepted_monthly_micros=...)`, supplying the exact rate version and integer
-USD micros they accept. The SDK has no default consent or amount. For a paid
-Predict subscription, the CLI is:
+USD micros they accept. The SDK has no default consent or amount. For the
+current free Predict terms, the CLI is:
 
 ```sh
 nodus pools predict POOL_ID on \
-  --accept-rate-version predict-account-monthly-v1 \
-  --accept-monthly-micros 99000000
+  --accept-rate-version byoc-free-v1 \
+  --accept-monthly-micros 0
 ```
 
 Disable with `client.pools.set_predict(pool_id, False)` or
@@ -206,9 +200,10 @@ be awaited. Forecasts return `PoolForecast`, recommendations return
 ## Enable Route with explicit consent
 
 Cloud-connected pools use free Route as described above. For other pools,
-an account admin can enable Route at **$0.02 per active customer device-hour**,
-including optimization and apply. Your private hosts have no supplier rental
-charge. Market capacity has separate compute charges. Enabling Route does not
+an account admin can enable Route under `private-supplier-cost-v2` with a
+fixed platform rate of zero. Your private hosts have no supplier expense
+billed to Nodus. Market capacity has separate compute charges. Retained
+reservations keep their accepted terms. Enabling Route does not
 create a Predict subscription or change an observe host's execution permission.
 
 First choose an existing host from `client.pools.hosts(pool_id)`. Use the
@@ -236,8 +231,8 @@ After reviewing the rate, enable Route:
 pool = client.pools.set_route(
     pool_id,
     True,
-    accepted_rate_version="route-platform-v1",
-    accepted_rate_micros=20000,
+    accepted_rate_version="private-supplier-cost-v2",
+    accepted_rate_micros=0,
 )
 ```
 
@@ -245,8 +240,8 @@ The same consent through the CLI is:
 
 ```bash
 nodus pools route POOL_ID on \
-  --accept-rate-version route-platform-v1 \
-  --accept-rate-micros 20000
+  --accept-rate-version private-supplier-cost-v2 \
+  --accept-rate-micros 0
 ```
 
 Disabling with `client.pools.set_route(pool_id, False)` or

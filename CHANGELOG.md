@@ -2,6 +2,9 @@
 
 ## 0.11.0
 
+- Accept explicit current customer-owned Route terms while preserving exact rate acknowledgement.
+- Document free Predict entitlements and retained historical charges separately from Route pricing.
+
 - Use the selected catalog model maximum when an assistant output limit is omitted. Explicit smaller limits remain supported.
 - Retrieve large hosted model replies in verified pages under the original paid call identity, using the polling allowance supplied by the server.
 - Preserve complete assistant answers and add synchronous and asynchronous `ManagedRun.answer()` retrieval for retained results.
