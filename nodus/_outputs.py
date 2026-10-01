@@ -8,6 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
+from urllib.parse import quote
 
 from .errors import NodusError, ValidationError
 
@@ -19,22 +20,38 @@ def portable_output_name(name: str) -> bool:
             and name.split(".")[0].upper() not in reserved)
 
 
+def valid_member_id(member_id: object) -> str:
+    """Validate the shared query and output-inventory member identity."""
+    if isinstance(member_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", member_id):
+        return member_id
+    raise ValidationError("member_id must be a Nodus distributed member identifier")
+
+
 def output_destinations(root: Path, outputs: list) -> list[tuple[object, Path]]:
     """Plan portable file names without trusting remote paths or overwriting files."""
     seen = set()
+    directories = set()
     planned = []
     for output in outputs:
-        for name in (output.stage_id, output.name):
+        for name in (output.stage_id, *output.name.split("/")):
             if not portable_output_name(name):
                 raise ValidationError("Output stage and file names must be portable single path components.")
-        destination = root / output.stage_id / output.name
-        key = str(destination).casefold()
-        if key in seen:
+        directory = root / output.stage_id
+        if output.member_id:
+            valid_member_id(output.member_id)
+            directory = directory / ("member-" + quote(output.member_id, safe=""))
+        destination = directory / output.name
+        key = tuple(part.casefold() for part in destination.parts)
+        parents = {key[:length] for length in range(1, len(key))}
+        if key in seen or key in directories or parents & seen:
             raise ValidationError("Output names collide on the local filesystem.")
         seen.add(key)
-        for part in (root, *root.parents, destination.parent, destination):
+        directories.update(parents)
+        for part in (destination, *destination.parents):
             if part.is_symlink():
                 raise ValidationError("Download destinations cannot contain symbolic links.")
+        if any(part.exists() and not part.is_dir() for part in destination.parents):
+            raise ValidationError("An output parent is not a directory. Choose a new download directory.")
         if destination.exists():
             raise ValidationError("An output file already exists. Choose a new download directory.")
         planned.append((output, destination))
@@ -42,10 +59,9 @@ def output_destinations(root: Path, outputs: list) -> list[tuple[object, Path]]:
 
 
 def download_path(workload_id: str, name: str) -> str:
-    if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name)
-            or name in (".", "..")):
-        raise ValidationError("Output name must be a single name containing letters, digits, dots, underscores or hyphens.")
-    return f"/v1/workloads/{workload_id}/outputs/{name}"
+    if (not isinstance(name, str) or len(name) > 1024 or any(not portable_output_name(part) for part in name.split("/"))):
+        raise ValidationError("Output name must contain portable relative path components.")
+    return f"/v1/workloads/{workload_id}/outputs/{quote(name, safe='')}"
 
 
 @contextmanager

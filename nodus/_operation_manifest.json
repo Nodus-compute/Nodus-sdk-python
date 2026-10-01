@@ -384,8 +384,22 @@
           },
           "patch": {
             "additionalProperties": false,
-            "maxProperties": 12,
+            "maxProperties": 13,
             "minProperties": 1,
+            "not": {
+              "properties": {
+                "gpu_count": {
+                  "type": "integer"
+                },
+                "total_gpu_count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "gpu_count",
+                "total_gpu_count"
+              ]
+            },
             "properties": {
               "checkpoint_paths": {
                 "anyOf": [
@@ -528,6 +542,19 @@
                     },
                     "maxItems": 8,
                     "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "total_gpu_count": {
+                "anyOf": [
+                  {
+                    "description": "Total GPUs across the allocation. Clear gpu_count when setting this field. Saving this preference does not establish available capacity.",
+                    "maximum": 2048,
+                    "minimum": 1,
+                    "type": "integer"
                   },
                   {
                     "type": "null"
@@ -835,6 +862,65 @@
                   "disk_gb": {
                     "type": "number"
                   },
+                  "distribution": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "config_file": {
+                            "type": "string"
+                          },
+                          "diloco": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "islands": {
+                                    "type": "integer"
+                                  },
+                                  "local_steps": {
+                                    "type": "integer"
+                                  },
+                                  "outer_learning_rate": {
+                                    "type": "number"
+                                  },
+                                  "outer_momentum": {
+                                    "type": "number"
+                                  },
+                                  "synchronization_timeout_seconds": {
+                                    "type": "integer"
+                                  },
+                                  "version": {
+                                    "type": "integer"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "framework": {
+                            "type": "string"
+                          },
+                          "geography": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string"
+                          },
+                          "processes_per_node": {
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "expected_runtime_hours": {
                     "type": "number"
                   },
@@ -857,6 +943,16 @@
                   "model": {
                     "type": "string"
                   },
+                  "node_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "notes": {
                     "type": "string"
                   },
@@ -865,6 +961,16 @@
                   },
                   "peak_memory_gb": {
                     "type": "number"
+                  },
+                  "total_gpu_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "vcpus": {
                     "type": "number"
@@ -1703,6 +1809,65 @@
                   "disk_gb": {
                     "type": "number"
                   },
+                  "distribution": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "config_file": {
+                            "type": "string"
+                          },
+                          "diloco": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "islands": {
+                                    "type": "integer"
+                                  },
+                                  "local_steps": {
+                                    "type": "integer"
+                                  },
+                                  "outer_learning_rate": {
+                                    "type": "number"
+                                  },
+                                  "outer_momentum": {
+                                    "type": "number"
+                                  },
+                                  "synchronization_timeout_seconds": {
+                                    "type": "integer"
+                                  },
+                                  "version": {
+                                    "type": "integer"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "framework": {
+                            "type": "string"
+                          },
+                          "geography": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string"
+                          },
+                          "processes_per_node": {
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "expected_runtime_hours": {
                     "type": "number"
                   },
@@ -1725,6 +1890,16 @@
                   "model": {
                     "type": "string"
                   },
+                  "node_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "notes": {
                     "type": "string"
                   },
@@ -1733,6 +1908,16 @@
                   },
                   "peak_memory_gb": {
                     "type": "number"
+                  },
+                  "total_gpu_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "vcpus": {
                     "type": "number"
@@ -1968,6 +2153,65 @@
                       "disk_gb": {
                         "type": "number"
                       },
+                      "distribution": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "config_file": {
+                                "type": "string"
+                              },
+                              "diloco": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "islands": {
+                                        "type": "integer"
+                                      },
+                                      "local_steps": {
+                                        "type": "integer"
+                                      },
+                                      "outer_learning_rate": {
+                                        "type": "number"
+                                      },
+                                      "outer_momentum": {
+                                        "type": "number"
+                                      },
+                                      "synchronization_timeout_seconds": {
+                                        "type": "integer"
+                                      },
+                                      "version": {
+                                        "type": "integer"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "framework": {
+                                "type": "string"
+                              },
+                              "geography": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "type": "string"
+                              },
+                              "processes_per_node": {
+                                "type": "integer"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "expected_runtime_hours": {
                         "type": "number"
                       },
@@ -1990,6 +2234,16 @@
                       "model": {
                         "type": "string"
                       },
+                      "node_count": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "notes": {
                         "type": "string"
                       },
@@ -1998,6 +2252,16 @@
                       },
                       "peak_memory_gb": {
                         "type": "number"
+                      },
+                      "total_gpu_count": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "vcpus": {
                         "type": "number"

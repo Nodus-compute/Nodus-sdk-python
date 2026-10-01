@@ -1021,33 +1021,49 @@
           "chunks": {
             "type": "array",
             "items": {
-              "type": "object",
-              "required": [
-                "id",
-                "stage_id",
-                "generation",
-                "text"
-              ],
-              "properties": {
-                "id": {
-                  "type": "integer"
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "stage_id",
+                    "generation",
+                    "text"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "stage_id": {
+                      "type": "string"
+                    },
+                    "generation": {
+                      "type": "integer"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
                 },
-                "stage_id": {
-                  "type": "string"
-                },
-                "generation": {
-                  "type": "integer"
-                },
-                "text": {
-                  "type": "string"
+                {
+                  "$ref": "#/components/schemas/DistributedLogChunk"
                 }
-              }
+              ]
             }
           },
           "next_cursor": {
             "type": "string"
           },
           "truncated": {
+            "type": "boolean"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "member_id": {
+            "type": "string"
+          },
+          "expired": {
             "type": "boolean"
           }
         }
@@ -1165,6 +1181,14 @@
           },
           "sink_error": {
             "type": "string"
+          },
+          "group_id": {
+            "type": "string",
+            "description": "Nodus distributed group that owns this verified result, when applicable."
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Nodus member that owns this result. Select this member when downloading same-named shards."
           }
         },
         "required": [
@@ -1283,8 +1307,73 @@
               "any"
             ],
             "description": "No interconnect guarantee. Requests for NVLink or NVSwitch are rejected until topology can be verified."
+          },
+          "node_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 256,
+            "description": "Exact machines required. Omission defaults to one or inherits the workload count for a stage. Multi-machine submissions currently return distributed_training_unavailable before allocation. The schema bound is not a qualified production capacity."
+          },
+          "distribution": {
+            "$ref": "#/components/schemas/TrainingDistribution",
+            "description": "Explicit framework and process topology. Submissions containing this field currently return distributed_training_unavailable before allocation."
+          },
+          "total_gpu_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2048,
+            "description": "Exact total GPUs requested across an allocation. Cannot be combined with node_count or gpu_count. Omission preserves existing per-machine sizing. This expresses resource demand without selecting a supplier or changing the training command. Multi-GPU total requests currently return distributed_training_unavailable before allocation. The schema maximum is not a production capacity guarantee."
           }
-        }
+        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "total_gpu_count"
+              ],
+              "anyOf": [
+                {
+                  "required": [
+                    "node_count"
+                  ]
+                },
+                {
+                  "required": [
+                    "gpu_count"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "not": {
+                "required": [
+                  "total_gpu_count"
+                ],
+                "properties": {
+                  "total_gpu_count": {
+                    "minimum": 2
+                  }
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "distribution": {
+                  "required": [
+                    "processes_per_node"
+                  ],
+                  "properties": {
+                    "processes_per_node": {
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
       },
       "ResourceAttributes": {
         "type": "object",
@@ -3032,6 +3121,13 @@
               "$ref": "#/components/schemas/CheckpointPreparationSummary"
             },
             "description": "Detail-only source preparation status for stages requesting managed checkpoint integration. Does not assert runtime framework compatibility or successful application recovery."
+          },
+          "distributed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DistributedCustomerGroup"
+            },
+            "description": "Detail-only distributed status. Select a member_id from this list to read member logs. Omitted for workloads without distributed groups."
           }
         }
       },
@@ -9336,8 +9432,22 @@
           },
           "patch": {
             "additionalProperties": false,
-            "maxProperties": 12,
+            "maxProperties": 13,
             "minProperties": 1,
+            "not": {
+              "properties": {
+                "gpu_count": {
+                  "type": "integer"
+                },
+                "total_gpu_count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "gpu_count",
+                "total_gpu_count"
+              ]
+            },
             "properties": {
               "checkpoint_paths": {
                 "anyOf": [
@@ -9486,6 +9596,19 @@
                   }
                 ]
               },
+              "total_gpu_count": {
+                "anyOf": [
+                  {
+                    "description": "Total GPUs across the allocation. Clear gpu_count when setting this field. Saving this preference does not establish available capacity.",
+                    "maximum": 2048,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "vcpus": {
                 "anyOf": [
                   {
@@ -9586,8 +9709,23 @@
             "maxItems": 32,
             "type": "array",
             "uniqueItems": true
+          },
+          "total_gpu_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2048
           }
-        }
+        },
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "gpu_count",
+                "total_gpu_count"
+              ]
+            }
+          }
+        ]
       },
       "RunDraft": {
         "type": "object",
@@ -11475,8 +11613,87 @@
                   "peak_memory_gb": {
                     "type": "number"
                   },
+                  "total_gpu_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "vcpus": {
                     "type": "number"
+                  },
+                  "distribution": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "config_file": {
+                            "type": "string"
+                          },
+                          "diloco": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "islands": {
+                                    "type": "integer"
+                                  },
+                                  "local_steps": {
+                                    "type": "integer"
+                                  },
+                                  "outer_learning_rate": {
+                                    "type": "number"
+                                  },
+                                  "outer_momentum": {
+                                    "type": "number"
+                                  },
+                                  "synchronization_timeout_seconds": {
+                                    "type": "integer"
+                                  },
+                                  "version": {
+                                    "type": "integer"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "framework": {
+                            "type": "string"
+                          },
+                          "geography": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string"
+                          },
+                          "processes_per_node": {
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "node_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "type": "object"
@@ -12145,8 +12362,87 @@
                   "peak_memory_gb": {
                     "type": "number"
                   },
+                  "total_gpu_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "vcpus": {
                     "type": "number"
+                  },
+                  "distribution": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "config_file": {
+                            "type": "string"
+                          },
+                          "diloco": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "islands": {
+                                    "type": "integer"
+                                  },
+                                  "local_steps": {
+                                    "type": "integer"
+                                  },
+                                  "outer_learning_rate": {
+                                    "type": "number"
+                                  },
+                                  "outer_momentum": {
+                                    "type": "number"
+                                  },
+                                  "synchronization_timeout_seconds": {
+                                    "type": "integer"
+                                  },
+                                  "version": {
+                                    "type": "integer"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "framework": {
+                            "type": "string"
+                          },
+                          "geography": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string"
+                          },
+                          "processes_per_node": {
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "node_count": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "type": "object"
@@ -12392,8 +12688,87 @@
                       "peak_memory_gb": {
                         "type": "number"
                       },
+                      "total_gpu_count": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "vcpus": {
                         "type": "number"
+                      },
+                      "distribution": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "config_file": {
+                                "type": "string"
+                              },
+                              "diloco": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "islands": {
+                                        "type": "integer"
+                                      },
+                                      "local_steps": {
+                                        "type": "integer"
+                                      },
+                                      "outer_learning_rate": {
+                                        "type": "number"
+                                      },
+                                      "outer_momentum": {
+                                        "type": "number"
+                                      },
+                                      "synchronization_timeout_seconds": {
+                                        "type": "integer"
+                                      },
+                                      "version": {
+                                        "type": "integer"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "framework": {
+                                "type": "string"
+                              },
+                              "geography": {
+                                "type": "string"
+                              },
+                              "mode": {
+                                "type": "string"
+                              },
+                              "processes_per_node": {
+                                "type": "integer"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "node_count": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "type": "object"
@@ -14557,6 +14932,281 @@
         "required": [
           "reason",
           "runs"
+        ]
+      },
+      "TrainingDistribution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "framework"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "",
+              "standard",
+              "low_communication"
+            ],
+            "description": "Omission means standard training with the customer's declared algorithm unchanged."
+          },
+          "framework": {
+            "type": "string",
+            "enum": [
+              "pytorch",
+              "accelerate",
+              "deepspeed",
+              "jax",
+              "tensorflow",
+              "custom"
+            ]
+          },
+          "processes_per_node": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64,
+            "description": "Processes per machine. Positive for explicit node topology. Zero or omission is allowed only with total_gpu_count greater than one and is resolved before allocation."
+          },
+          "geography": {
+            "type": "string",
+            "enum": [
+              "",
+              "single_region",
+              "cross_region"
+            ],
+            "description": "Omission permits a single region only. Data-location restrictions still apply."
+          },
+          "config_file": {
+            "type": "string",
+            "maxLength": 1024,
+            "description": "Relative project path to the Accelerate launcher configuration. Required for Accelerate and rejected for other launchers. Must match launch.config_file in nodus.training.json."
+          },
+          "diloco": {
+            "$ref": "#/components/schemas/DiLoCoProfile"
+          }
+        }
+      },
+      "DiLoCoProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "islands",
+          "local_steps",
+          "outer_learning_rate",
+          "outer_momentum",
+          "synchronization_timeout_seconds"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1
+          },
+          "islands": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 256
+          },
+          "local_steps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "outer_learning_rate": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "outer_momentum": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 1
+          },
+          "synchronization_timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          }
+        },
+        "description": "Explicit fixed-membership DiLoCo configuration. Requires low_communication mode and the PyTorch launcher. This configuration does not establish a qualified training profile."
+      },
+      "DistributedObservedProgress": {
+        "type": "object",
+        "properties": {
+          "completed_units": {
+            "type": "integer"
+          },
+          "total_units": {
+            "type": "integer"
+          },
+          "last_loss": {
+            "type": "number"
+          },
+          "metric_rate": {
+            "type": "number"
+          },
+          "metric_step": {
+            "type": "integer"
+          },
+          "metric_total_steps": {
+            "type": "integer"
+          },
+          "metric_epoch": {
+            "type": "number"
+          },
+          "metric_total_epochs": {
+            "type": "number"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "completed_units",
+          "total_units",
+          "observed_at"
+        ],
+        "description": "Member observations for display. These values are not a saved recovery point and must not be summed across tensor or pipeline ranks."
+      },
+      "DistributedCustomerMember": {
+        "type": "object",
+        "properties": {
+          "member_id": {
+            "type": "string"
+          },
+          "node_rank": {
+            "type": "integer"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "started": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "observed_progress": {
+            "$ref": "#/components/schemas/DistributedObservedProgress"
+          }
+        },
+        "required": [
+          "member_id",
+          "node_rank",
+          "ready",
+          "started",
+          "active"
+        ]
+      },
+      "DistributedCustomerGroup": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "stage_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "assembling",
+              "prepared",
+              "starting",
+              "running",
+              "stopping",
+              "closed"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "cleanup_state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "complete"
+            ]
+          },
+          "required_members": {
+            "type": "integer"
+          },
+          "ready_members": {
+            "type": "integer"
+          },
+          "active_members": {
+            "type": "integer"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DistributedCustomerMember"
+            }
+          }
+        },
+        "required": [
+          "group_id",
+          "stage_id",
+          "generation",
+          "phase",
+          "cleanup_state",
+          "required_members",
+          "ready_members",
+          "active_members",
+          "members"
+        ],
+        "description": "Latest distributed attempt for a workload stage. Ready counts record completed preparation. Active counts require started work with unexpired execution authority. Outcome and resource cleanup are separate."
+      },
+      "DistributedLogChunk": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "member_id": {
+            "type": "string"
+          },
+          "node_rank": {
+            "type": "integer"
+          },
+          "stage_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "data_base64": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "Exact customer program bytes. Text provides a UTF-8 display representation."
+          }
+        },
+        "required": [
+          "group_id",
+          "member_id",
+          "node_rank",
+          "stage_id",
+          "generation",
+          "offset",
+          "text",
+          "data_base64"
         ]
       }
     },
@@ -17372,6 +18022,28 @@
                   ]
                 },
                 "description": "For a live snapshot, whether capture or response limits truncated the retained output. Cancellation can also omit output not received before termination."
+              },
+              "X-Nodus-Group-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Nodus group identifier for distributed snapshots."
+              },
+              "X-Nodus-Member-Id": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Nodus member identifier for distributed snapshots."
+              },
+              "X-Nodus-Log-Expired": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true",
+                    "false"
+                  ]
+                },
+                "description": "Whether the distributed snapshot has passed its retention deadline."
               }
             }
           },
@@ -17413,9 +18085,18 @@
               "type": "integer"
             },
             "description": "Positive generation. Omit for the latest matching recorded log."
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Nodus distributed member identifier from workload detail. Required when selecting distributed logs."
           }
         ],
-        "description": "Returns a committed log artifact when available. If no artifact matches, returns the latest matching retained live snapshot within 24 hours after termination, limited to 8 MiB per attempt. This is a snapshot, not a live stream. Returns 404 when neither exists. X-Nodus-Stage-Id and X-Nodus-Generation identify the returned attempt."
+        "description": "Returns a committed log artifact when available. If no artifact matches, returns the latest matching retained live snapshot within 24 hours after termination, limited to 8 MiB per attempt. This is a snapshot, not a live stream. Returns 404 when neither exists. X-Nodus-Stage-Id and X-Nodus-Generation identify the returned attempt. A member_id selects the retained distributed member snapshot and honors stage and generation filters. Distributed logs remain available during cleanup and expire 24 hours after workload termination once the group is closed."
       }
     },
     "/v1/workloads/{id}/logs/live": {
@@ -17438,6 +18119,15 @@
               "type": "string"
             },
             "description": "Opaque cursor from the previous response."
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Nodus distributed member identifier from workload detail. Required when selecting distributed logs."
           }
         ],
         "responses": {
@@ -17454,7 +18144,8 @@
           "404": {
             "description": "Workload not found"
           }
-        }
+        },
+        "description": "Distributed member logs use a cursor bound to their group and member. Each response is byte-bounded. Expired closed groups return an empty page with truncated and expired set. Active groups retain logs during cleanup. The group shares an 8 MiB live log allowance."
       }
     },
     "/v1/workloads/{id}/outputs": {
@@ -17576,6 +18267,15 @@
               "type": "string"
             },
             "description": "Required to disambiguate duplicate output names across stages. Otherwise 409 ambiguous_output."
+          },
+          {
+            "name": "member_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Nodus member from the verified output listing. Required for same-named distributed shards. Otherwise 409 ambiguous_output."
           }
         ],
         "description": "404 when absent. 410 when a legacy local-only artifact cannot be retrieved. Verify X-Nodus-SHA256 when present."
