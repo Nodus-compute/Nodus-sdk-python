@@ -14228,6 +14228,135 @@
           "hosts"
         ]
       },
+      "CloudCreditBudget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "description": "Nodus cloud connection identity."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "none",
+              "available",
+              "exhausted",
+              "expired"
+            ],
+            "description": "none has no declared budget or provider balance. exhausted and expired admit no launches."
+          },
+          "remaining_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Credit Nodus may still spend, in US micro-dollars."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Earliest expiry among the declared budget and counted provider credits."
+          },
+          "declared": {
+            "$ref": "#/components/schemas/CloudCreditDeclaration"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/CloudCreditProviderBalance"
+          },
+          "provider_source": {
+            "$ref": "#/components/schemas/CloudObservationCoverage"
+          }
+        },
+        "required": [
+          "connection_id",
+          "status",
+          "remaining_micros",
+          "provider_source"
+        ]
+      },
+      "CloudCreditDeclaration": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "amount_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "set_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "spent_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Compute Nodus metered in this account since set_at."
+          }
+        },
+        "required": [
+          "amount_micros",
+          "set_at",
+          "spent_micros"
+        ]
+      },
+      "CloudCreditProviderBalance": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "balance_micros": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Provider-reported compute credit at observed_at."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "spent_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Compute Nodus metered since 48 hours before observed_at. Providers report balances on a billing delay, so recent spend is deducted even if the balance may already include it. A balance observed more than 48 hours ago is omitted."
+          }
+        },
+        "required": [
+          "balance_micros",
+          "observed_at",
+          "spent_micros"
+        ]
+      },
+      "CloudCreditBudgetInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "amount_micros": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 1000000000000000,
+            "description": "Declared credit in US micro-dollars. Null or absent clears the declaration."
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "CloudExecutionUpdate": {
         "type": "object",
         "additionalProperties": false,
@@ -24684,6 +24813,100 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cloud-connections/{id}/credits": {
+      "get": {
+        "operationId": "getCloudCredits",
+        "summary": "Read the cloud credit budget",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Returns the customer cloud credit that Nodus may still spend launching capacity in this account. The remaining amount is the lower of the administrator-declared budget and the provider's own credit balance, each less the compute Nodus metered since it was stated. AWS publishes a credit balance when the connected role grants billing:GetCredits. Other providers rely on the declared budget. Without either, status is none. Nodus does not yet launch capacity in customer accounts, so the budget is reported but not yet enforced. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the cloud credit budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCreditBudget"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setCloudCredits",
+        "summary": "Declare or clear the cloud credit budget",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Declares how much cloud credit Nodus may spend in this account, in micro-dollars, with an optional expiry. Restating a budget restarts its metering. Omitting amount_micros clears the declaration. A provider credit balance, where one is readable, still applies. An expiry without an amount returns 400. This does not launch capacity or change routing on hosts the customer already runs.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Declare or clear the cloud credit budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCreditBudget"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudCreditBudgetInput"
               }
             }
           }
