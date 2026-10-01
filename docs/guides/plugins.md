@@ -43,7 +43,7 @@ listing is required to use the direct install buttons or repository commands.
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.7.2' nodus login
+uvx --from 'nodus-compute[mcp]==0.7.3' nodus login
 ```
 
 Complete browser sign-in on the same machine where your client runs. The

@@ -20,7 +20,7 @@ The guided installer supplies an absolute executable path. The plugin uses uvx.
 3. For a plugin or manual connection using uvx, have the user sign in with:
 
    ```sh
-   uvx --from 'nodus-compute[mcp]==0.7.2' nodus login
+   uvx --from 'nodus-compute[mcp]==0.7.3' nodus login
    ```
 
    This command requires [uv](https://docs.astral.sh/uv/getting-started/installation/).

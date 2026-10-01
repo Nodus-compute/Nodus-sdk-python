@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3
+
+- Accept explicit current customer-owned Route terms while preserving exact rate acknowledgement.
+- Read zero-fee Predict subscriptions without treating them as unpaid historical charges.
+
 ## 0.7.2
 
 - Advertise hosted assistant template, model and output limits in MCP creation and update tools.

@@ -36,7 +36,7 @@ nodus login
 
 Get [nodus-compute on PyPI](https://pypi.org/project/nodus-compute/).
 Requires Python 3.10 or newer. Upgrading an existing installation? Use
-`pip install --upgrade nodus-compute`. These docs cover SDK 0.7.2.
+`pip install --upgrade nodus-compute`. These docs cover SDK 0.7.3.
 
 Your browser opens Nodus sign-in. Sign in and approve the code matching your
 terminal. You can then close the tab. The terminal finishes automatically and
@@ -289,7 +289,7 @@ to add the MCP tools and setup guidance together.
 Sign in once, then connect Claude, Cursor, Codex or another MCP client:
 
 ```sh
-uvx --from 'nodus-compute[mcp]==0.7.2' nodus login
+uvx --from 'nodus-compute[mcp]==0.7.3' nodus login
 ```
 
 ```json
@@ -297,7 +297,7 @@ uvx --from 'nodus-compute[mcp]==0.7.2' nodus login
   "mcpServers": {
     "nodus": {
       "command": "uvx",
-      "args": ["--from", "nodus-compute[mcp]==0.7.2", "nodus-mcp"]
+      "args": ["--from", "nodus-compute[mcp]==0.7.3", "nodus-mcp"]
     }
   }
 }

@@ -50,7 +50,7 @@ def _time(value: Any, *, hour: bool = False) -> datetime:
 
 @dataclass(frozen=True)
 class PredictSubscription:
-    """Server-reported Predict terms, including free cloud-connected pools."""
+    """Server-reported Predict terms, including free customer-owned pools."""
 
     status: str
     rate_version: str
@@ -67,7 +67,7 @@ class PredictSubscription:
             _integer(row.get(key))
         if row["status"] not in REFRESH_STATES or type(row.get("paid_current_period")) is not bool:
             raise APIError("The API returned an invalid Predict subscription")
-        free = row["rate_version"] == "byoc-free-v1" and row["monthly_micros"] == 0
+        free = row["rate_version"] in {"byoc-free-v1", "private-supplier-cost-v2"} and row["monthly_micros"] == 0
         if row["status"] == "active" and not row["paid_current_period"] and not free:
             raise APIError("The API returned an unpaid active Predict subscription")
         if _time(row["period_start"]) >= _time(row["period_end"]):
