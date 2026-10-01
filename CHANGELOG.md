@@ -3,7 +3,7 @@
 ## 0.7.3
 
 - Accept explicit current customer-owned Route terms while preserving exact rate acknowledgement.
-- Read zero-fee Predict subscriptions without treating them as unpaid historical charges.
+- Document free Predict entitlements and retained historical charges separately from Route pricing.
 
 ## 0.7.2
 

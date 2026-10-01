@@ -54,7 +54,7 @@ def test_forecast_keeps_cached_evidence_and_unknown_calibration(asynchronous, st
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("free_version", [None, "byoc-free-v1", "private-supplier-cost-v2"])
+@pytest.mark.parametrize("free_version", [None, "byoc-free-v1"])
 def test_forecast_without_snapshot_does_not_invent_a_series(asynchronous, free_version):
     subscription = {**SUBSCRIPTION, "rate_version": free_version, "monthly_micros": 0, "paid_current_period": False} if free_version else SUBSCRIPTION
     result = exercise(lambda req: httpx.Response(200, json={**FORECAST, "snapshot": None, "subscription": subscription, "refresh_status": "awaiting_refresh"}),
@@ -124,12 +124,13 @@ def test_invalid_predict_requests_never_reach_network(asynchronous, operation, a
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-@pytest.mark.parametrize("defect", ["price_bool", "unordered_band", "negative_band", "false_calibration", "incomplete_points", "huge_band", "unpaid_active", "free_nonzero", "private_nonzero", "unknown_free", "legacy_unpaid_zero"])
+@pytest.mark.parametrize("defect", ["price_bool", "unordered_band", "negative_band", "false_calibration", "incomplete_points", "huge_band", "unpaid_active", "free_nonzero", "private_nonzero", "route_policy_zero", "unknown_free", "legacy_unpaid_zero"])
 def test_malformed_forecast_evidence_is_refused(asynchronous, defect):
     body = copy.deepcopy(FORECAST)
     if defect == "unpaid_active": body["subscription"]["paid_current_period"] = False
     if defect == "free_nonzero": body["subscription"].update(rate_version="byoc-free-v1", monthly_micros=1, paid_current_period=False)
     if defect == "private_nonzero": body["subscription"].update(rate_version="private-supplier-cost-v2", monthly_micros=1, paid_current_period=False)
+    if defect == "route_policy_zero": body["subscription"].update(rate_version="private-supplier-cost-v2", monthly_micros=0, paid_current_period=False)
     if defect == "unknown_free": body["subscription"].update(rate_version="unknown-free-policy", monthly_micros=0, paid_current_period=False)
     if defect == "legacy_unpaid_zero": body["subscription"].update(monthly_micros=0, paid_current_period=False)
     if defect == "price_bool": body["subscription"]["monthly_micros"] = True
