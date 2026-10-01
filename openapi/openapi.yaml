@@ -14625,7 +14625,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "All unsettled assigned attempts, including draining and uncertain allocations. Must be at least max_active and at most the deployment worker limit."
+            "description": "Allocations awaiting confirmed physical cleanup, including provisioning, draining and uncertain resources. Pending accounting retains spending reservations after physical capacity is released. Must be at least max_active and at most the deployment worker limit."
           },
           "max_pending": {
             "type": "integer",
@@ -14787,7 +14787,7 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "description": "All unsettled assigned attempts, including draining and uncertain allocations. Must be at least max_active and at most the deployment worker limit."
+            "description": "Allocations awaiting confirmed physical cleanup, including provisioning, draining and uncertain resources. Pending accounting retains spending reservations after physical capacity is released. Must be at least max_active and at most the deployment worker limit."
           },
           "max_pending": {
             "type": "integer",
