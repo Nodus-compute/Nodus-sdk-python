@@ -9926,7 +9926,7 @@
             "description": "Customer price for one-hour cache creation. Omission means this bucket is not qualified."
           }
         },
-        "description": "Published customer rates already include the service markup. One USD micro is 0.000001 USD. Each token belongs to one billing bucket. Charges round upward to integer USD micros after summing usage at these rates."
+        "description": "Published customer rates include the 12.5 percent service markup and round upward for display. One USD micro is 0.000001 USD. Each token belongs to one billing bucket. Actual charges apply the markup to the aggregate selected model supplier cost and round upward once. When rates_are_maximum is true, rates are the maximum across eligible models and the actual charge may be lower."
       },
       "ManagedModelPublic": {
         "type": "object",
@@ -9965,6 +9965,10 @@
           },
           "rates": {
             "$ref": "#/components/schemas/ManagedModelRates"
+          },
+          "rates_are_maximum": {
+            "type": "boolean",
+            "description": "When true, published rates are maximum customer rates across eligible models. Actual charges use the selected model supplier cost plus 12.5 percent."
           },
           "max_output_tokens": {
             "type": "integer",
