@@ -1122,6 +1122,11 @@
             "default": 0,
             "description": "Settled managed model charges in this billing period in an account meter. Already included in settled_usd. Zero in workload and workspace compute-session meters."
           },
+          "shared_settled_usd": {
+            "type": "number",
+            "default": 0,
+            "description": "Settled shared service charges in this billing period in an account meter. Already included in settled_usd. Zero in workload and workspace compute-session meters."
+          },
           "compute_accruing_usd": {
             "type": "number",
             "default": 0,
@@ -3894,6 +3899,7 @@
           "subscription_settled_usd": {"type": "number", "description": "Zero for workspace compute sessions."},
           "storage_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Saved-file charges belong to the account meter."},
           "model_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Managed model charges belong to the account meter."},
+          "shared_settled_usd": {"type": "number", "default": 0, "description": "Zero for workspace compute sessions. Shared service charges belong to the account meter."},
           "compute_accruing_usd": {"type": "number"},
           "platform_fee_accruing_usd": {"type": "number"},
           "final_charge_usd": {"type": "number", "minimum": 0, "description": "Immutable aggregate lifetime compute charge once the session has stopped and all required compute cost records are complete. Excludes saved-file storage, which can continue to incur separate usage charges. Omitted while finalizing."},
@@ -3921,7 +3927,7 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Shared free allowance across eligible workspaces. The account policy includes 10,000,000,000 bytes."
+            "description": "Current shared free allowance across eligible saved files. An active storage promotion may provide an allowance."
           },
           "retained_bytes": {
             "type": "integer",
@@ -3949,7 +3955,11 @@
           "rate_usd_gb_month": {
             "type": "number",
             "minimum": 0,
-            "description": "Server-reported USD rate per decimal GB-month. The account policy uses 0.015 and includes requests."
+            "description": "Server-reported fixed USD rate per decimal GB-month when applicable. For measured-cost pricing, use pricing_basis and posted charges. A zero rate does not indicate free storage."
+          },
+          "pricing_basis": {
+            "type": "string",
+            "description": "Billing basis for storage charges when the policy does not use a fixed monthly rate."
           },
           "charged_usd": {
             "type": "number",
@@ -3970,7 +3980,7 @@
             "format": "date-time"
           }
         },
-        "description": "Account-wide saved-file usage and posted charges. Account-policy overage is prorated continuously by logical payload bytes and time over a fixed 30-day month. This uses the R2 Standard unit rate without reproducing its daily-peak invoice. Unfunded retention is not backcharged. File export and deletion remain available with stopped compute."
+        "description": "Account-wide saved-file usage and posted charges. The current measured-cost policy reports its pricing basis and posted charges. Earlier fixed-rate policies report their applicable monthly rate separately. Use server-reported charges instead of deriving a bill from the current byte count. File export and deletion remain available with stopped compute."
       },
       "ResearchWorkspaceFileRevision": {
         "type": "object",
