@@ -1400,6 +1400,15 @@
             "type": "integer",
             "minimum": 0,
             "description": "Number of GPUs in this single-machine allocation."
+          },
+          "accelerator_kind": {
+            "type": "string",
+            "description": "Optional kind of accelerator device."
+          },
+          "accelerator_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of accelerator devices in this single-machine allocation. gpu_count reports GPUs only."
           }
         }
       },
