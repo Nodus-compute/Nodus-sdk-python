@@ -14542,6 +14542,302 @@
           "enabled"
         ]
       },
+      "CloudManagedLaunch": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The shape of every managed machine. AWS uses region, instance_type, image, subnet and security_groups. Google Cloud uses zone, machine_type, image, subnet and, for N1, accelerator_type and accelerator_count.",
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "AWS region."
+          },
+          "instance_type": {
+            "type": "string",
+            "description": "AWS NVIDIA GPU instance type."
+          },
+          "security_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 5,
+            "description": "AWS security group IDs."
+          },
+          "zone": {
+            "type": "string",
+            "description": "Google Cloud zone."
+          },
+          "machine_type": {
+            "type": "string",
+            "description": "Google Cloud machine type."
+          },
+          "accelerator_type": {
+            "type": "string",
+            "description": "Google Cloud accelerator type, for N1 machines only."
+          },
+          "accelerator_count": {
+            "type": "integer",
+            "description": "Google Cloud accelerator count, for N1 machines only."
+          },
+          "image": {
+            "type": "string",
+            "description": "AWS AMI ID or Google Cloud image or image family path. It must run cloud-init or the guest environment and provide bash, curl, sha256sum, Docker and the NVIDIA driver."
+          },
+          "subnet": {
+            "type": "string",
+            "description": "AWS subnet ID or Google Cloud subnetwork path."
+          },
+          "disk_gb": {
+            "type": "integer",
+            "minimum": 20,
+            "maximum": 16384,
+            "description": "Boot disk size, 200 by default."
+          },
+          "public_ip": {
+            "type": "boolean",
+            "description": "Give each machine a public address. Without one the network needs NAT to reach Nodus."
+          },
+          "root_device": {
+            "type": "string",
+            "readOnly": true,
+            "description": "AWS root device read from the image. Never sent."
+          }
+        },
+        "required": [
+          "image",
+          "subnet",
+          "disk_gb",
+          "public_ip"
+        ]
+      },
+      "CloudManagedMachine": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Launch label the provider instance is tagged with."
+          },
+          "host_id": {
+            "type": "string",
+            "description": "Host identity the machine enrolls as."
+          },
+          "handle": {
+            "type": "string",
+            "description": "Provider instance identity once listed."
+          },
+          "hourly_micros": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "launched_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enrolled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end_reason": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "credit_exhausted",
+              "orphan",
+              "over_limit",
+              "gone",
+              "launch_failed"
+            ]
+          },
+          "metered_hours": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "host_id",
+          "hourly_micros",
+          "created_at",
+          "metered_hours"
+        ]
+      },
+      "CloudManagedCapacity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "aws",
+              "gcp"
+            ]
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "Settings were saved at least once."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Nodus may launch machines in this account."
+          },
+          "available": {
+            "type": "boolean",
+            "description": "This deployment launches machines in customer accounts."
+          },
+          "pool_id": {
+            "type": "string"
+          },
+          "execution_identity": {
+            "type": "string",
+            "description": "AWS execution role ARN or Google Cloud execution service account email."
+          },
+          "launch": {
+            "$ref": "#/components/schemas/CloudManagedLaunch"
+          },
+          "gpu_model": {
+            "type": "string",
+            "description": "GPU model read from the provider when the launch was checked."
+          },
+          "gpu_count": {
+            "type": "integer"
+          },
+          "hourly_micros": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "max_machines": {
+            "type": "integer"
+          },
+          "max_launches_per_tick": {
+            "type": "integer"
+          },
+          "idle_timeout_seconds": {
+            "type": "integer"
+          },
+          "orphan_grace_seconds": {
+            "type": "integer"
+          },
+          "max_lifetime_minutes": {
+            "type": "integer"
+          },
+          "set_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_tick_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "machines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CloudManagedMachine"
+            }
+          },
+          "external_id": {
+            "type": "string",
+            "description": "AWS external ID the execution role must require, derived for this connection."
+          },
+          "execution_role_name": {
+            "type": "string",
+            "description": "AWS execution role name for this connection."
+          },
+          "setup_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "AWS CloudFormation quick-create link, where the deployment publishes the execution template."
+          },
+          "setup_command": {
+            "type": "string",
+            "description": "Google Cloud Shell command that creates the execution service account, for guided connections."
+          },
+          "execution_service_account": {
+            "type": "string",
+            "description": "Google Cloud execution service account the setup command creates."
+          }
+        },
+        "required": [
+          "connection_id",
+          "provider",
+          "configured",
+          "enabled",
+          "available",
+          "max_machines",
+          "max_launches_per_tick",
+          "idle_timeout_seconds",
+          "orphan_grace_seconds",
+          "max_lifetime_minutes",
+          "machines"
+        ]
+      },
+      "CloudManagedCapacityUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "execution_identity": {
+            "type": "string",
+            "description": "AWS execution role ARN in the connected account or Google Cloud service account email in the connected project. Required when enabling."
+          },
+          "launch": {
+            "$ref": "#/components/schemas/CloudManagedLaunch"
+          },
+          "hourly_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 1000000000,
+            "description": "Hourly instance price in micro-dollars, metered against the credit budget. Required when enabling."
+          },
+          "max_machines": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64,
+            "description": "1 by default."
+          },
+          "max_launches_per_tick": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "1 by default."
+          },
+          "idle_timeout_seconds": {
+            "type": "integer",
+            "minimum": 600,
+            "maximum": 86400,
+            "description": "1200 by default."
+          },
+          "orphan_grace_seconds": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 3600,
+            "description": "900 by default."
+          },
+          "max_lifetime_minutes": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 10080,
+            "description": "360 by default."
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
       "CloudExecutionHostInput": {
         "type": "object",
         "additionalProperties": false,
@@ -25311,6 +25607,100 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CloudExecutionUpdate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cloud-connections/{id}/execution/managed-capacity": {
+      "get": {
+        "operationId": "getCloudManagedCapacity",
+        "summary": "Read managed capacity in an AWS account or Google Cloud project",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Returns the managed-capacity settings, the machines Nodus launched and has not finished accounting for, and what the customer needs to create the execution identity. For AWS that is the connection's external ID, the execution role name and, where the deployment publishes the execution template, a CloudFormation quick-create link. For a guided Google Cloud connection it is a Cloud Shell command and the service account it creates. available is false where the deployment launches no machines. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read managed capacity in an AWS account or Google Cloud project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudManagedCapacity"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setCloudManagedCapacity",
+        "summary": "Enable or disable managed capacity in an AWS account or Google Cloud project",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Enabling lets Nodus launch on-demand GPU machines in the customer account for work waiting on the connection's execution pool, metered at hourly_micros against the connection's credit budget, and end them when idle, out of credit or at max_lifetime_minutes. Before saving, Nodus checks the launch with the execution identity and starts nothing. Execution must be enabled first. The launch must name an NVIDIA GPU machine type, and root_device is read from the image, never sent. A deployment that launches no machines or a connection without enabled execution returns 409 managed_capacity_unavailable. Invalid settings return 400 invalid_managed_capacity. A launch the execution identity cannot check returns 422 cloud_access and changes nothing. Disabling keeps the settings, stops new launches and ends the connection's machines on the next pass.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enable or disable managed capacity in an AWS account or Google Cloud project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudManagedCapacity"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudManagedCapacityUpdate"
               }
             }
           }
