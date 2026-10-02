@@ -14408,6 +14408,85 @@
           "enabled"
         ]
       },
+      "CloudDirectCapacity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ssh_key_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "instance_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CloudDirectInstanceType"
+            }
+          },
+          "credit": {
+            "$ref": "#/components/schemas/CloudCreditBudget"
+          }
+        },
+        "required": [
+          "connection_id",
+          "observed_at",
+          "ssh_key_names",
+          "instance_types",
+          "credit"
+        ]
+      },
+      "CloudDirectInstanceType": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "gpu_description": {
+            "type": "string"
+          },
+          "gpus": {
+            "type": "integer"
+          },
+          "vcpus": {
+            "type": "number"
+          },
+          "memory_gib": {
+            "type": "number"
+          },
+          "price_micros_per_hour": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lambda's list price per instance hour, in US micro-dollars."
+          },
+          "regions_with_capacity": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Regions that reported capacity when the account was read. Empty means sold out."
+          },
+          "credit_hours": {
+            "type": "number",
+            "description": "Hours the remaining credit buys of this type, rounded down to a tenth. Zero without available credit."
+          }
+        },
+        "required": [
+          "name",
+          "gpus",
+          "price_micros_per_hour",
+          "regions_with_capacity",
+          "credit_hours"
+        ]
+      },
       "CloudCreditBudgetInput": {
         "type": "object",
         "additionalProperties": false,
@@ -25075,6 +25154,49 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CloudDirectExecutionUpdate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cloud-connections/{id}/direct-execution/capacity": {
+      "get": {
+        "operationId": "getCloudDirectCapacity",
+        "summary": "Read launchable capacity in a connected account",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Reads the connected Lambda Cloud account with its own key and returns the GPU instance types it can launch at Lambda's list price, the regions that reported capacity, the account's SSH key names, and the connection's credit budget. credit_hours is how many hours the remaining credit buys of each type. Lambda publishes no account balance, so credit is the administrator-declared budget less metered spend. Other providers return 409. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read launchable capacity in a connected account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDirectCapacity"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }
