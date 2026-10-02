@@ -1590,6 +1590,26 @@
           },
           "outcome": {
             "type": "string"
+          },
+          "ran_in": {
+            "type": "string",
+            "enum": [
+              "your_cloud",
+              "nodus"
+            ],
+            "description": "your_cloud when the placement ran in one of the team's own connected cloud accounts, with no Nodus fee. nodus when it ran on Nodus capacity."
+          },
+          "cloud_connection_id": {
+            "type": "string",
+            "description": "The team's cloud connection the placement ran in. Empty for Nodus capacity."
+          },
+          "cloud_provider": {
+            "type": "string",
+            "description": "Provider of that cloud connection, such as lambda."
+          },
+          "cloud_account_name": {
+            "type": "string",
+            "description": "Name the team gave that cloud connection."
           }
         }
       },
