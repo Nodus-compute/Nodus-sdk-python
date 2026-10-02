@@ -25025,7 +25025,7 @@
         "tags": [
           "Cloud observation"
         ],
-        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. When enabled, Nodus launches this team's batch work in the connected Lambda Cloud account while its declared credit budget lasts, and routes the rest to the Nodus market. A launch is admitted only with an hour of credit left. Work already running finishes even if the credit runs out. Enabling requires ssh_key_name to name an SSH key in the account, which Nodus checks with the connected key. Other providers return 409. Turning it off stops new launches and leaves running work to finish.",
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. When enabled, Nodus launches this team's batch work in the connected Lambda Cloud account while its declared credit budget lasts, and routes the rest to the Nodus market. A launch is admitted only with an hour of credit left, and work still running when metered spend reaches the credit is stopped. Enabling requires ssh_key_name to name an SSH key in the account, which Nodus checks with the connected key. Other providers return 409. Turning it off stops new launches and leaves running work to finish within its credit.",
         "parameters": [
           {
             "name": "id",
