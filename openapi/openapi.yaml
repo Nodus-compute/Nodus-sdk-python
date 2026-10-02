@@ -4451,6 +4451,10 @@
           "sandbox_capable": {
             "type": "boolean"
           },
+          "live_credentials": {
+            "type": "boolean",
+            "description": "Whether work that receives the team's secrets and connections, or runs under an egress allowlist, may run on this pool. Such work runs only on whole-host machines whose agent keeps the Nodus runner outside the customer container. Root on those machines can read the secrets. Only a team administrator can change it."
+          },
           "wait_alpha": {
             "type": "number",
             "minimum": 0,
@@ -4504,6 +4508,7 @@
           "predict_enabled",
           "route_enabled",
           "sandbox_capable",
+          "live_credentials",
           "wait_alpha",
           "waiting_budget_pct",
           "burst_threshold_micros",
@@ -4543,6 +4548,10 @@
             "format": "int64",
             "minimum": 0,
             "maximum": 9223372036854775807
+          },
+          "live_credentials": {
+            "type": "boolean",
+            "description": "Accepts that root on this pool's machines can read the secrets of work that receives the team's secrets and connections, or runs under an egress allowlist. Requires a team administrator's own key or console session. A team API key is refused."
           },
           "predict_enabled": {
             "type": "boolean"
@@ -4613,7 +4622,7 @@
         },
         "additionalProperties": false,
         "minProperties": 1,
-        "description": "Change Predict separately from other settings. Customer-owned pools have no fixed Predict fee and accept byoc-free-v1 with accepted_predict_monthly_micros 0. The API also permits omitted consent for these free Predict terms. Historical charges remain readable. Disabling requires only predict_enabled false and stops future refresh. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, and owned cost. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and may omit consent. Other customer-owned pools require explicit private-supplier-cost-v2 consent at zero fixed platform rate. Cloud provider charges and separately authorized market capacity remain separate. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
+        "description": "Change Predict separately from other settings. Customer-owned pools have no fixed Predict fee and accept byoc-free-v1 with accepted_predict_monthly_micros 0. The API also permits omitted consent for these free Predict terms. Historical charges remain readable. Disabling requires only predict_enabled false and stops future refresh. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, owned cost, and live_credentials. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and may omit consent. Other customer-owned pools require explicit private-supplier-cost-v2 consent at zero fixed platform rate. Cloud provider charges and separately authorized market capacity remain separate. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
       },
       "PoolEnrollmentTokenRequest": {
         "type": "object",
@@ -20311,7 +20320,7 @@
             }
           }
         },
-        "description": "Only name and owned_cost_micros_per_hour can be changed. Predict and Route cannot be enabled."
+        "description": "Only name, owned_cost_micros_per_hour and live_credentials can be changed. Predict and Route cannot be enabled. live_credentials requires a team administrator's own key, because root on the pool's machines can read the secrets of the work it admits."
       }
     },
     "/v1/pools/{id}/enrollment-tokens": {
