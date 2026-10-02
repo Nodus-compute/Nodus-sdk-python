@@ -13660,6 +13660,14 @@
           "google_signin_available": {
             "type": "boolean",
             "description": "The Google Web OAuth client and keyless observation identity are configured."
+          },
+          "azure_consent_available": {
+            "type": "boolean",
+            "description": "Nodus's multi-tenant Entra application is configured, so Azure connects by admin consent without a customer secret."
+          },
+          "azure_app_id": {
+            "type": "string",
+            "description": "Application ID of Nodus's Entra application. Empty when Azure consent is unavailable. Role assignments to it must carry aws_external_id as their description."
           }
         },
         "required": [
