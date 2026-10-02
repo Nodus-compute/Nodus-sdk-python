@@ -1590,6 +1590,26 @@
           },
           "outcome": {
             "type": "string"
+          },
+          "ran_in": {
+            "type": "string",
+            "enum": [
+              "your_cloud",
+              "nodus"
+            ],
+            "description": "your_cloud when the placement ran in one of the team's own connected cloud accounts, with no Nodus fee. nodus when it ran on Nodus capacity."
+          },
+          "cloud_connection_id": {
+            "type": "string",
+            "description": "The team's cloud connection the placement ran in. Empty for Nodus capacity."
+          },
+          "cloud_provider": {
+            "type": "string",
+            "description": "Provider of that cloud connection, such as lambda."
+          },
+          "cloud_account_name": {
+            "type": "string",
+            "description": "Name the team gave that cloud connection."
           }
         }
       },
@@ -4431,6 +4451,10 @@
           "sandbox_capable": {
             "type": "boolean"
           },
+          "live_credentials": {
+            "type": "boolean",
+            "description": "Whether work that receives the team's secrets and connections, or runs under an egress allowlist, may run on this pool. Such work runs only on whole-host machines whose agent keeps the Nodus runner outside the customer container. Root on those machines can read the secrets. Only a team administrator can change it."
+          },
           "wait_alpha": {
             "type": "number",
             "minimum": 0,
@@ -4484,6 +4508,7 @@
           "predict_enabled",
           "route_enabled",
           "sandbox_capable",
+          "live_credentials",
           "wait_alpha",
           "waiting_budget_pct",
           "burst_threshold_micros",
@@ -4523,6 +4548,10 @@
             "format": "int64",
             "minimum": 0,
             "maximum": 9223372036854775807
+          },
+          "live_credentials": {
+            "type": "boolean",
+            "description": "Accepts that root on this pool's machines can read the secrets of work that receives the team's secrets and connections, or runs under an egress allowlist. Requires a team administrator's own key or console session. A team API key is refused."
           },
           "predict_enabled": {
             "type": "boolean"
@@ -4593,7 +4622,7 @@
         },
         "additionalProperties": false,
         "minProperties": 1,
-        "description": "Change Predict separately from other settings. Customer-owned pools have no fixed Predict fee and accept byoc-free-v1 with accepted_predict_monthly_micros 0. The API also permits omitted consent for these free Predict terms. Historical charges remain readable. Disabling requires only predict_enabled false and stops future refresh. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, and owned cost. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and may omit consent. Other customer-owned pools require explicit private-supplier-cost-v2 consent at zero fixed platform rate. Cloud provider charges and separately authorized market capacity remain separate. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
+        "description": "Change Predict separately from other settings. Customer-owned pools have no fixed Predict fee and accept byoc-free-v1 with accepted_predict_monthly_micros 0. The API also permits omitted consent for these free Predict terms. Historical charges remain readable. Disabling requires only predict_enabled false and stops future refresh. Cached views remain readable. Change Route and its waiting settings separately from Predict, name, owned cost, and live_credentials. Enabling Route requires an active pool. Cloud-connected pools use byoc-free-v1 at zero and may omit consent. Other customer-owned pools require explicit private-supplier-cost-v2 consent at zero fixed platform rate. Cloud provider charges and separately authorized market capacity remain separate. Consent fields are rejected unless enabling. Disabling blocks new admission and retains accepted terms, existing work, and exact cleanup."
       },
       "PoolEnrollmentTokenRequest": {
         "type": "object",
@@ -13474,7 +13503,8 @@
             "enum": [
               "aws",
               "gcp",
-              "azure"
+              "azure",
+              "lambda"
             ]
           },
           "name": {
@@ -13503,6 +13533,10 @@
           },
           "client_id": {
             "type": "string"
+          },
+          "key_id": {
+            "type": "string",
+            "description": "Lambda Cloud only. Identifies the connected API key without revealing it."
           },
           "regions": {
             "type": "array",
@@ -13655,6 +13689,14 @@
           "google_signin_available": {
             "type": "boolean",
             "description": "The Google Web OAuth client and keyless observation identity are configured."
+          },
+          "azure_consent_available": {
+            "type": "boolean",
+            "description": "Nodus's multi-tenant Entra application is configured, so Azure connects by admin consent without a customer secret."
+          },
+          "azure_app_id": {
+            "type": "string",
+            "description": "Application ID of Nodus's Entra application. Empty when Azure consent is unavailable. Role assignments to it must carry aws_external_id as their description."
           }
         },
         "required": [
@@ -14228,12 +14270,577 @@
           "hosts"
         ]
       },
+      "CloudCreditBudget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "description": "Nodus cloud connection identity."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "none",
+              "available",
+              "exhausted",
+              "expired"
+            ],
+            "description": "none has no declared budget or provider balance. exhausted and expired admit no launches."
+          },
+          "remaining_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Credit Nodus may still spend, in US micro-dollars, after open holds."
+          },
+          "reserved_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Credit held for launches and running hours that are not yet metered, in US micro-dollars."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Earliest expiry among the declared budget and counted provider credits."
+          },
+          "declared": {
+            "$ref": "#/components/schemas/CloudCreditDeclaration"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/CloudCreditProviderBalance"
+          },
+          "provider_source": {
+            "$ref": "#/components/schemas/CloudObservationCoverage"
+          }
+        },
+        "required": [
+          "connection_id",
+          "status",
+          "remaining_micros",
+          "reserved_micros",
+          "provider_source"
+        ]
+      },
+      "CloudCreditDeclaration": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "amount_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "set_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "spent_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Compute Nodus metered in this account since set_at."
+          }
+        },
+        "required": [
+          "amount_micros",
+          "set_at",
+          "spent_micros"
+        ]
+      },
+      "CloudCreditProviderBalance": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "balance_micros": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Provider-reported compute credit at observed_at."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "spent_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Compute Nodus metered since 48 hours before observed_at. Providers report balances on a billing delay, so recent spend is deducted even if the balance may already include it. A balance observed more than 48 hours ago is omitted."
+          }
+        },
+        "required": [
+          "balance_micros",
+          "observed_at",
+          "spent_micros"
+        ]
+      },
+      "CloudDirectExecution": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "description": "Nodus cloud connection identity."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Cloud provider of the connection."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether Nodus launches this team's batch work in the connected account."
+          },
+          "ssh_key_name": {
+            "type": "string",
+            "description": "SSH key in the connected Lambda Cloud account that launches name."
+          },
+          "live_credentials": {
+            "type": "boolean",
+            "description": "Whether work that receives the team's secrets and connections, or runs under an egress allowlist, may run in the account."
+          }
+        },
+        "required": [
+          "connection_id",
+          "provider",
+          "enabled",
+          "live_credentials"
+        ]
+      },
+      "CloudDirectExecutionUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ssh_key_name": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required when enabling. Must name an SSH key in the connected Lambda Cloud account."
+          },
+          "live_credentials": {
+            "type": "boolean",
+            "default": false,
+            "description": "Let work that receives the team's secrets and connections, or runs under an egress allowlist, run in the account. Whoever holds the account's SSH key has root on its machines and can read what they receive. Off unless stated on each update."
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "CloudDirectCapacity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ssh_key_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "instance_types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CloudDirectInstanceType"
+            }
+          },
+          "credit": {
+            "$ref": "#/components/schemas/CloudCreditBudget"
+          }
+        },
+        "required": [
+          "connection_id",
+          "observed_at",
+          "ssh_key_names",
+          "instance_types",
+          "credit"
+        ]
+      },
+      "CloudDirectInstanceType": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "gpu_description": {
+            "type": "string"
+          },
+          "gpus": {
+            "type": "integer"
+          },
+          "vcpus": {
+            "type": "number"
+          },
+          "memory_gib": {
+            "type": "number"
+          },
+          "price_micros_per_hour": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lambda's list price per instance hour, in US micro-dollars."
+          },
+          "regions_with_capacity": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Regions that reported capacity when the account was read. Empty means sold out."
+          },
+          "credit_hours": {
+            "type": "number",
+            "description": "Hours the remaining credit buys of this type, rounded down to a tenth. Zero without available credit."
+          }
+        },
+        "required": [
+          "name",
+          "gpus",
+          "price_micros_per_hour",
+          "regions_with_capacity",
+          "credit_hours"
+        ]
+      },
+      "CloudCreditBudgetInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "amount_micros": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 1000000000000000,
+            "description": "Declared credit in US micro-dollars. Null or absent clears the declaration."
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "CloudExecutionUpdate": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "enabled": {
             "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "CloudManagedLaunch": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The shape of every managed machine. AWS uses region, instance_type, image, subnet and security_groups. Google Cloud uses zone, machine_type, image, subnet and, for N1, accelerator_type and accelerator_count.",
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "AWS region."
+          },
+          "instance_type": {
+            "type": "string",
+            "description": "AWS NVIDIA GPU instance type."
+          },
+          "security_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 5,
+            "description": "AWS security group IDs."
+          },
+          "zone": {
+            "type": "string",
+            "description": "Google Cloud zone."
+          },
+          "machine_type": {
+            "type": "string",
+            "description": "Google Cloud machine type."
+          },
+          "accelerator_type": {
+            "type": "string",
+            "description": "Google Cloud accelerator type, for N1 machines only."
+          },
+          "accelerator_count": {
+            "type": "integer",
+            "description": "Google Cloud accelerator count, for N1 machines only."
+          },
+          "image": {
+            "type": "string",
+            "description": "AWS AMI ID or Google Cloud image or image family path. It must run cloud-init or the guest environment and provide bash, curl, sha256sum, Docker and the NVIDIA driver."
+          },
+          "subnet": {
+            "type": "string",
+            "description": "AWS subnet ID or Google Cloud subnetwork path."
+          },
+          "disk_gb": {
+            "type": "integer",
+            "minimum": 20,
+            "maximum": 16384,
+            "description": "Boot disk size, 200 by default."
+          },
+          "public_ip": {
+            "type": "boolean",
+            "description": "Give each machine a public address. Without one the network needs NAT to reach Nodus."
+          },
+          "root_device": {
+            "type": "string",
+            "readOnly": true,
+            "description": "AWS root device read from the image. Never sent."
+          }
+        },
+        "required": [
+          "image",
+          "subnet",
+          "disk_gb",
+          "public_ip"
+        ]
+      },
+      "CloudManagedMachine": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Launch label the provider instance is tagged with."
+          },
+          "host_id": {
+            "type": "string",
+            "description": "Host identity the machine enrolls as."
+          },
+          "handle": {
+            "type": "string",
+            "description": "Provider instance identity once listed."
+          },
+          "hourly_micros": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "launched_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "enrolled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end_reason": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "credit_exhausted",
+              "orphan",
+              "over_limit",
+              "gone",
+              "launch_failed"
+            ]
+          },
+          "metered_hours": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "host_id",
+          "hourly_micros",
+          "created_at",
+          "metered_hours"
+        ]
+      },
+      "CloudManagedCapacity": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "aws",
+              "gcp"
+            ]
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "Settings were saved at least once."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Nodus may launch machines in this account."
+          },
+          "available": {
+            "type": "boolean",
+            "description": "This deployment launches machines in customer accounts."
+          },
+          "pool_id": {
+            "type": "string"
+          },
+          "execution_identity": {
+            "type": "string",
+            "description": "AWS execution role ARN or Google Cloud execution service account email."
+          },
+          "launch": {
+            "$ref": "#/components/schemas/CloudManagedLaunch"
+          },
+          "gpu_model": {
+            "type": "string",
+            "description": "GPU model read from the provider when the launch was checked."
+          },
+          "gpu_count": {
+            "type": "integer"
+          },
+          "hourly_micros": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "max_machines": {
+            "type": "integer"
+          },
+          "max_launches_per_tick": {
+            "type": "integer"
+          },
+          "idle_timeout_seconds": {
+            "type": "integer"
+          },
+          "orphan_grace_seconds": {
+            "type": "integer"
+          },
+          "max_lifetime_minutes": {
+            "type": "integer"
+          },
+          "set_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_tick_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "machines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CloudManagedMachine"
+            }
+          },
+          "external_id": {
+            "type": "string",
+            "description": "AWS external ID the execution role must require, derived for this connection."
+          },
+          "execution_role_name": {
+            "type": "string",
+            "description": "AWS execution role name for this connection."
+          },
+          "setup_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "AWS CloudFormation quick-create link, where the deployment publishes the execution template."
+          },
+          "setup_command": {
+            "type": "string",
+            "description": "Google Cloud Shell command that creates the execution service account, for guided connections."
+          },
+          "execution_service_account": {
+            "type": "string",
+            "description": "Google Cloud execution service account the setup command creates."
+          }
+        },
+        "required": [
+          "connection_id",
+          "provider",
+          "configured",
+          "enabled",
+          "available",
+          "max_machines",
+          "max_launches_per_tick",
+          "idle_timeout_seconds",
+          "orphan_grace_seconds",
+          "max_lifetime_minutes",
+          "machines"
+        ]
+      },
+      "CloudManagedCapacityUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "execution_identity": {
+            "type": "string",
+            "description": "AWS execution role ARN in the connected account or Google Cloud service account email in the connected project. Required when enabling."
+          },
+          "launch": {
+            "$ref": "#/components/schemas/CloudManagedLaunch"
+          },
+          "hourly_micros": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 1000000000,
+            "description": "Hourly instance price in micro-dollars, metered against the credit budget. Required when enabling."
+          },
+          "max_machines": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 64,
+            "description": "1 by default."
+          },
+          "max_launches_per_tick": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "description": "1 by default."
+          },
+          "idle_timeout_seconds": {
+            "type": "integer",
+            "minimum": 600,
+            "maximum": 86400,
+            "description": "1200 by default."
+          },
+          "orphan_grace_seconds": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 3600,
+            "description": "900 by default."
+          },
+          "max_lifetime_minutes": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 10080,
+            "description": "360 by default."
           }
         },
         "required": [
@@ -19713,7 +20320,7 @@
             }
           }
         },
-        "description": "Only name and owned_cost_micros_per_hour can be changed. Predict and Route cannot be enabled."
+        "description": "Only name, owned_cost_micros_per_hour and live_credentials can be changed. Predict and Route cannot be enabled. live_credentials requires a team administrator's own key, because root on the pool's machines can read the secrets of the work it admits."
       }
     },
     "/v1/pools/{id}/enrollment-tokens": {
@@ -24690,6 +25297,237 @@
         }
       }
     },
+    "/v1/cloud-connections/{id}/credits": {
+      "get": {
+        "operationId": "getCloudCredits",
+        "summary": "Read the cloud credit budget",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Returns the customer cloud credit that Nodus may still spend launching capacity in this account. The remaining amount is the lower of the administrator-declared budget and the provider's own credit balance, each less the compute Nodus metered since it was stated. AWS publishes a credit balance when the connected role grants billing:GetCredits. Other providers rely on the declared budget. Without either, status is none. Where direct execution is enabled, Nodus admits a launch in the account only while an hour of credit remains. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the cloud credit budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCreditBudget"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setCloudCredits",
+        "summary": "Declare or clear the cloud credit budget",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Declares how much cloud credit Nodus may spend in this account, in micro-dollars, with an optional expiry. Restating a budget restarts its metering. Omitting amount_micros clears the declaration. A provider credit balance, where one is readable, still applies. An expiry without an amount returns 400. This does not launch capacity or change routing on hosts the customer already runs.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Declare or clear the cloud credit budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudCreditBudget"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudCreditBudgetInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cloud-connections/{id}/direct-execution": {
+      "get": {
+        "operationId": "getCloudDirectExecution",
+        "summary": "Read direct execution in a connected account",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Returns whether Nodus runs this team's batch work in the connected account itself, under the account's own API key. Only Lambda Cloud connections support it today. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read direct execution in a connected account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDirectExecution"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setCloudDirectExecution",
+        "summary": "Turn direct execution in a connected account on or off",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. When enabled, Nodus launches this team's batch work in the connected Lambda Cloud account while its declared credit budget lasts, and routes the rest to the Nodus market. A launch is admitted only with an hour of credit left, and work still running when metered spend reaches the credit is stopped. Enabling requires ssh_key_name to name an SSH key in the account, which Nodus checks with the connected key. Work that receives the team's secrets or connections, or runs under an egress allowlist, runs in the account only when live_credentials is true. Other providers return 409. Turning it off stops new launches and leaves running work to finish within its credit.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Turn direct execution in a connected account on or off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDirectExecution"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudDirectExecutionUpdate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cloud-connections/{id}/direct-execution/capacity": {
+      "get": {
+        "operationId": "getCloudDirectCapacity",
+        "summary": "Read launchable capacity in a connected account",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Reads the connected Lambda Cloud account with its own key and returns the GPU instance types it can launch at Lambda's list price, the regions that reported capacity, the account's SSH key names, and the connection's credit budget. credit_hours is how many hours the remaining credit buys of each type. Lambda publishes no account balance, so credit is the administrator-declared budget less metered spend. Other providers return 409. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read launchable capacity in a connected account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDirectCapacity"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/cloud-connections/{id}/execution": {
       "get": {
         "operationId": "getCloudExecution",
@@ -24778,6 +25616,100 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CloudExecutionUpdate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cloud-connections/{id}/execution/managed-capacity": {
+      "get": {
+        "operationId": "getCloudManagedCapacity",
+        "summary": "Read managed capacity in an AWS account or Google Cloud project",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Returns the managed-capacity settings, the machines Nodus launched and has not finished accounting for, and what the customer needs to create the execution identity. For AWS that is the connection's external ID, the execution role name and, where the deployment publishes the execution template, a CloudFormation quick-create link. For a guided Google Cloud connection it is a Cloud Shell command and the service account it creates. available is false where the deployment launches no machines. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read managed capacity in an AWS account or Google Cloud project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudManagedCapacity"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setCloudManagedCapacity",
+        "summary": "Enable or disable managed capacity in an AWS account or Google Cloud project",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. Enabling lets Nodus launch on-demand GPU machines in the customer account for work waiting on the connection's execution pool, metered at hourly_micros against the connection's credit budget, and end them when idle, out of credit or at max_lifetime_minutes. Before saving, Nodus checks the launch with the execution identity and starts nothing. Execution must be enabled first. The launch must name an NVIDIA GPU machine type, and root_device is read from the image, never sent. A deployment that launches no machines or a connection without enabled execution returns 409 managed_capacity_unavailable. Invalid settings return 400 invalid_managed_capacity. A launch the execution identity cannot check returns 422 cloud_access and changes nothing. Disabling keeps the settings, stops new launches and ends the connection's machines on the next pass.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enable or disable managed capacity in an AWS account or Google Cloud project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudManagedCapacity"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudManagedCapacityUpdate"
               }
             }
           }
