@@ -14354,6 +14354,50 @@
           "spent_micros"
         ]
       },
+      "CloudDirectExecution": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "description": "Nodus cloud connection identity."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Cloud provider of the connection."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether Nodus launches this team's batch work in the connected account."
+          },
+          "ssh_key_name": {
+            "type": "string",
+            "description": "SSH key in the connected Lambda Cloud account that launches name."
+          }
+        },
+        "required": [
+          "connection_id",
+          "provider",
+          "enabled"
+        ]
+      },
+      "CloudDirectExecutionUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ssh_key_name": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Required when enabling. Must name an SSH key in the connected Lambda Cloud account."
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
       "CloudCreditBudgetInput": {
         "type": "object",
         "additionalProperties": false,
@@ -24846,7 +24890,7 @@
         "tags": [
           "Cloud observation"
         ],
-        "description": "Returns the customer cloud credit that Nodus may still spend launching capacity in this account. The remaining amount is the lower of the administrator-declared budget and the provider's own credit balance, each less the compute Nodus metered since it was stated. AWS publishes a credit balance when the connected role grants billing:GetCredits. Other providers rely on the declared budget. Without either, status is none. Nodus does not yet launch capacity in customer accounts, so the budget is reported but not yet enforced. Unavailable deployments and disconnected or foreign connections return 404.",
+        "description": "Returns the customer cloud credit that Nodus may still spend launching capacity in this account. The remaining amount is the lower of the administrator-declared budget and the provider's own credit balance, each less the compute Nodus metered since it was stated. AWS publishes a credit balance when the connected role grants billing:GetCredits. Other providers rely on the declared budget. Without either, status is none. Where direct execution is enabled, Nodus admits a launch in the account only while an hour of credit remains. Unavailable deployments and disconnected or foreign connections return 404.",
         "parameters": [
           {
             "name": "id",
@@ -24927,6 +24971,100 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CloudCreditBudgetInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cloud-connections/{id}/direct-execution": {
+      "get": {
+        "operationId": "getCloudDirectExecution",
+        "summary": "Read direct execution in a connected account",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Returns whether Nodus runs this team's batch work in the connected account itself, under the account's own API key. Only Lambda Cloud connections support it today. Unavailable deployments and disconnected or foreign connections return 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read direct execution in a connected account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDirectExecution"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "setCloudDirectExecution",
+        "summary": "Turn direct execution in a connected account on or off",
+        "tags": [
+          "Cloud observation"
+        ],
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. When enabled, Nodus launches this team's batch work in the connected Lambda Cloud account while its declared credit budget lasts, and routes the rest to the Nodus market. A launch is admitted only with an hour of credit left. Work already running finishes even if the credit runs out. Enabling requires ssh_key_name to name an SSH key in the account, which Nodus checks with the connected key. Other providers return 409. Turning it off stops new launches and leaves running work to finish.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Tenant-owned Nodus cloud connection identity."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Turn direct execution in a connected account on or off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDirectExecution"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Authentication, administrator access, invalid input, missing records, conflicts, rate limits, credential storage, and transient failures are returned using the stable error and message fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudDirectExecutionUpdate"
               }
             }
           }
