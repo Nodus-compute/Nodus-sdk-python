@@ -14373,12 +14373,17 @@
           "ssh_key_name": {
             "type": "string",
             "description": "SSH key in the connected Lambda Cloud account that launches name."
+          },
+          "live_credentials": {
+            "type": "boolean",
+            "description": "Whether work that receives the team's secrets and connections, or runs under an egress allowlist, may run in the account."
           }
         },
         "required": [
           "connection_id",
           "provider",
-          "enabled"
+          "enabled",
+          "live_credentials"
         ]
       },
       "CloudDirectExecutionUpdate": {
@@ -14392,6 +14397,11 @@
             "type": "string",
             "maxLength": 64,
             "description": "Required when enabling. Must name an SSH key in the connected Lambda Cloud account."
+          },
+          "live_credentials": {
+            "type": "boolean",
+            "default": false,
+            "description": "Let work that receives the team's secrets and connections, or runs under an egress allowlist, run in the account. Whoever holds the account's SSH key has root on its machines and can read what they receive. Off unless stated on each update."
           }
         },
         "required": [
@@ -25025,7 +25035,7 @@
         "tags": [
           "Cloud observation"
         ],
-        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. When enabled, Nodus launches this team's batch work in the connected Lambda Cloud account while its declared credit budget lasts, and routes the rest to the Nodus market. A launch is admitted only with an hour of credit left, and work still running when metered spend reaches the credit is stopped. Enabling requires ssh_key_name to name an SSH key in the account, which Nodus checks with the connected key. Other providers return 409. Turning it off stops new launches and leaves running work to finish within its credit.",
+        "description": "Requires an API key owned by a user who is currently a team administrator. The console uses the same service with its authenticated session. When enabled, Nodus launches this team's batch work in the connected Lambda Cloud account while its declared credit budget lasts, and routes the rest to the Nodus market. A launch is admitted only with an hour of credit left, and work still running when metered spend reaches the credit is stopped. Enabling requires ssh_key_name to name an SSH key in the account, which Nodus checks with the connected key. Work that receives the team's secrets or connections, or runs under an egress allowlist, runs in the account only when live_credentials is true. Other providers return 409. Turning it off stops new launches and leaves running work to finish within its credit.",
         "parameters": [
           {
             "name": "id",
